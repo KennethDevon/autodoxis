@@ -1937,8 +1937,8 @@ function Aboard({ onLogout }) {
                 style={{ 
                   padding: '12px 20px', 
                   cursor: 'pointer',
-                  backgroundColor: currentScreen === 'DocumentType' ? '#34495e' : 'transparent',
-                  borderLeft: currentScreen === 'DocumentType' ? '4px solid #3498db' : '4px solid transparent',
+                  backgroundColor: currentScreen === 'DocumentList' ? '#34495e' : 'transparent',
+                  borderLeft: currentScreen === 'DocumentList' ? '4px solid #3498db' : '4px solid transparent',
                   transition: 'all 0.3s ease',
                   display: 'flex',
                   alignItems: 'center',
