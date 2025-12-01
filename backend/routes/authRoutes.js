@@ -152,8 +152,8 @@ router.post('/login', async (req, res) => {
     // If both login methods fail
     return res.status(400).json({ message: 'Invalid Credentials' });
   } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server error');
+    console.error('Login error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
@@ -169,8 +169,8 @@ router.get('/users', async (req, res) => {
     const users = await User.find({}, { password: 0 }); // Exclude password field
     res.json(users);
   } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server error');
+    console.error('Login error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
@@ -217,8 +217,8 @@ router.put('/users/:id', async (req, res) => {
     const { password, ...userWithoutPassword } = updatedUser.toObject();
     res.json(userWithoutPassword);
   } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server error');
+    console.error('Login error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
@@ -244,8 +244,8 @@ router.patch('/users/:id', async (req, res) => {
     const updatedUser = await user.save();
     res.json(updatedUser);
   } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server error');
+    console.error('Login error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
