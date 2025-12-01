@@ -1,0 +1,336 @@
+================================================================================
+AUTODOXIS - DATA MODEL CATALOG
+For NoSQL (MongoDB) Database
+================================================================================
+
+This document provides a comprehensive catalog of all collections, fields, and 
+data types used in the AutoDoxis system. This ensures that anyone working on 
+the project can interpret the data structure accurately, aiding in database 
+maintenance, integration, and further development.
+
+================================================================================
+
+COLLECTION 1: users
+DocID: {_id} (MongoDB ObjectId)
+
+FIELDS:
+┌─────────────┬─────────┬────────────────────────────┬──────────────────────┬──────────┐
+│    FIELD    │  TYPE   │           NOTES            │       FORMAT         │ REQUIRED │
+├─────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ username    │ String  │ Unique username for login  │ XXXXXX               │    ✓     │
+├─────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ email       │ String  │ Unique email address       │ xxxxxx@email.com     │    ✓     │
+├─────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ password    │ String  │ Hashed password (bcrypt)   │ (hashed string)      │    ✓     │
+├─────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ employeeId  │ String  │ Links to Employee record   │ EMP-XXXXX            │          │
+├─────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ role        │ String  │ User role/permission level │ Admin | Initiator |  │          │
+│             │         │                            │ Reviewer | Approver |│          │
+│             │         │                            │ Receiver | Employee  │          │
+├─────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ date        │ Date    │ Account creation timestamp │ YYYY-MM-DDTHH:mm:ss  │    ✓     │
+└─────────────┴─────────┴────────────────────────────┴──────────────────────┴──────────┘
+
+EXAMPLE:
+{
+  "username": "jdoe2025",
+  "email": "jdoe@dorsu.edu.ph",
+  "password": "$2a$10$...",
+  "employeeId": "EMP-00123",
+  "role": "Reviewer",
+  "date": "2025-01-15T08:30:00Z"
+}
+
+================================================================================
+
+COLLECTION 2: employees
+DocID: {_id} (MongoDB ObjectId)
+
+FIELDS:
+┌─────────────┬──────────────┬────────────────────────────┬──────────────────────┬──────────┐
+│    FIELD    │     TYPE     │           NOTES            │       FORMAT         │ REQUIRED │
+├─────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ employeeId  │ String       │ Unique employee identifier │ EMP-XXXXX            │    ✓     │
+├─────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ name        │ String       │ Full name of employee      │ FirstName LastName   │    ✓     │
+├─────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ position    │ String       │ Job title/position         │ Faculty | Dean |     │    ✓     │
+│             │              │                            │ Program Head | VP    │          │
+├─────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ department  │ String       │ Department/Faculty name    │ FCDSET | FNAHS |     │    ✓     │
+│             │              │                            │ FTED | FALS | FGBM   │          │
+├─────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ role        │ String       │ System role for routing    │ Initiator | Reviewer │          │
+│             │              │                            │ Approver | Receiver  │          │
+├─────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ office      │ ObjectId     │ Reference to Office        │ MongoDB ObjectId     │          │
+│             │              │ collection (linked)        │ (ref: 'Office')      │          │
+└─────────────┴──────────────┴────────────────────────────┴──────────────────────┴──────────┘
+
+EXAMPLE:
+{
+  "employeeId": "EMP-00123",
+  "name": "Juan Dela Cruz",
+  "position": "Program Head",
+  "department": "FCDSET",
+  "role": "Approver",
+  "office": "507f1f77bcf86cd799439011"
+}
+
+================================================================================
+
+COLLECTION 3: documents
+DocID: {_id} (MongoDB ObjectId)
+
+FIELDS:
+┌──────────────────────────┬──────────────┬────────────────────────────┬──────────────────────┬──────────┐
+│          FIELD           │     TYPE     │           NOTES            │       FORMAT         │ REQUIRED │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ documentId               │ String       │ Unique document identifier │ DOC-YYYYMMDD-XXXX    │    ✓     │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ name                     │ String       │ Document title/name        │ Text                 │    ✓     │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ type                     │ String       │ Document category          │ Faculty Loading |    │    ✓     │
+│                          │              │                            │ Travel Order |       │          │
+│                          │              │                            │ Endorsement Form     │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ dateUploaded             │ Date         │ Upload timestamp           │ YYYY-MM-DDTHH:mm:ss  │    ✓     │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ status                   │ String       │ Current document status    │ Submitted |          │    ✓     │
+│                          │              │                            │ Under Review |       │          │
+│                          │              │                            │ Approved | Rejected |│          │
+│                          │              │                            │ Processing |         │          │
+│                          │              │                            │ On Hold | Returned   │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ submittedBy              │ String       │ Name of submitter          │ Text                 │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ description              │ String       │ Document description       │ Text                 │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ reviewer                 │ String       │ Current reviewer name      │ Text                 │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ reviewDate               │ Date         │ Date of last review        │ YYYY-MM-DDTHH:mm:ss  │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ comments                 │ String       │ Review comments            │ Text                 │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ filePath                 │ String       │ Server file path           │ /uploads/xxx.pdf     │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ nextOffice               │ String       │ Next routing destination   │ Office name          │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ qrCode                   │ String       │ QR code data string        │ Base64 or URL        │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ barcode                  │ String       │ Barcode data string        │ Numeric string       │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ priority                 │ String       │ Document urgency level     │ Low | Normal |       │          │
+│                          │              │                            │ High | Urgent        │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ currentOffice            │ String       │ Office currently holding   │ Office name          │          │
+│                          │              │ the document               │                      │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ expectedProcessingTime   │ Number       │ Expected hours to process  │ Integer (hours)      │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ currentStageStartTime    │ Date         │ When current stage began   │ YYYY-MM-DDTHH:mm:ss  │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ isDelayed                │ Boolean      │ Delay status flag          │ true | false         │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ delayedHours             │ Number       │ Hours delayed              │ Integer (hours)      │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ routingHistory           │ Array        │ Array of routing records   │ [See sub-schema]     │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ scanHistory              │ Array        │ Array of scan/track events │ [See sub-schema]     │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ tags                     │ Array        │ Searchable keywords        │ [String, String...]  │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ department               │ String       │ Originating department     │ Text                 │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ category                 │ String       │ Document category          │ Text                 │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ assignedTo               │ Array        │ Array of Employee ObjectIds│ [ObjectId, ...]      │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ currentHandler           │ ObjectId     │ Current handler Employee   │ MongoDB ObjectId     │          │
+│                          │              │ (linked)                   │ (ref: 'Employee')    │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ forwardedBy              │ String       │ Last person who forwarded  │ Text                 │          │
+├──────────────────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ forwardedDate            │ Date         │ Date of last forwarding    │ YYYY-MM-DDTHH:mm:ss  │          │
+└──────────────────────────┴──────────────┴────────────────────────────┴──────────────────────┴──────────┘
+
+ROUTING HISTORY SUB-SCHEMA (Array of Objects):
+┌─────────────────┬─────────┬────────────────────────────┬──────────────────────┬──────────┐
+│     FIELD       │  TYPE   │           NOTES            │       FORMAT         │ REQUIRED │
+├─────────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ office          │ String  │ Office name                │ Text                 │    ✓     │
+├─────────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ action          │ String  │ Action performed           │ received | reviewed |│    ✓     │
+│                 │         │                            │ approved | rejected |│          │
+│                 │         │                            │ forwarded | on_hold |│          │
+│                 │         │                            │ returned             │          │
+├─────────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ handler         │ String  │ Person who handled         │ Text                 │          │
+├─────────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ timestamp       │ Date    │ When action occurred       │ YYYY-MM-DDTHH:mm:ss  │    ✓     │
+├─────────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ comments        │ String  │ Action comments            │ Text                 │          │
+├─────────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ processingTime  │ Number  │ Hours at this stage        │ Integer (hours)      │          │
+└─────────────────┴─────────┴────────────────────────────┴──────────────────────┴──────────┘
+
+SCAN HISTORY SUB-SCHEMA (Array of Objects):
+┌─────────────────┬─────────┬────────────────────────────┬──────────────────────┬──────────┐
+│     FIELD       │  TYPE   │           NOTES            │       FORMAT         │ REQUIRED │
+├─────────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ scannedAt       │ Date    │ Scan timestamp             │ YYYY-MM-DDTHH:mm:ss  │    ✓     │
+├─────────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ scannedBy       │ String  │ Person who scanned         │ Text                 │          │
+├─────────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ location        │ String  │ Scan location              │ Text                 │          │
+├─────────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ action          │ String  │ Action performed           │ viewed | downloaded |│          │
+│                 │         │                            │ printed | transferred│          │
+└─────────────────┴─────────┴────────────────────────────┴──────────────────────┴──────────┘
+
+EXAMPLE:
+{
+  "documentId": "DOC-20250115-0001",
+  "name": "Faculty Loading Form - Spring 2025",
+  "type": "Faculty Loading",
+  "dateUploaded": "2025-01-15T09:30:00Z",
+  "status": "Under Review",
+  "submittedBy": "Juan Dela Cruz",
+  "priority": "Normal",
+  "currentOffice": "Program Head Office",
+  "expectedProcessingTime": 24,
+  "isDelayed": false,
+  "routingHistory": [
+    {
+      "office": "Program Head Office",
+      "action": "received",
+      "handler": "Maria Santos",
+      "timestamp": "2025-01-15T09:35:00Z",
+      "processingTime": 2
+    }
+  ]
+}
+
+================================================================================
+
+COLLECTION 4: offices
+DocID: {_id} (MongoDB ObjectId)
+
+FIELDS:
+┌─────────────┬──────────────┬────────────────────────────┬──────────────────────┬──────────┐
+│    FIELD    │     TYPE     │           NOTES            │       FORMAT         │ REQUIRED │
+├─────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ officeId    │ String       │ Unique office identifier   │ OFF-XXXXX            │    ✓     │
+├─────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ name        │ String       │ Office name                │ Text                 │    ✓     │
+├─────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ department  │ String       │ Department/Faculty name    │ FCDSET | FNAHS |     │    ✓     │
+│             │              │                            │ FTED | FALS | FGBM   │          │
+├─────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ location    │ String       │ Physical location          │ Building - Room      │          │
+├─────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ employees   │ Array        │ Array of Employee ObjectIds│ [ObjectId, ...]      │          │
+│             │              │ (linked)                   │ (ref: 'Employee')    │          │
+├─────────────┼──────────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ createdAt   │ Date         │ Office creation timestamp  │ YYYY-MM-DDTHH:mm:ss  │    ✓     │
+└─────────────┴──────────────┴────────────────────────────┴──────────────────────┴──────────┘
+
+VIRTUAL FIELD (Computed):
+┌──────────────────┬─────────┬────────────────────────────┬──────────────────────┐
+│      FIELD       │  TYPE   │           NOTES            │       FORMAT         │
+├──────────────────┼─────────┼────────────────────────────┼──────────────────────┤
+│ numberOfEmployees│ Number  │ Computed from employees    │ Integer              │
+│                  │         │ array length               │                      │
+└──────────────────┴─────────┴────────────────────────────┴──────────────────────┘
+
+EXAMPLE:
+{
+  "officeId": "OFF-00001",
+  "name": "Dean's Office - FCDSET",
+  "department": "FCDSET",
+  "location": "Main Building - Room 201",
+  "employees": [
+    "507f1f77bcf86cd799439011",
+    "507f1f77bcf86cd799439012"
+  ],
+  "createdAt": "2025-01-01T08:00:00Z"
+}
+
+================================================================================
+
+COLLECTION 5: documenttypes
+DocID: {_id} (MongoDB ObjectId)
+
+FIELDS:
+┌───────────────┬─────────┬────────────────────────────┬──────────────────────┬──────────┐
+│     FIELD     │  TYPE   │           NOTES            │       FORMAT         │ REQUIRED │
+├───────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ name          │ String  │ Unique document type name  │ Text                 │    ✓     │
+├───────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ description   │ String  │ Document type description  │ Text                 │          │
+├───────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ isActive      │ Boolean │ Active status flag         │ true | false         │    ✓     │
+├───────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ dateCreated   │ Date    │ Creation timestamp         │ YYYY-MM-DDTHH:mm:ss  │    ✓     │
+├───────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ dateUploaded  │ String  │ Upload date (legacy field) │ MM/DD/YYYY           │          │
+├───────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ timeUploaded  │ String  │ Upload time (legacy field) │ HH:MM AM/PM          │          │
+├───────────────┼─────────┼────────────────────────────┼──────────────────────┼──────────┤
+│ uploadedBy    │ String  │ Creator name               │ Text                 │          │
+└───────────────┴─────────┴────────────────────────────┴──────────────────────┴──────────┘
+
+EXAMPLE:
+{
+  "name": "Faculty Loading",
+  "description": "Faculty teaching load assignment form for semester planning",
+  "isActive": true,
+  "dateCreated": "2025-01-01T08:00:00Z",
+  "dateUploaded": "01/01/2025",
+  "timeUploaded": "08:00 AM",
+  "uploadedBy": "System Admin"
+}
+
+================================================================================
+
+DATABASE RELATIONSHIPS:
+
+1. User → Employee (One-to-One)
+   - User.employeeId → Employee.employeeId
+   - Links user accounts to employee records
+
+2. Employee → Office (Many-to-One)
+   - Employee.office → Office._id
+   - Associates employees with their office
+
+3. Office → Employee (One-to-Many)
+   - Office.employees[] → Employee._id
+   - Tracks all employees in an office
+
+4. Document → Employee (Many-to-Many)
+   - Document.assignedTo[] → Employee._id
+   - Document.currentHandler → Employee._id
+   - Links documents to responsible employees
+
+5. Document → DocumentType (Many-to-One)
+   - Document.type → DocumentType.name
+   - Categorizes documents by type
+
+================================================================================
+
+NOTES FOR DEVELOPERS:
+
+1. MongoDB automatically creates the _id field as ObjectId for each document
+2. Use indexes on frequently queried fields (employeeId, documentId, officeId)
+3. The routingHistory and scanHistory arrays grow over time - consider archival
+4. Virtual fields (numberOfEmployees) are computed and not stored in database
+5. Enum fields have predefined valid values - validate before saving
+6. Referenced ObjectIds should use .populate() in queries for complete data
+7. Date fields use ISO 8601 format (YYYY-MM-DDTHH:mm:ssZ)
+8. Password fields in User collection are hashed using bcrypt before storage
+
+================================================================================
+END OF DATA MODEL CATALOG
+================================================================================
+

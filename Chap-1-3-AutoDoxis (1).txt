@@ -1,0 +1,396 @@
+
+
+
+
+
+
+
+
+
+Republic of the Philippines
+DAVAO ORIENTAL STATE UNIVERSITY
+Guang-Guang, Dahican, City of Mati, Davao Oriental, 8200
+
+
+AUTODOXIS: AUTOMATED DOCUMENT ROUTING FOR ADAPTIVE WORKFLOW OPTIMIZATION SYSTEM WITH DESCRIPTIVE ANALYTICS
+
+Jhomarie T. Avenido 
+Nikki C. Matinagnos 
+Kenneth Devon Valeriano
+
+A Capstone Project Submitted to the Faculty of Computing, Engineering and Technology of Davao Oriental State University in Partial Fulfillment of the Requirements for the Degree
+
+
+BACHELOR OF SCIENCE IN INFORMATION TECHNOLOGY
+
+MAY 2025
+    TABLE OF CONTENTS
+Title Page
+Approval Sheet
+CHAPTER I: INTRODUCTION
+    1.1 Rationale of the Study……………………………………..……..….……...……...…..1
+    1.2 Purpose and Project Description……………………….……..………………….……2
+    1.3 Objectives of the Study………………………………………...……………….…..…..3
+    1.4 Significance of the Study……………………………………………….…………........4
+    1.5 Scope and Limitation……………………………………………………………...…….6
+    1.6 Conceptual Framework…………………………………………………….…..…….…8
+  1.7 Definition of Terms…………………………………………………………….…….…10
+CHAPTER II: REVIEW OF RELATED LITERATURE
+    2.1 Technical Background…………………………….…………………….……….……11
+    2.2 Review of Related Literature…………………………………………….……….…..13
+    2.3 Related Systems…………..………………..…………….……………………….…..15
+    2.4 Synthesis……………………………...………………………………………………..16
+CHAPTER III: METHODOLOGY
+3.1 Software Methodology…………………………………………….….……………….....…17
+    3.2 Wireframe
+    3.2.1 Registration Interface…………….…….…………………..………..…….……...18
+    3.2.2 Login Interface………………………………..……………………….…...………22
+    3.2.3 Dashboard Interface…………….………………………………………………....24
+    3.2.4 Admin Interface……..………………………………………..…………….….…26
+    3.2.5 Add Employee……………………………………………………………..……..27
+    3.2.6 Add Department/ Document Type……………………………………..…….…28
+    3.2.7 Employee Interface…………………………………………………………..…..29
+    3.2.8 Staff Interface……………………………………………………………………..30
+    3.2.9 Send Document……………………………………………………………….....31
+    3.2.10 New Document…………………………………………………………….…...32
+    3.2.11 Reports……………………………………………………………………..……33
+GANTT Chart………………………………………………………………………………..….38
+List of Tables
+    3.2.1 Registration Interface……………………………………………………...22
+    3.2.2 Login Interface……………………………………………………………..23
+    3.2.3 Main Dashboard Interface………………………………………………...25
+    3.2.4 Admin Interface……………………………………………………………27
+    3.2.5 Add Employee Interface…………………………………………………..28
+    3.2.6 Add Department/Document Type Interface……………………………..29
+    3.2.7 Employee Dashboard Interface…………………………………………..30
+    3.2.8 Staff Dashboard Interface………………………………………………...31
+    3.2.9 Send Document Interface…………………………………………………32
+    3.2.10 New Document Interface………………………………………………...33
+    3.2.11 Reports Interface…………………………………………………………34
+REFERENCES…………………..……………………………………………………….40
+CHAPTER I
+INTRODUCTION
+ 1.1  Rationale of the Study
+      Nowadays, in the digital environment, organizations face significant challenges in managing large volumes of documents, particularly when it comes to routing these documents to the correct departments or personnel. Traditional methods of handling document routing are often manual, resulting in human error, inefficiencies, and delays in processing critical documents. As organizations scale and data volumes increase, these manual processes become increasingly impractical, hindering overall organizational productivity. This study presents an Automated Document Routing System powered by descriptive analytics to address these challenges. The core approach used in the system involves descriptive analytics methods, which are known for their robustness and ability to summarize and interpret historical data. This approach reduces inefficiencies, improves decision-making accuracy, and enables the system to adapt to both structured and unstructured data, ensuring that documents are categorized and routed based on their context.
+    By integrating descriptive analytics into the routing process, the system utilizes historical routing data to identify document categories, determine the most appropriate routes, and adjust workflows based on observed trends. The system handles physical documents manually until they arrive at their designated office, where a digital record is created to track the document’s progress. This record allows for real-time tracking of documents as they move through various stages of the workflow. The system's adaptive workflow functionality optimizes routing based on patterns found in past data and operational needs, ensuring that documents are processed efficiently and promptly. With descriptive analytics at its core, the system remains capable of scaling to meet the increasing volume and complexity of documents. Research by Egger (2022) underscores the growing importance of analytics in optimizing operations across industries.
+    One of the most pressing issues in organizational workflows is the delay of documents within certain departments or offices, which causes bottlenecks, slows decision-making, and reduces operational efficiency. This study addresses these delays by incorporating real-time document tracking features. The system enables document owners and administrators to trace the precise location of each document within the workflow at any given time. By capturing timestamps as documents enter and exit different stages, the system determines how long a document spends in each phase, making it easier to identify where delays occur. Additionally, the system generates detailed delay reports, highlighting departments or offices with prolonged processing times. These reports empower management to pinpoint inefficiencies and take targeted actions to optimize workflow. By combining descriptive analytics-driven routing with real-time tracking and reporting, the system ensures transparency and accountability throughout the document’s life cycle, ultimately leading to smoother operations, fewer delays, and higher productivity.
+ 1.2  Purpose and Project Description
+        This study aims to develop Automated Document Routing For Adaptive Workflow Optimization System with Descriptive Analytics, which is designed to classify and route documents based on patterns observed in historical record. The system supports the processing of PDF files, Word documents (DOCX), scanned images (JPG/PNG), text files (TXT), and manually uploaded email attachments. Each uploaded document is tagged with metadata such as document type, sender name, submission time, and priority level. The descriptive analytics approach uses this metadata—along with historical routing data and user feedback—to determine the most appropriate office or personnel to receive the document.
+    Once classified, the document is routed through the system where it is tracked in real time, with timestamps logged at every stage. If a document exceeds its expected processing time in any office, the system triggers a delay alert to the document owner and the responsible department. AutoDoxis also features a dashboard that visualizes document flow, routing accuracy, and delay reports, enabling administrators to identify bottlenecks. Through the integration of descriptive analytics-based routing and delay analysis, the system minimizes human error, reduces workflow inefficiencies, and supports continual improvement based on data insights.
+1.3 Objectives of the Study
+     The main objective of the project is to develop an Automated Document Routing For Adaptive Workflow Optimization System with Descriptive Analytics for adaptive workflow optimization to enhance efficiency, reduce delays, improve communication, and provide real-time updates while offering an intuitive user interface and performance monitoring tools.
+Specifically, it aims to:
+1.Design and develop a web-based document routing system that is capable of the following: 
+?Automatically track and log the movement of documents across all offices in real time.
+?To assess document processing speeds in each office and identify bottlenecks or delays.
+?The office generates reports showing each document's status, the number of documents pending or forwarded per day, and the total hours each document was delayed in a specific office.
+2. Generate delay reports and real-time alerts when documents exceed their expected processing time in a specific department, allowing managers to take immediate corrective action.
+3. Provide visual dashboards for monitoring document flow and office performance metrics.
+4. Maintain a secure, tamper-proof audit trail of all document movements and processing times.
+5. To allow users to search for documents and view their current location and history within the system.
+6. To integrate descriptive analytics that will summarize historical workflow data, identify trends and recurring delays, and provide insightful analysis results for continuous process improvement.
+
+
+1.4  Significance of the Study 
+          The proposed project has the following significance, particularly to the following: 
+Organizations. The most direct beneficiaries of this study are the organizations themselves, which will experience significant improvements in operational efficiency. By automating document routing, businesses can eliminate human errors, reduce bottlenecks, and ensure that documents are processed and forwarded quickly to the correct departments or personnel. This system will help streamline workflows, increase productivity, and reduce administrative overhead, enabling organizations to operate more effectively and at a lower cost. Whether it's in healthcare, government, education, or corporate environments, this system can be adapted to meet the unique needs of any organization handling large volumes of documents.
+
+Administrators. Administrators are responsible for ensuring that institutional processes run smoothly. They will benefit from real-time monitoring of document workflows after the automated document routing system is implemented, allowing for speedier decision-making, improved accountability, and increased compliance. This visibility guarantees that documents are processed efficiently and delivered to the appropriate departments without needless delays.
+
+Faculty and staff. Faculty and staff that are directly involved with academic and administrative document management will see a significant reduction in manual workload. By automating regular processes like document routing, classification, and tracking, the system reduces human error and improves daily operations. This allows them to focus more on their core tasks, like teaching, academic advising, or administrative support, resulting in increased production and operational efficiency within the school.
+
+
+
+1.5  Scope and Limitation
+1.5.1 Scope
+?The AutoDoxis Document Management and Routing System is designed to handle the efficient processing, tracking, and routing of documents within Davao Oriental State University (DorSU).
+?The system incorporates descriptive analytics to analyze historical workflow data, identify patterns, and provide actionable insights to improve efficiency.
+Key Features:
+?Admin Interface – Manage registered accounts, manage documents, view document status, and generate analytics reports.
+?User Interface – Register documents, view document status, and access personal document history.
+?Receiver Interface – Approve registered documents, view document status, and monitor processing timelines.
+Analytics Functions:
+?Tracks and records all document movements for historical analysis.
+?Summarizes workflow performance, including processing times and departmental bottlenecks.
+?Generates visual dashboards and reports for informed decision-making.
+Implementation Coverage:
+The system will be implemented across all faculties of DorSU, including:
+?Faculty of Computing, Data Sciences, Engineering and Technology (FCDSET)
+?Faculty of Nursing and Allied Health Science (FNAHS)
+?Faculty of Teacher Education (FTED)
+?Faculty of Agriculture and Life Sciences (FALS)
+?Faculty of Governance, Business and Management (FGBM)
+Document Tracking Process Examples:
+?Faculty Loading – Routed to program head, dean, and academic vice president (VP).
+?Requested Subject – Routed to program head, dean, and academic VP.
+?Endorsement Form – Routed through communication, program head, faculty dean, VP, and office of the president (OP) for approval.
+?Travel Order (OT/OB) -  Routed to program head, dean, academic vice president (VP), and office of the president (OP) for approval.
+1.5.2 Limitation
+?The system will be implemented only at the Davao Oriental State University main campus.
+?It will not integrate with external document management platforms (e.g., SharePoint, Google Drive).
+?The analytics component is limited to descriptive analytics, focusing on historical data review and performance reporting rather than predictive or prescriptive analysis.
+?The system handles standard document formats (PDF, DOCX, TXT, JPG, PNG) but does not process specialized file formats or multimedia content.
+1.6 Conceptual Framework
+
+    The conceptual framework for the system is structured using the Input-Process-Output (IPO) model, which illustrates the step-by-step flow of document management and routing. 
+    To begin with, the Input stage gathers essential data required for document classification and routing. This includes uploaded documents in various formats (PDF, DOCX, JPG, PNG, and TXT), along with metadata such as sender name, timestamp, document type, and priority level. Additional inputs include user feedback for correcting or confirming routing decisions, document and office information, and user-specific details such as roles and permissions. These data elements provide the necessary context for the system to make informed and accurate routing decisions. 
+    In the Process stage, the system performs real-time document tracking and monitoring. As documents move through different stages, the system logs timestamps and builds audit trails. A core component of this phase is the application of descriptive analytics methods, which analyze historical data and current metadata to determine the most appropriate route. The system also performs delay detection, automatically generating alerts when documents remain too long in a specific office. Real-time notifications are sent to users, ensuring timely updates and transparency. 
+    As a result, the Output stage delivers the key functionalities that support organizational workflow optimization. These include the successful and timely forwarding of documents, clear visibility of document status, and generation of performance analytics and delay reports. Additionally, the system produces secure audit logs, enabling administrators to trace document history and evaluate office performance. These outputs contribute directly to the project’s objectives of reducing delays, increasing accountability, and enhancing document management efficiency. 
+1.7 Definition of Terms
+Automated Document Routing System	A system that uses data-driven approaches to automatically classify, route, and track documents across departments or personnel in an organization, minimizing manual intervention.
+
+Descriptive Analytics	A method of analyzing historical data to identify patterns, trends, and insights that help in making informed decisions. For this study, descriptive analytics helps the system automatically sort and send documents to the right place by reviewing past routing decisions and trends.
+Descriptive Analytics Methods	A method of analyzing historical data to identify patterns, trends, and insights that help in making informed decisions. For this study, descriptive analytics helps the system automatically sort and send documents to the right place by reviewing past routing decisions and trends.
+Routing Decision	The process of determining where to send a document, who should handle it, or which department needs to process it. The system makes this decision automatically based on document content and historical patterns.
+Real-Time Notifications	The process of determining where to send a document, who should handle it, or which department needs to process it. The system makes this decision automatically based on document content and historical patterns.
+
+
+
+
+
+
+
+CHAPTER II
+    REVIEW OF RELATED LITERATURE
+
+2.1  Technical Background
+    To build an Automated Document Routing For Adaptive Workflow Optimization System with Descriptive Analytics, a combination of various technologies, frameworks, and tools is necessary. Each technology directly supports the project’s objectives of classification, routing, delay detection, and system transparency.
+2.1.1 Python
+     Python is the primary programming language for building the backend and implementing machine learning algorithms. Libraries like scikit-learn, pandas, and NumPy will be utilized for data manipulation  and numerical computations. (Dhruv, Patel, & Doshi, 2021). These libraries collectively empower the system to learn from historical data, predict optimal routing paths, and adapt to new document patterns over time—essential for the system’s goal.
+2.1.2 JavaScript 
+    JavaScript (JS) powers the interactive features of the front-end user interface, enabling dynamic real-time feedback, form validation, and user-driven interactions on the dashboard. It is also primarily known for its role in client-side scripting, where it enhances the functionality of web pages by enabling features such as form validation, dynamic content updates, and interactive user interfaces (Ranjan, Sinha, & Battewad, 2020). By using JS , AutoDoxis supports responsive document uploads, immediate visual updates on document status, and alerts when delays occur. This front-end responsiveness is crucial for delivering a seamless user experience, where users and administrators can monitor document routing and workflow bottlenecks without page reloads
+2.1.3 HTML/CSS 
+    HTML is used for structuring the web pages, while CSS is employed to style the user interface and ensure responsiveness across devices. It provides the structure and content of a web page by defining elements like headings, paragraphs, images, and links (Ranjan, Sinha, & Battewad, 2020). In AutoDoxis, HTML defines key components such as dashboards, upload forms, and tracking logs, while CSS ensures that the system remains accessible, professional, and visually informative supporting the goal of creating an intuitive user interface. 
+2.1.4 MySQL/PostgreSQL
+    MySQL is an open-source relational database management system (RDBMS) known for its speed and ease of use, primarily focused on simple, read-heavy workloads. PostgreSQL, also open-source, is an object-relational database management system (ORDBMS) that offers advanced features, greater extensibility, and stronger data integrity, making it suitable for complex queries and transactional applications (Zanini, 2023).  In the context of the Automated Document Routing For Adaptive Workflow Optimization System with Descriptive Analytics, MySQL/PostgreSQL can be used as the backend database to store document metadata, user information, routing paths, and delay logs, ensuring reliable, scalable, and efficient data management to support machine learning-driven routing decisions and real-time workflow optimization
+    
+    
+    
+2.1.5 Descriptive Analytics Methods
+      Descriptive analytics methods involve examining historical data to summarize key information and identify patterns that can guide routing decisions. In AutoDoxis, these methods analyze document metadata, such as type, sender, and timestamps, along with historical routing trends, to determine the most appropriate routing paths. This supports data-driven optimization of workflow and decision-making, enhancing document flow efficiency and accuracy within the system.
+2.2  Related Literature
+    According to Al-Amin et al. (2024), they proposed an AI-based end-to-end workflow optimization solution specifically for SMEs. The paper underlines the role of AI technologies, especially RPA, predictive analytics, and data integration, in overcoming typical SME problems like fragmented information, manual procedures, and scalability constraints. The authors' framework presents a multi-tiered structure that includes a data integration layer, predictive analytics through descriptive analytics techniques, and intelligent automation tools. A phased implementation strategy has been crafted for SMEs with real-time decision-making, customer experience enhancement, and operational resilience highlighted as key outcomes.
+    A hybrid system is proposed by Amin et al. (2018), wherein deep learning is combined with case-based reasoning (CBR) for dynamic workflow routing in customer support. The name of their system is DeepTMS, which utilizes deep neural networks to process unstructured and multilingual text, thereby allowing real-time prioritization and routing of customer tickets. This method overcomes the drawbacks faced by conventional NLP tools, especially in complicated and diverse customer service situations. The system automates text analysis by embedding semantic-aware word embedding together with neural similarity measures, adapts to changing workflows, and incrementally constructs a reusable case base. That would be most beneficial in high-volume industries where both case similarity and resolution speed are important factors.
+    Debbadi and Boateng (2025) introduced intelligent automation within Microsoft Power Automate by contextualizing advanced analytics algorithms for dynamic real-time workflow adaptation. The cloud-based service solution supports tasks such as anomaly detection, predictive maintenance, sentiment analysis, and intelligent document processing. The study reinforces adaptive workflows that self-optimize through continuous learning from historical as well as real-time data. Power Automate also holds great potential as a low-code platform. Of the several critical challenges surfaced—model deployment, latency at inference, and complexity of integration—the enhancements in process efficiency along with decision accuracy related to these hurdles have been discovered to be quite impactful.
+
+2.3 Related Systems
+2.3.1 Odoo DocuWare 
+        A robust workflow automation and document management system made to assist businesses in digitizing and streamlining their operations. It removes the need for paper records by enabling users to safely capture, store, arrange, and retrieve documents. Its automated workflow routing, which guarantees that contracts, invoices, and forms are sent to the appropriate individuals at the appropriate times in accordance with predetermined guidelines, is one of its primary features. DocuWare facilitates better productivity and quicker decision-making by supporting electronic forms, task management, and real-time notifications. With strong security features like audit trails and role-based access control, it assists businesses in adhering to laws like GDPR and HIPAA. DocuWare, which is available both in the cloud and on-premises, is widely used in areas such as healthcare, education, finance, and manufacturing due to its ability to improve collaboration, decrease human errors, and facilitate remote work.
+
+Figure 2. Sample image of the Odoo DocuWare
+2.3.2 OpenText Intelligent Capture 
+          An advanced document capture and data extraction solution that automates the process of collecting, understanding, and routing information from both physical and digital documents. It uses technologies like optical character recognition (OCR), and artificial intelligence (AI) to convert unstructured content into structured, usable data.
+    The wide feature set of OpenText Intelligent Capture is meant to ease the document handling process. The process begins with document scanning and ingestion, which enables the system to collect data from a range of sources such as scanned photos, PDFs, faxes, emails, and physical documents. It uses optical character recognition (OCR) to turn printed or handwritten text into machine-readable data. Furthermore, the system employs intelligent classification, which recognizes document categories such as contracts, invoices, and application forms using AI. 
+    
+                            Figure 2.1 OpenText Intelligent Capture
+2.3.3 Tungsten TotalAgility 
+      Leverages advanced analytics to automate content-heavy workflows and deliver real-time business insights. It blends document processing and process orchestration into a unified end-to-end solution. This combination streamlines operations, boosts productivity, enhances experiences, and improves financial performance. TotalAgility can automate workflows across industries, including banking, insurance, healthcare, supply chain, and the public sector. It can be used to automate processes from onboarding to claims administration.
+
+  
+Figure 2.2 Tungsten TotalAgility
+2.3 Synthesis
+    The review of related literature and systems revealed both shared capabilities and distinct differences between the proposed Automated Document Routing For Adaptive Workflow Optimization System with Descriptive Analytics and existing platforms. All reviewed systems—Odoo DocuWare, OpenText Intelligent Capture, and Tungsten TotalAgility—demonstrate strong metadata extraction features that support accurate classification and routing of documents. However, AutoDoxis uniquely integrates descriptive analytics-based routing, enabling adaptive workflows that respond to historical data patterns.
+    In terms of real-time tracking, only Tungsten TotalAgility offers functionality comparable to AutoDoxis, but without the tailored academic workflow support that AutoDoxis provides. While Odoo DocuWare and OpenText Intelligent Capture are effective in document automation and classification, they lack delay detection and bottleneck reporting, which are core features of AutoDoxis.
+    Overall, AutoDoxis addresses the limitations of existing systems by combining analytics-driven routing, real-time delay alerts, performance reporting, and academic workflow customization—providing a solution that is both efficient and purpose-built for institutional environments.The following table compares AutoDoxis with the reviewed systems based on selected core features.
+Features	AutoDoxis (Proposed Study)	Odoo DocuWare	OpenText Intelligent Capture	Tungsten TotalAgility
+Descriptive analytics-based routing decisions	YES	NO	NO	NO
+Real-time document tracking and delay alerts	YES	NO	NO	YES
+Metadata extraction for routing	YES	YES	YES	YES
+Real-time performance reports and bottleneck analysis	YES	NO	NO	YES
+Tailored for academic/institutional workflow	YES	NO	NO	NO
+    Table 2.3.1: Tabulated Comparison of the System’s Feature
+CHAPTER III                  
+      MATERIALS AND METHODS
+  3.1  Software Methodology
+
+Figure 3. Agile Methodology (InterQuality, 2025)
+    The development of Automated Document Routing For Adaptive Workflow Optimization System with Descriptive Analytics will adopt an Agile methodology to promote flexibility, user-driven iterations, and continuous system enhancement. This approach is well-suited to the project’s objective of delivering an intelligent document routing system that adapts to dynamic workflow needs, supports real-time tracking, and ensures transparency in document handling.
+    The process begins with the planning phase, where system requirements are gathered in collaboration with stakeholders. Key focus areas include descriptive analytics-based classification, automated routing, and performance monitoring features such as delay tracking and audit logs.
+    In the design phase, wireframes will be developed using Balsamiq, a low-fidelity wireframe tool that allows rapid prototyping and iterative refinement of the user interface. The design will emphasize usability, with features such as a dashboard for monitoring document flow, upload forms for document input, and visual indicators for routing status.
+    During the development phase, the team will work in sprints to implement core functionalities, including metadata extraction, descriptive analytics-driven routing logic, and real-time notifications. The testing phase will involve unit testing for each component, integration testing to ensure end-to-end functionality, and performance testing to verify the system's responsiveness and accuracy in routing decisions.
+    Following testing, AutoDoxis will enter the deployment phase, where a beta version of the system will be released for initial user testing and feedback. In the review and launch phase, user feedback will be assessed to guide final improvements before full deployment. This ensures that AutoDoxis evolves based on real-world needs and provides a robust solution for adaptive, analytics-driven document workflow management.
+
+
+
+
+
+3.2 Wireframe
+3.2.1 Registration Interface
+
+    Figure 4. Registration Page
+ Further details regarding the UI components that are present in the registration page are presented in Table 3.2.1.
+ Table 3.2.1 Registration Interface
+ No.	 UI Component	 Name	 Description
+    1 	 Button	 Save and Cancel	 Provides options to either save the newly added user account or cancel the action to discard changes.
+    2	 Dropdown Button	 Select Employee and Select Type	 Allows the admin to choose from existing employees and assign the appropriate account type (e.g., Staff, Admin).
+    3	 Text Field	 Username and Password	 Fields for inputting the user’s login credentials their unique username and secure password.
+    4	 Button	 Save and Cancel	 Saves the new employee account details to the system or cancels the operation to return without saving.
+ 5	 Dropdown Button	 Department	 Saves the new employee account details to the system or cancels the operation to return without saving.
+ 6	 Text Field	 Employee ID, Full name and Birthdate	 Used to input the employee’s unique ID number, complete name, and date of birth as part of account creation.
+
+
+
+3.2.2 Login Interface
+
+Figure 5. Login Page
+Further details regarding the UI components that are present in the login page document are presented in Table 3.2.2
+Table 3.2.2 Login Interface
+No.	UI Component 	Name 	Description
+1	Button	Login and Logout	Used by users to securely log in to their account or log out when done using the system.
+2	Text Field	Username and Password	Fields for entering the user’s login credentials to access the system.
+
+3.2.3 Main Dashboard Interface
+
+    Figure 6. Main Dashboard Page
+Further details regarding the UI components that are present in the main dashboard page are presented in Table 3.2.3
+Table 3.2.3 Main Dashboard
+No.	UI Component	Name	Description
+   1	TextField	Search Bar	Allows users to quickly search documents, reports, or employee accounts.
+   2	Button	File Management, Registration, Reports	Navigation buttons that redirect users to modules for document handling, user registration, and report generation.
+   3	TextField	User Info	Displays logged-in user details such as name, role, and department.
+   4	Button	Logout	Ends the current session and securely logs the user out of the system.
+   5	Text Field	Overview of Reports	Shows a summary or visual preview of recent reports and performance metrics.
+   6	TextField	User Icon	Placeholder displaying the user's profile picture or avatar.
+
+3.2.4 Admin Interface
+
+    Figure 7. Admin Page
+Further details regarding the UI components that are present in the main dashboard page are presented in Table 3.2.4
+Table 3.2.4 Admin Page
+No.	UI Component	Name	Description
+   1	TextField	Search Bar	Allows users to find files, document types, or office data by keyword.
+   2	Button	Add File, Add Office, Add Document Type	Enables users to upload new files, register new offices, or define document categories for routing.
+   3	Button	Files, Pie Chart, Bar Graph	Provides access to document lists and visual analytics of system performance.
+   4	Button	Logout	Logs the user out and ends the current session securely.
+   5	Button	Print File	Initiates print command to create a hard copy of selected files or reports.
+   6	TextField	User Icon	Displays the user’s profile avatar or initials for identification.
+
+
+3.2.5 Add Employee
+
+    Figure 8. Add Employee
+Further details regarding the UI components that are present in the add employee page are presented in Table 3.2.5
+Table 3.2.5 Add Employee
+No.	UI Component	Name	Description
+   1	Button	Save and Cancel	Used to save the newly entered account details or cancel the operation to discard changes.
+   2	TextField	Username and Password	Used to save the newly entered account details or cancel the operation to discard changes.
+   3	Dropdown Button	Select Employee, Select Account Type	Lets the admin choose an existing employee and assign a corresponding account role (e.g., Admin, Staff).
+
+3.2.6 Add Department/ Document Type
+
+    Figure 9. Add Department/ Document Type
+Further details regarding the UI components that are present in the add department/document type page are presented in Table 3.2.6
+Table 3.2.6 Add Department/ Document Type
+No.	UI Component	Name	Description
+   1	TextField	Department Code, Deprartment Name, Employee Head	Inputs for defining a department’s unique code, name, and its designated head or supervisor.
+   2	TextField	Start date and End date.	Used to specify the validity period or operational dates for a department or document type.
+   3	Button	Save and Cancel	Lets the user save the entered data or cancel to exit without changes.
+  4	TextField	Document Code and Document Type	Fields to input the unique identifier and classification of document types.
+
+3.2.7 Employee Interface
+
+    Figure 10. Employee Dashboard
+Further details regarding the UI components that are present in the employee dashboard page are presented in Table 3.2.7
+Table 3.2.7
+No.	UI Component	Name	Description
+   1	Image Icon	User Icon	Displays the logged-in user’s avatar; typically links to profile settings.
+   2	Button	My File, History	Provides access to personal uploaded documents and viewing of file activity history.
+   3	Button	Logout	Logs the user out of the application securely.
+  4	Button	Documents uploaded with Document Status	Displays a list of uploaded documents along with their current status (e.g., Routed, In Progress, Flagged).
+ 5	Button	Notification Icon	Opens alerts and notifications related to document status or system updates.
+ 6	TextField	Search Bar	Allows users to search through their documents and history quickly.
+
+3.2.7 Staff Interface
+
+    Figure 10. Staff Dashboard
+Further details regarding the UI components that are present in the staff dashboard page are presented in Table 3.2.8
+Table 3.2.7
+No.	UI Component	Name	Description
+   1	Image Icon	User Icon	Displays the user’s avatar or initials; typically links to user profile or account settings.
+   2	Button	Submitted Files, Analytics	Navigates to sections where users can view submitted documents and analytics reports.
+   3	Table	Details of Documents	Displays document data including titles, IDs, current status, timestamps, and routing history.
+  4	TextField	User Information	Shows logged-in user details like name, role, and office/department.
+ 5	Button	Notification Icon	Opens notification panel for document routing alerts or system messages.
+ 6	TextField	Search Bar	Enables search across submitted files, document analytics, or user records.
+
+3.2.8 Send Document
+
+    Figure 11. Send Document
+Further details regarding the UI components that are present in the send document page are presented in Table 3.2.8.
+
+Table 3.2.8 Send Document
+No.	UI Component	Name	Description
+   1	TextField	Document code, Date, Time Uploaded	Inputs for setting the document's unique identifier, upload date, and timestamp.
+   2	TextField	Notes	Field for adding remarks or special instructions related to the document.
+   3	Button	Cancel, Save, Forward	Action buttons to either cancel, save the document for later, or forward it for routing.
+  4	Button	Upload File	Opens a file picker or drop zone for uploading documents into the system.
+ 5	Dropdown Button	Document Type, Sender, Receiver	Selection options for categorizing the document and assigning sender and recipient.
+ 6	Button	Cancel, Forward	Additional action buttons available after data review before final submission.
+ 7	Dropdown Button	Receiver	Specific selector to choose the receiving office or department for routing.
+
+3.2.8 New Document
+
+    Figure 12. New Document
+Further details regarding the UI components that are present in the send document page are presented in Table 3.2.9.
+
+Table 3.2.9 New Document
+No.	UI Component	Name	Description
+   1	Dropdown Button	Document Type, Sender, Receiver	Provides selection options for document category and assigning sender and receiver.
+   2	Button	Upload File	Opens a dialog or drag-and-drop area for selecting and uploading documents to the system.
+   3	TextField	Document Code, Date Uploaded	Input fields where users enter the document’s unique ID and the date it was submitted to the system.
+  4	Button	Cancel, Save, Forward	Executes actions to cancel, save as draft, or forward the document to the next recipient.
+ 5	Button	Cancel, Forward	A quick-action button to cancel or forward an ongoing forward action.
+ 6	Dropdown Button	Receiver	Allows selection of the next department or user to receive the document.
+3.2.9 Reports
+
+    Figure 13. Reports
+Further details regarding the UI components that are present in the send document page are presented in Table 3.2.9.
+Table 3.5 Staff/Employee Interface
+No.	UI Component	Name	Description
+   1	Button	User Icon	Allows access to user profile or account settings via icon button.
+   2	Button	View Files, Files	Navigates to file lists or opens the document viewer.
+   3	Button	Logout	Logs the admin out of the system securely.
+  4	Button	Notification	Opens the notification panel to view alerts or system messages.
+ 5	TextField	Search Bar	Enables searching documents, users.
+ 6	TextField	File, Sender, Receiver	Displays selected file details including sender and receiver.
+7	TextField	Sender, Receiver, Dean, VPAA, Receiver	Shows the complete routing path or flow of a document through departments.
+8	Animation/Icon	Loading Indicator	Displays an animation while the system loads or processes routing data.
+9	Button	Close	Closes modals or panels within the routing interface.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+GANTT  CHART
+
+
+
+
+
+
+
+
+
+
+                                               Literature Cited
+
+Al-Amin, K. O., Ewim, C. P.-M., Igwe, A. N., & Ofodile, O. C. (2024). AI-driven end-to-end workflow optimization and automation system for SMEs. _International Journal of Management & Entrepreneurship Research, 6_(11), 3666–3684. https://doi.org/10.51594/ijmer.v6i11.1688
+Amin, K., Kapetanakis, S., Althoff, K.-D., Dengel, A., & Petridis, M. (2018). Dynamic process workflow routing using deep learning. In M. Bramer & M. Petridis (Eds.), _Research and Development in Intelligent Systems XXXV_ (pp. 132–142). Springer. https://doi.org/10.1007/978-3-030-04191-5_10
+Debbadi, R. K., & Boateng, O. (2025). Developing intelligent automation workflows in Microsoft Power Automate by embedding deep learning algorithms for real-time process adaptation. _International Journal of Science and Research Archive, 14_(2), 802–820. https://doi.org/10.30574/ijsra.2025.14.2.0449
+
+Jain, S. (2025, July 23). Random forest algorithm in machine learning. GeeksforGeeks. https://www.geeksforgeeks.org/machine-learning/random-forest-algorithm-in-machine-learning/
+
+Odoo. (n.d.). _Documents_. Retrieved from https://www.odoo.com/app/documents
+OpenText. (n.d.). _Capture_. Retrieved from https://www.opentext.com/products/capture
+Tungsten Automation. (n.d.). _TotalAgility_. Retrieved from https://www.tungstenautomation.com/products/totalagility
+Zanini, A. (2023, September 8). PostgreSQL vs MySQL: The definitive comparison. DbVisualizer. (Please provide the complete URL or publication detail
