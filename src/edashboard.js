@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 import NotificationSystem, { showNotification } from './components/NotificationSystem';
 import API_URL from './config';
 
@@ -26,7 +28,11 @@ function Edashboard({ onLogout }) {
     time: '',
     notes: '',
     attachment: null,
-    receiver: ''
+    receiver: '',
+    travelOrderDepartureDate: '',
+    travelOrderDepartureTime: '',
+    travelOrderReturnDate: '',
+    travelOrderReturnTime: ''
   });
   const [summaryStats, setSummaryStats] = useState({
     total: 0,
@@ -62,20 +68,7 @@ function Edashboard({ onLogout }) {
   const [showNotificationPane, setShowNotificationPane] = useState(false);
   const [notificationMessage, setNotificationMessage] = useState('');
   const [notificationType, setNotificationType] = useState('info'); // 'success', 'error', or 'info'
-
-  useEffect(() => {
-    fetchUserData();
-    fetchDocuments();
-    fetchDocumentTypes();
-    fetchOffices();
-  }, []);
-
-  // Refresh documents when History Logs tab is opened to ensure status is up-to-date
-  useEffect(() => {
-    if (activeSidebarTab === 'history') {
-      fetchDocuments();
-    }
-  }, [activeSidebarTab]);
+  const isInitialLoad = useRef(true);
 
   const fetchUserData = async () => {
     try {
@@ -103,7 +96,7 @@ function Edashboard({ onLogout }) {
     }
   };
 
-  const fetchDocuments = async () => {
+  const fetchDocuments = useCallback(async () => {
     setLoading(true);
     try {
       // Get user data to check if they have an employee ID
@@ -130,21 +123,51 @@ function Edashboard({ onLogout }) {
               let fetchedDocuments = await response.json();
               console.log('Total documents fetched:', fetchedDocuments.length);
               
+              // Helper function to check if document is assigned/forwarded to this employee
+              const isDocumentAssignedToEmployee = (doc, employeeId) => {
+                // Convert employeeId to string for comparison
+                const employeeIdStr = String(employeeId);
+                
+                // Check if employee is in assignedTo array (handle both ObjectId objects and strings)
+                const isAssigned = doc.assignedTo?.some(assignedId => {
+                  if (!assignedId) return false;
+                  // Handle both populated objects and raw IDs
+                  const assignedIdStr = assignedId._id ? String(assignedId._id) : String(assignedId);
+                  return assignedIdStr === employeeIdStr;
+                });
+                
+                // Check if employee is currentHandler (handle both ObjectId objects and strings)
+                const isCurrentHandler = doc.currentHandler ? (
+                  doc.currentHandler._id ? String(doc.currentHandler._id) === employeeIdStr : 
+                  String(doc.currentHandler) === employeeIdStr
+                ) : false;
+                
+                // Check if document was forwarded (has forwardedDate) - include if forwarded to this employee
+                const isForwarded = doc.forwardedDate && (isAssigned || isCurrentHandler);
+                
+                return isAssigned || isCurrentHandler || isForwarded;
+              };
+              
               // Filter documents based on employee position
               const position = currentEmployee.position;
               let filteredDocuments = [];
               
               if (position === 'Communication' || position === 'Communications' || position === 'Secretary') {
-                filteredDocuments = fetchedDocuments.filter(doc => 
-                  doc.nextOffice === 'Communication' || doc.currentOffice === 'Communication' ||
-                  doc.nextOffice === 'Secretary' || doc.currentOffice === 'Secretary'
-                );
+                filteredDocuments = fetchedDocuments.filter(doc => {
+                  const routedToOffice = doc.nextOffice === 'Communication' || doc.currentOffice === 'Communication' ||
+                    doc.nextOffice === 'Secretary' || doc.currentOffice === 'Secretary';
+                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  return routedToOffice || forwardedToEmployee;
+                });
                 console.log('Filtered for Communication/Secretary:', filteredDocuments.length);
               } else if (position === 'Program Head') {
-                // Show documents routed to Program Head
+                // Show documents routed to Program Head OR forwarded to this employee
                 filteredDocuments = fetchedDocuments.filter(doc => {
                   // Check if routed to Program Head
                   const routedToPH = doc.nextOffice === 'Program Head' || doc.currentOffice === 'Program Head';
+                  
+                  // Check if forwarded directly to this employee
+                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
                   
                   // Check if it's Faculty Loading, Requested Subject, or Travel Order by category OR type
                   const isFacultyLoadingDoc = 
@@ -162,8 +185,8 @@ function Edashboard({ onLogout }) {
                     doc.type?.toLowerCase().includes('travel order') ||
                     doc.type?.toLowerCase().includes('endorsement form');
                   
-                  // Show if routed to PH OR if it's a Faculty Loading type document that's Under Review/Submitted
-                  const shouldShow = routedToPH || 
+                  // Show if routed to PH OR forwarded to employee OR if it's a Faculty Loading type document that's Under Review/Submitted
+                  const shouldShow = routedToPH || forwardedToEmployee || 
                     (isFacultyLoadingDoc && 
                      (doc.status === 'Under Review' || doc.status === 'Submitted'));
                   
@@ -175,59 +198,64 @@ function Edashboard({ onLogout }) {
                 });
                 console.log('Filtered for Program Head:', filteredDocuments.length);
               } else if (position === 'Dean') {
-                // Show documents routed to Dean OR forwarded from Program Head
+                // Show documents routed to Dean OR forwarded to this employee
                 filteredDocuments = fetchedDocuments.filter(doc => {
                   const routedToDean = doc.nextOffice === 'Dean' || doc.currentOffice === 'Dean';
-                  const fromProgramHead = doc.reviewer && doc.status !== 'Submitted';
+                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
                   
-                  if (routedToDean) {
+                  if (routedToDean || forwardedToEmployee) {
                     console.log('✓ Dean will see:', doc.name);
                   }
-                  return routedToDean;
+                  return routedToDean || forwardedToEmployee;
                 });
                 console.log('Filtered for Dean:', filteredDocuments.length);
               } else if (position === 'Academic VP' || position === 'Academic Vice President') {
-                // Show documents routed to Academic Vice President
-                filteredDocuments = fetchedDocuments.filter(doc => 
-                  doc.nextOffice === 'Academic Vice President' || 
-                  doc.nextOffice === 'Academic VP' ||
-                  doc.currentOffice === 'Academic Vice President' ||
-                  doc.currentOffice === 'Academic VP'
-                );
+                // Show documents routed to Academic Vice President OR forwarded to this employee
+                filteredDocuments = fetchedDocuments.filter(doc => {
+                  const routedToOffice = doc.nextOffice === 'Academic Vice President' || 
+                    doc.nextOffice === 'Academic VP' ||
+                    doc.currentOffice === 'Academic Vice President' ||
+                    doc.currentOffice === 'Academic VP';
+                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  return routedToOffice || forwardedToEmployee;
+                });
                 console.log('Filtered for Academic VP:', filteredDocuments.length);
               } else if (position === 'Vice President' || position === 'VP') {
-                // Show documents routed to Vice President
-                filteredDocuments = fetchedDocuments.filter(doc => 
-                  doc.nextOffice === 'Vice President' || 
-                  doc.nextOffice === 'VP' ||
-                  doc.currentOffice === 'Vice President' ||
-                  doc.currentOffice === 'VP'
-                );
+                // Show documents routed to Vice President OR forwarded to this employee
+                filteredDocuments = fetchedDocuments.filter(doc => {
+                  const routedToOffice = doc.nextOffice === 'Vice President' || 
+                    doc.nextOffice === 'VP' ||
+                    doc.currentOffice === 'Vice President' ||
+                    doc.currentOffice === 'VP';
+                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  return routedToOffice || forwardedToEmployee;
+                });
                 console.log('Filtered for Vice President:', filteredDocuments.length);
               } else if (position === 'OP' || position === 'Office of the President' || position === 'President') {
-                // Show documents routed to Office of the President
-                filteredDocuments = fetchedDocuments.filter(doc => 
-                  doc.nextOffice === 'Office of the President' || 
-                  doc.nextOffice === 'OP' ||
-                  doc.nextOffice === 'President' ||
-                  doc.currentOffice === 'Office of the President' ||
-                  doc.currentOffice === 'OP' ||
-                  doc.currentOffice === 'President'
-                );
+                // Show documents routed to Office of the President OR forwarded to this employee
+                filteredDocuments = fetchedDocuments.filter(doc => {
+                  const routedToOffice = doc.nextOffice === 'Office of the President' || 
+                    doc.nextOffice === 'OP' ||
+                    doc.nextOffice === 'President' ||
+                    doc.currentOffice === 'Office of the President' ||
+                    doc.currentOffice === 'OP' ||
+                    doc.currentOffice === 'President';
+                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  return routedToOffice || forwardedToEmployee;
+                });
                 console.log('Filtered for Office of the President:', filteredDocuments.length);
               } else if (position === 'Faculty' || position === 'Staff') {
-                // Faculty/Staff see documents they submitted or assigned to them
-                filteredDocuments = fetchedDocuments.filter(doc => 
-                  doc.submittedBy === parsedUser.username ||
-                  doc.assignedTo?.includes(currentEmployee._id) ||
-                  doc.currentHandler === currentEmployee._id
-                );
+                // Faculty/Staff see documents they submitted, assigned to them, or forwarded to them
+                filteredDocuments = fetchedDocuments.filter(doc => {
+                  const isSubmitted = doc.submittedBy === parsedUser.username;
+                  const isAssignedOrForwarded = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  return isSubmitted || isAssignedOrForwarded;
+                });
                 console.log('Filtered for Faculty/Staff:', filteredDocuments.length);
               } else {
-                // Default: show documents assigned to this employee
+                // Default: show documents assigned to or forwarded to this employee
                 filteredDocuments = fetchedDocuments.filter(doc => 
-                  doc.assignedTo?.includes(currentEmployee._id) ||
-                  doc.currentHandler === currentEmployee._id
+                  isDocumentAssignedToEmployee(doc, currentEmployee._id)
                 );
                 console.log('Filtered for other position:', filteredDocuments.length);
               }
@@ -237,7 +265,8 @@ function Edashboard({ onLogout }) {
               calculateSummaryStats(filteredDocuments);
               setLoading(false);
               // System notification only on initial load
-              if (documents.length === 0 && filteredDocuments.length > 0) {
+              if (isInitialLoad.current && filteredDocuments.length > 0) {
+                isInitialLoad.current = false;
                 showNotification('info', 'System Ready', `Welcome! ${filteredDocuments.length} document(s) ready for review`);
               }
               return;
@@ -255,12 +284,17 @@ function Edashboard({ onLogout }) {
       setDocuments(data);
       setAllDocuments(data); // Also update allDocuments for History Logs
       calculateSummaryStats(data);
+      // System notification only on initial load
+      if (isInitialLoad.current && data.length > 0) {
+        isInitialLoad.current = false;
+        showNotification('info', 'System Ready', `Welcome! ${data.length} document(s) ready for review`);
+      }
     } catch (error) {
       console.error('Error fetching documents:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   const fetchDocumentTypes = async () => {
     try {
@@ -285,6 +319,20 @@ function Edashboard({ onLogout }) {
       console.error('Error fetching offices:', error);
     }
   };
+
+  useEffect(() => {
+    fetchUserData();
+    fetchDocuments();
+    fetchDocumentTypes();
+    fetchOffices();
+  }, [fetchDocuments]);
+
+  // Refresh documents when History Logs or Forwarded Documents tab is opened to ensure status is up-to-date
+  useEffect(() => {
+    if (activeSidebarTab === 'history' || activeSidebarTab === 'forwarded') {
+      fetchDocuments();
+    }
+  }, [activeSidebarTab, fetchDocuments]);
 
   const fetchEmployees = async (officeName) => {
     try {
@@ -445,6 +493,23 @@ function Edashboard({ onLogout }) {
     return doc?.status === 'Approved' && (!doc?.nextOffice || doc?.nextOffice === '');
   };
 
+  // Get display status - only show "Approved" if workflow is truly complete
+  const getDisplayStatus = (doc) => {
+    if (!doc) return 'Submitted';
+    
+    // If there's a nextOffice, document is still in workflow, so don't show as "Approved"
+    if (doc.nextOffice && doc.nextOffice.trim() !== '') {
+      // Show Processing or Under Review instead of Approved if still routing
+      if (doc.status === 'Approved' || doc.status === 'Processing') {
+        return 'Processing';
+      }
+      return doc.status || 'Processing';
+    }
+    
+    // If no nextOffice, show the actual status (Approved means truly approved)
+    return doc.status || 'Submitted';
+  };
+
   // Get next office based on current position
   const getNextOffice = () => {
     if (!employee) return null;
@@ -488,8 +553,10 @@ function Edashboard({ onLogout }) {
       const currentPosition = employee?.position || user?.username;
       const approverName = employee?.name || user?.username || 'Unknown';
       
+      // Keep status as 'Processing' when forwarding to next office
+      // Only final approval (handleFinalApprove) sets status to 'Approved'
       const updateData = {
-        status: 'Approved',
+        status: 'Processing',
         comments: reviewForm.comments || `Approved by ${approverName}`,
         reviewer: approverName,
         reviewDate: new Date().toISOString(),
@@ -520,8 +587,8 @@ function Edashboard({ onLogout }) {
         handleCloseReviewModal();
         // Refresh documents immediately to update History Logs
         await fetchDocuments();
-        // Force refresh if History Logs tab is open
-        if (activeSidebarTab === 'history') {
+        // Force refresh if History Logs or Forwarded Documents tab is open
+        if (activeSidebarTab === 'history' || activeSidebarTab === 'forwarded') {
           setTimeout(() => {
             fetchDocuments();
           }, 300);
@@ -568,8 +635,8 @@ function Edashboard({ onLogout }) {
         handleCloseReviewModal();
         // Refresh documents immediately to update History Logs
         await fetchDocuments();
-        // Force refresh if History Logs tab is open
-        if (activeSidebarTab === 'history') {
+        // Force refresh if History Logs or Forwarded Documents tab is open
+        if (activeSidebarTab === 'history' || activeSidebarTab === 'forwarded') {
           setTimeout(() => {
             fetchDocuments();
           }, 300);
@@ -626,8 +693,8 @@ function Edashboard({ onLogout }) {
         handleCloseReviewModal();
         // Refresh documents immediately to update History Logs
         await fetchDocuments();
-        // Force refresh if History Logs tab is open
-        if (activeSidebarTab === 'history') {
+        // Force refresh if History Logs or Forwarded Documents tab is open
+        if (activeSidebarTab === 'history' || activeSidebarTab === 'forwarded') {
           setTimeout(() => {
             fetchDocuments();
           }, 300);
@@ -690,8 +757,8 @@ function Edashboard({ onLogout }) {
         handleCloseReviewModal();
         // Refresh documents immediately to update History Logs
         await fetchDocuments();
-        // Force refresh if History Logs tab is open
-        if (activeSidebarTab === 'history') {
+        // Force refresh if History Logs or Forwarded Documents tab is open
+        if (activeSidebarTab === 'history' || activeSidebarTab === 'forwarded') {
           setTimeout(() => {
             fetchDocuments();
           }, 300);
@@ -741,8 +808,8 @@ function Edashboard({ onLogout }) {
         handleCloseReviewModal();
         // Refresh documents immediately to update History Logs
         await fetchDocuments();
-        // Force refresh if History Logs tab is open
-        if (activeSidebarTab === 'history') {
+        // Force refresh if History Logs or Forwarded Documents tab is open
+        if (activeSidebarTab === 'history' || activeSidebarTab === 'forwarded') {
           setTimeout(() => {
             fetchDocuments();
           }, 300);
@@ -827,12 +894,48 @@ function Edashboard({ onLogout }) {
   };
 
   const getTimelineSteps = (document) => {
+    // Helper to find routing history entry by action
+    const findRoutingEntry = (action) => {
+      if (!document.routingHistory || document.routingHistory.length === 0) return null;
+      return document.routingHistory
+        .filter(entry => entry.action === action)
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0] || null;
+    };
+
+    // Get submitted info
+    const submittedDate = document.dateUploaded ? new Date(document.dateUploaded) : null;
+    const submittedEntry = findRoutingEntry('received') || (submittedDate ? { 
+      timestamp: document.dateUploaded, 
+      handler: document.submittedBy || 'Unknown' 
+    } : null);
+
+    // Get received/reviewed info
+    const receivedEntry = findRoutingEntry('reviewed') || findRoutingEntry('received');
+
+    // Get forwarded info
+    const forwardedEntry = findRoutingEntry('forwarded');
+
+    // Get approved/rejected info
+    const approvedEntry = findRoutingEntry('approved');
+    const rejectedEntry = findRoutingEntry('rejected');
+    const completedEntry = approvedEntry || rejectedEntry;
+
     const steps = [
       {
         id: 'submitted',
         title: 'Document Submitted',
         description: 'Document has been submitted for review',
-        date: document.dateUploaded ? new Date(document.dateUploaded).toLocaleDateString() : null,
+        date: submittedDate ? submittedDate.toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }) : null,
+        time: submittedDate ? submittedDate.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        }) : null,
+        person: submittedEntry?.handler || document.submittedBy || 'N/A',
         completed: true,
         active: document.status === 'Submitted'
       },
@@ -840,24 +943,84 @@ function Edashboard({ onLogout }) {
         id: 'received',
         title: 'Document Received',
         description: 'Document received and acknowledged by reviewer',
-        date: document.status !== 'Submitted' ? new Date(document.dateUploaded).toLocaleDateString() : null,
+        date: receivedEntry ? new Date(receivedEntry.timestamp).toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }) : (document.status !== 'Submitted' && submittedDate ? submittedDate.toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }) : null),
+        time: receivedEntry ? new Date(receivedEntry.timestamp).toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        }) : (document.status !== 'Submitted' && submittedDate ? submittedDate.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        }) : null),
+        person: receivedEntry?.handler || document.reviewer || 'N/A',
         completed: document.status !== 'Submitted',
         active: document.status === 'Under Review'
       },
       {
         id: 'review',
         title: 'Under Review',
-        description: 'Document is being reviewed by assigned reviewer',
-        date: document.status === 'Under Review' ? new Date().toLocaleDateString() : null,
-        completed: document.status === 'Approved' || document.status === 'Rejected',
+        description: forwardedEntry 
+          ? `Document forwarded to ${forwardedEntry.office || 'next office'}`
+          : 'Document is being reviewed by assigned reviewer',
+        date: forwardedEntry ? new Date(forwardedEntry.timestamp).toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }) : (document.status === 'Under Review' ? new Date().toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }) : null),
+        time: forwardedEntry ? new Date(forwardedEntry.timestamp).toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        }) : (document.status === 'Under Review' ? new Date().toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        }) : null),
+        person: forwardedEntry?.handler || document.reviewer || 'N/A',
+        completed: getDisplayStatus(document) === 'Approved' || document.status === 'Rejected' || getDisplayStatus(document) === 'Processing',
         active: document.status === 'Under Review'
       },
       {
         id: 'completed',
         title: 'Review Completed',
-        description: document.status === 'Approved' ? 'Document approved and processed' : document.status === 'Rejected' ? 'Document rejected - requires resubmission' : 'Review process completed',
-        date: document.reviewDate ? new Date(document.reviewDate).toLocaleDateString() : null,
-        completed: document.status === 'Approved' || document.status === 'Rejected',
+        description: getDisplayStatus(document) === 'Approved' ? 'Document approved and processed' : document.status === 'Rejected' ? 'Document rejected - requires resubmission' : 'Review process completed',
+        date: completedEntry 
+          ? new Date(completedEntry.timestamp).toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit'
+            })
+          : (document.reviewDate ? new Date(document.reviewDate).toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit'
+            }) : null),
+        time: completedEntry
+          ? new Date(completedEntry.timestamp).toLocaleTimeString('en-US', {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true
+            })
+          : (document.reviewDate ? new Date(document.reviewDate).toLocaleTimeString('en-US', {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true
+            }) : null),
+        person: completedEntry?.handler || document.reviewer || 'N/A',
+        completed: getDisplayStatus(document) === 'Approved' || document.status === 'Rejected',
         active: false,
         isRejected: document.status === 'Rejected'
       }
@@ -1055,6 +1218,23 @@ function Edashboard({ onLogout }) {
       console.log('Selected employee:', selectedEmployee);
       console.log('Document form receiver:', documentForm.receiver);
 
+      // Prepare travel order date/time if type is TRAVEL ORDER
+      let travelOrderDepartureDate = null;
+      let travelOrderReturnDate = null;
+      
+      if (documentForm.type && documentForm.type.toUpperCase().includes('TRAVEL ORDER')) {
+        if (documentForm.travelOrderDepartureDate) {
+          travelOrderDepartureDate = documentForm.travelOrderDepartureTime
+            ? `${documentForm.travelOrderDepartureDate}T${documentForm.travelOrderDepartureTime}:00`
+            : `${documentForm.travelOrderDepartureDate}T00:00:00`;
+        }
+        if (documentForm.travelOrderReturnDate) {
+          travelOrderReturnDate = documentForm.travelOrderReturnTime
+            ? `${documentForm.travelOrderReturnDate}T${documentForm.travelOrderReturnTime}:00`
+            : `${documentForm.travelOrderReturnDate}T00:00:00`;
+        }
+      }
+
       // Prepare document data matching backend schema
       const documentData = {
         documentId: generateDocumentId(),
@@ -1075,7 +1255,12 @@ function Edashboard({ onLogout }) {
         assignedTo: selectedEmployee ? [selectedEmployee._id] : [],
         currentHandler: selectedEmployee ? selectedEmployee._id : null,
         forwardedBy: user?.username || 'Unknown User',
-        forwardedDate: selectedEmployee ? new Date().toISOString() : null
+        forwardedDate: selectedEmployee ? new Date().toISOString() : null,
+        // Travel Order specific fields
+        travelOrderDepartureDate: travelOrderDepartureDate || null,
+        travelOrderDepartureTime: documentForm.travelOrderDepartureTime || '',
+        travelOrderReturnDate: travelOrderReturnDate || null,
+        travelOrderReturnTime: documentForm.travelOrderReturnTime || ''
       };
 
       console.log('Submitting document with data:', documentData);
@@ -1130,7 +1315,11 @@ function Edashboard({ onLogout }) {
       time: '',
       notes: '',
       attachment: null,
-      receiver: ''
+      receiver: '',
+      travelOrderDepartureDate: '',
+      travelOrderDepartureTime: '',
+      travelOrderReturnDate: '',
+      travelOrderReturnTime: ''
     });
   };
 
@@ -1287,6 +1476,40 @@ function Edashboard({ onLogout }) {
                 }}
               >
                 History Logs
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => setActiveSidebarTab('forwarded')}
+                style={{
+                  width: '100%',
+                  padding: '12px 20px',
+                  backgroundColor: activeSidebarTab === 'forwarded' ? '#34495e' : 'transparent',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  textAlign: 'left',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  transition: 'all 0.3s ease',
+                  borderLeft: activeSidebarTab === 'forwarded' ? '4px solid #3498db' : '4px solid transparent'
+                }}
+                onMouseEnter={(e) => {
+                  if (activeSidebarTab !== 'forwarded') {
+                    e.target.style.backgroundColor = '#34495e';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (activeSidebarTab !== 'forwarded') {
+                    e.target.style.backgroundColor = 'transparent';
+                  }
+                }}
+              >
+                Forwarded Documents Report
               </button>
             </li>
           </ul>
@@ -1866,18 +2089,6 @@ function Edashboard({ onLogout }) {
                         color: '#2c3e50',
                         whiteSpace: 'nowrap'
                       }}>
-                        Name
-                      </th>
-                      <th style={{ 
-                        border: '1px solid #ddd', 
-                        padding: '12px 10px', 
-                        textAlign: 'left', 
-                        backgroundColor: '#f8f9fa',
-                        fontSize: '13px',
-                        fontWeight: '600',
-                        color: '#2c3e50',
-                        whiteSpace: 'nowrap'
-                      }}>
                         Submitted By
                       </th>
                       <th style={{ 
@@ -1903,6 +2114,18 @@ function Edashboard({ onLogout }) {
                         whiteSpace: 'nowrap'
                       }}>
                         Date
+                      </th>
+                      <th style={{ 
+                        border: '1px solid #ddd', 
+                        padding: '12px 8px', 
+                        textAlign: 'left', 
+                        backgroundColor: '#f8f9fa',
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        color: '#2c3e50',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        Time
                       </th>
                       <th style={{ 
                         border: '1px solid #ddd', 
@@ -1966,22 +2189,6 @@ function Edashboard({ onLogout }) {
                           <td style={{ 
                             border: '1px solid #ddd', 
                             padding: '10px',
-                            fontSize: '14px',
-                            color: '#2c3e50',
-                            maxWidth: '250px'
-                          }}>
-                            <div>
-                              <div style={{ fontWeight: '600', marginBottom: '2px' }}>{document.name}</div>
-                              {document.description && (
-                                <div style={{ fontSize: '11px', color: '#7f8c8d' }}>
-                                  {document.description}
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                          <td style={{ 
-                            border: '1px solid #ddd', 
-                            padding: '10px',
                             fontSize: '13px',
                             color: '#2c3e50',
                             fontWeight: '500'
@@ -2013,7 +2220,24 @@ function Edashboard({ onLogout }) {
                             color: '#7f8c8d',
                             whiteSpace: 'nowrap'
                           }}>
-                            {document.dateUploaded ? new Date(document.dateUploaded).toLocaleDateString() : 'N/A'}
+                            {document.dateUploaded ? new Date(document.dateUploaded).toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit'
+                            }) : 'N/A'}
+                          </td>
+                          <td style={{ 
+                            border: '1px solid #ddd', 
+                            padding: '10px 8px',
+                            fontSize: '12px',
+                            color: '#7f8c8d',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            {document.dateUploaded ? new Date(document.dateUploaded).toLocaleTimeString('en-US', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              hour12: true
+                            }) : 'N/A'}
                           </td>
                           <td style={{ 
                             border: '1px solid #ddd', 
@@ -2021,7 +2245,7 @@ function Edashboard({ onLogout }) {
                             fontSize: '13px'
                           }}>
                             <span style={{
-                              backgroundColor: getStatusColor(document.status),
+                              backgroundColor: getStatusColor(getDisplayStatus(document)),
                               color: 'white',
                               padding: '3px 8px',
                               borderRadius: '10px',
@@ -2032,7 +2256,7 @@ function Edashboard({ onLogout }) {
                               gap: '4px',
                               whiteSpace: 'nowrap'
                             }}>
-                              {document.status || 'Submitted'}
+                              {getDisplayStatus(document)}
                             </span>
                           </td>
                           <td style={{ 
@@ -2171,111 +2395,353 @@ function Edashboard({ onLogout }) {
               fontWeight: '600',
               color: '#2c3e50'
             }}>
-              📋 Document History Logs
+              Document History Logs
             </h2>
-
-            <div style={{
-              backgroundColor: '#f8f9fa',
-              borderRadius: '8px',
-              padding: '20px',
-              marginBottom: '20px'
-            }}>
-              <p style={{ margin: 0, color: '#7f8c8d', fontSize: '14px' }}>
-                View the complete routing history and audit trail for all documents. 
-                Click "Review" on any document in the Document Management section to see its detailed history.
-              </p>
-            </div>
 
             {/* All Documents with History */}
             <div style={{ overflowX: 'auto' }}>
-              <table style={{
-                width: '100%',
-                borderCollapse: 'collapse',
-                backgroundColor: 'white',
-                fontSize: '13px'
-              }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
-                  <tr style={{ backgroundColor: '#3498db', color: 'white' }}>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #2980b9' }}>Document ID</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #2980b9' }}>Name</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #2980b9' }}>Type</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #2980b9' }}>Status</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #2980b9' }}>Last Reviewer</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #2980b9' }}>Current Location</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #2980b9' }}>Last Updated</th>
-                    <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #2980b9' }}>Actions</th>
+                  <tr>
+                    <th style={{ 
+                      border: '1px solid #ddd', 
+                      padding: '12px 10px', 
+                      textAlign: 'left', 
+                      backgroundColor: '#f8f9fa',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      color: '#2c3e50',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      Document ID
+                    </th>
+                    <th style={{ 
+                      border: '1px solid #ddd', 
+                      padding: '12px 8px', 
+                      textAlign: 'left', 
+                      backgroundColor: '#f8f9fa',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      color: '#2c3e50',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      Type
+                    </th>
+                    <th style={{ 
+                      border: '1px solid #ddd', 
+                      padding: '12px 8px', 
+                      textAlign: 'left', 
+                      backgroundColor: '#f8f9fa',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      color: '#2c3e50',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      Status
+                    </th>
+                    <th style={{ 
+                      border: '1px solid #ddd', 
+                      padding: '12px 8px', 
+                      textAlign: 'left', 
+                      backgroundColor: '#f8f9fa',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      color: '#2c3e50',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      Last Reviewer
+                    </th>
+                    <th style={{ 
+                      border: '1px solid #ddd', 
+                      padding: '12px 8px', 
+                      textAlign: 'left', 
+                      backgroundColor: '#f8f9fa',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      color: '#2c3e50',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      Current Location
+                    </th>
+                    <th style={{ 
+                      border: '1px solid #ddd', 
+                      padding: '12px 8px', 
+                      textAlign: 'left', 
+                      backgroundColor: '#f8f9fa',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      color: '#2c3e50',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      Date
+                    </th>
+                    <th style={{ 
+                      border: '1px solid #ddd', 
+                      padding: '12px 8px', 
+                      textAlign: 'left', 
+                      backgroundColor: '#f8f9fa',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      color: '#2c3e50',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      Time
+                    </th>
+                    <th style={{ 
+                      border: '1px solid #ddd', 
+                      padding: '12px 8px', 
+                      textAlign: 'left', 
+                      backgroundColor: '#f8f9fa',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      color: '#2c3e50',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      Forwarded/Accepted Date
+                    </th>
+                    <th style={{ 
+                      border: '1px solid #ddd', 
+                      padding: '12px 8px', 
+                      textAlign: 'left', 
+                      backgroundColor: '#f8f9fa',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      color: '#2c3e50',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      Forwarded/Accepted Time
+                    </th>
+                    <th style={{ 
+                      border: '1px solid #ddd', 
+                      padding: '12px 8px', 
+                      textAlign: 'center', 
+                      backgroundColor: '#f8f9fa',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      color: '#2c3e50',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {allDocuments.length > 0 ? (
                     allDocuments.map((doc) => (
-                      <tr key={doc._id} style={{ borderBottom: '1px solid #ecf0f1' }}>
-                        <td style={{ padding: '12px', color: '#7f8c8d' }}>{doc.documentId}</td>
-                        <td style={{ padding: '12px', fontWeight: '500', color: '#2c3e50' }}>{doc.name}</td>
-                        <td style={{ padding: '12px' }}>
-                          <span style={{
-                            padding: '4px 8px',
-                            borderRadius: '4px',
+                      <tr key={doc._id} style={{ cursor: 'pointer' }} onClick={() => handleDocumentClick(doc)}>
+                        <td style={{ 
+                          border: '1px solid #ddd', 
+                          padding: '10px',
+                          fontSize: '13px',
+                          color: '#2c3e50'
+                        }}>
+                          <code style={{
+                            backgroundColor: '#f8f9fa',
+                            padding: '2px 5px',
+                            borderRadius: '3px',
                             fontSize: '11px',
                             fontWeight: '600',
-                            backgroundColor: '#ecf0f1',
-                            color: '#2c3e50'
+                            color: '#6c757d'
+                          }}>
+                            {doc.documentId}
+                          </code>
+                        </td>
+                        <td style={{ 
+                          border: '1px solid #ddd', 
+                          padding: '10px 8px',
+                          fontSize: '13px',
+                          color: '#2c3e50'
+                        }}>
+                          <span style={{
+                            backgroundColor: '#e8f5e8',
+                            color: '#388e3c',
+                            padding: '3px 8px',
+                            borderRadius: '10px',
+                            fontSize: '11px',
+                            fontWeight: '600',
+                            textTransform: 'uppercase'
                           }}>
                             {doc.type}
                           </span>
                         </td>
-                        <td style={{ padding: '12px' }}>
+                        <td style={{ 
+                          border: '1px solid #ddd', 
+                          padding: '10px 8px',
+                          fontSize: '13px'
+                        }}>
                           <span style={{
-                            padding: '4px 8px',
-                            borderRadius: '4px',
+                            backgroundColor: getStatusColor(getDisplayStatus(doc)),
+                            color: 'white',
+                            padding: '3px 8px',
+                            borderRadius: '10px',
                             fontSize: '11px',
                             fontWeight: '600',
-                            backgroundColor: getStatusColor(doc.status),
-                            color: 'white'
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            whiteSpace: 'nowrap'
                           }}>
-                            {doc.status}
+                            {getDisplayStatus(doc)}
                           </span>
                         </td>
-                        <td style={{ padding: '12px', color: '#2c3e50', fontWeight: '500' }}>
+                        <td style={{ 
+                          border: '1px solid #ddd', 
+                          padding: '10px 8px',
+                          fontSize: '13px',
+                          color: '#2c3e50',
+                          fontWeight: '500'
+                        }}>
                           {doc.reviewer || 'Not yet reviewed'}
                         </td>
-                        <td style={{ padding: '12px', color: '#7f8c8d' }}>
+                        <td style={{ 
+                          border: '1px solid #ddd', 
+                          padding: '10px 8px',
+                          fontSize: '13px',
+                          color: '#7f8c8d'
+                        }}>
                           {doc.currentOffice || doc.nextOffice || 'N/A'}
                         </td>
-                        <td style={{ padding: '12px', color: '#7f8c8d' }}>
-                          {doc.reviewDate ? new Date(doc.reviewDate).toLocaleDateString() : 
-                           new Date(doc.dateUploaded).toLocaleDateString()}
+                        <td style={{ 
+                          border: '1px solid #ddd', 
+                          padding: '10px 8px',
+                          fontSize: '12px',
+                          color: '#7f8c8d',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {(() => {
+                            const dateObj = doc.reviewDate ? new Date(doc.reviewDate) : new Date(doc.dateUploaded);
+                            return dateObj.toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit'
+                            });
+                          })()}
                         </td>
-                        <td style={{ padding: '12px', textAlign: 'center' }}>
-                          <button
-                            onClick={() => handleDocumentClick(doc)}
-                            style={{
-                              backgroundColor: '#3498db',
-                              color: 'white',
-                              border: 'none',
-                              padding: '6px 12px',
-                              borderRadius: '4px',
-                              fontSize: '12px',
-                              fontWeight: '500',
-                              cursor: 'pointer',
-                              transition: 'background-color 0.3s ease'
-                            }}
-                            onMouseEnter={(e) => e.target.style.backgroundColor = '#2980b9'}
-                            onMouseLeave={(e) => e.target.style.backgroundColor = '#3498db'}
-                          >
-                            View History
-                          </button>
+                        <td style={{ 
+                          border: '1px solid #ddd', 
+                          padding: '10px 8px',
+                          fontSize: '12px',
+                          color: '#7f8c8d',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {(() => {
+                            const dateObj = doc.reviewDate ? new Date(doc.reviewDate) : new Date(doc.dateUploaded);
+                            return dateObj.toLocaleTimeString('en-US', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              hour12: true
+                            });
+                          })()}
+                        </td>
+                        <td style={{ 
+                          border: '1px solid #ddd', 
+                          padding: '10px 8px',
+                          fontSize: '12px',
+                          color: '#7f8c8d',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {(() => {
+                            // Find the latest forwarded or approved action in routingHistory
+                            if (doc.routingHistory && doc.routingHistory.length > 0) {
+                              // Filter for forwarded or approved actions and get the most recent one
+                              const forwardedOrApproved = doc.routingHistory
+                                .filter(entry => entry.action === 'forwarded' || entry.action === 'approved')
+                                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                              
+                              if (forwardedOrApproved.length > 0) {
+                                const latestEntry = forwardedOrApproved[0];
+                                const dateObj = new Date(latestEntry.timestamp);
+                                return dateObj.toLocaleDateString('en-US', {
+                                  year: 'numeric',
+                                  month: '2-digit',
+                                  day: '2-digit'
+                                });
+                              }
+                            }
+                            return 'N/A';
+                          })()}
+                        </td>
+                        <td style={{ 
+                          border: '1px solid #ddd', 
+                          padding: '10px 8px',
+                          fontSize: '12px',
+                          color: '#7f8c8d',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {(() => {
+                            // Find the latest forwarded or approved action in routingHistory
+                            if (doc.routingHistory && doc.routingHistory.length > 0) {
+                              // Filter for forwarded or approved actions and get the most recent one
+                              const forwardedOrApproved = doc.routingHistory
+                                .filter(entry => entry.action === 'forwarded' || entry.action === 'approved')
+                                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                              
+                              if (forwardedOrApproved.length > 0) {
+                                const latestEntry = forwardedOrApproved[0];
+                                const dateObj = new Date(latestEntry.timestamp);
+                                return dateObj.toLocaleTimeString('en-US', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  hour12: true
+                                });
+                              }
+                            }
+                            return 'N/A';
+                          })()}
+                        </td>
+                        <td style={{ 
+                          border: '1px solid #ddd', 
+                          padding: '10px 8px',
+                          fontSize: '13px'
+                        }}>
+                          <div style={{
+                            display: 'flex',
+                            gap: '5px',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDocumentClick(doc);
+                              }}
+                              style={{
+                                backgroundColor: '#3498db',
+                                color: 'white',
+                                border: 'none',
+                                padding: '5px 10px',
+                                borderRadius: '4px',
+                                fontSize: '11px',
+                                fontWeight: '500',
+                                cursor: 'pointer',
+                                transition: 'background-color 0.3s ease'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.target.style.backgroundColor = '#2980b9';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.target.style.backgroundColor = '#3498db';
+                              }}
+                            >
+                              View History
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="8" style={{
-                        padding: '40px',
-                        textAlign: 'center',
-                        color: '#95a5a6'
-                      }}>
-                        <h3 style={{ margin: '0 0 8px 0', fontSize: '16px' }}>No documents found</h3>
+                      <td 
+                        colSpan="10" 
+                        style={{ 
+                          border: '1px solid #ddd', 
+                          padding: '40px',
+                          textAlign: 'center',
+                          color: '#95a5a6',
+                          fontSize: '16px'
+                        }}
+                      >
+                        <h3 style={{ margin: '0 0 8px 0', color: '#7f8c8d', fontSize: '16px' }}>No documents found</h3>
                         <p style={{ margin: 0, fontSize: '14px' }}>Documents will appear here once submitted</p>
                       </td>
                     </tr>
@@ -2283,6 +2749,690 @@ function Edashboard({ onLogout }) {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* Forwarded Documents Report Section */}
+        {activeSidebarTab === 'forwarded' && (
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '10px',
+            padding: '25px',
+            boxShadow: '0 4px 15px rgba(0,0,0,0.08)'
+          }}>
+
+            {/* Helper function to check if document was forwarded to this employee */}
+            {(() => {
+              const getForwardedDocuments = () => {
+                if (!employee || !allDocuments.length) return [];
+                
+                const employeeIdStr = String(employee._id);
+                const employeePosition = employee.position;
+                const employeeDepartment = employee.department;
+                const employeeOfficeName = employee.office?.name;
+                
+                return allDocuments.filter(doc => {
+                  // Check if employee is in assignedTo array
+                  const isAssigned = doc.assignedTo?.some(assignedId => {
+                    if (!assignedId) return false;
+                    const assignedIdStr = assignedId._id ? String(assignedId._id) : String(assignedId);
+                    return assignedIdStr === employeeIdStr;
+                  });
+                  
+                  // Check if employee is currentHandler
+                  const isCurrentHandler = doc.currentHandler ? (
+                    doc.currentHandler._id ? String(doc.currentHandler._id) === employeeIdStr : 
+                    String(doc.currentHandler) === employeeIdStr
+                  ) : false;
+                  
+                  // Check if document has forwardedDate (direct employee-to-employee forwarding)
+                  if ((isAssigned || isCurrentHandler) && doc.forwardedDate) {
+                    return true;
+                  }
+                  
+                  // Check routing history for documents forwarded to this employee's office/position
+                  if (doc.routingHistory && doc.routingHistory.length > 0) {
+                    // Find forwarding actions where document was forwarded TO this employee
+                    const forwardingEntries = doc.routingHistory
+                      .filter(entry => {
+                        const action = (entry.action || '').toLowerCase();
+                        return action.includes('forward') || action.includes('approved and forwarded');
+                      });
+                    
+                    // Check if any forwarding entry was TO this employee's position/office
+                    // We check the entry.office (which is the destination office) and entry.toOffice
+                    const forwardedToEmployee = forwardingEntries.some(entry => {
+                      const destinationOffice = entry.toOffice || entry.office || '';
+                      
+                      // Check if the destination office matches employee's position/office
+                      const matchesPosition = employeePosition && (
+                        destinationOffice.toLowerCase() === employeePosition.toLowerCase() ||
+                        destinationOffice.toLowerCase().includes(employeePosition.toLowerCase()) ||
+                        employeePosition.toLowerCase().includes(destinationOffice.toLowerCase())
+                      );
+                      const matchesDepartment = employeeDepartment && destinationOffice.toLowerCase().includes(employeeDepartment.toLowerCase());
+                      const matchesOffice = employeeOfficeName && destinationOffice.toLowerCase().includes(employeeOfficeName.toLowerCase());
+                      
+                      // Also check if the entry's office field matches (when toOffice is not available)
+                      const entryOfficeMatches = entry.office && (
+                        (employeePosition && entry.office.toLowerCase().includes(employeePosition.toLowerCase())) ||
+                        (employeeDepartment && entry.office.toLowerCase().includes(employeeDepartment.toLowerCase())) ||
+                        (employeeOfficeName && entry.office.toLowerCase().includes(employeeOfficeName.toLowerCase()))
+                      );
+                      
+                      return matchesPosition || matchesDepartment || matchesOffice || entryOfficeMatches;
+                    });
+                    
+                    if (forwardedToEmployee) {
+                      return true;
+                    }
+                  }
+                  
+                  // Check if currentOffice matches employee's position/office (document is currently at employee's office)
+                  const matchesCurrentOffice = doc.currentOffice && (
+                    (employeePosition && doc.currentOffice.toLowerCase() === employeePosition.toLowerCase()) ||
+                    (employeePosition && doc.currentOffice.toLowerCase().includes(employeePosition.toLowerCase()) && employeePosition.toLowerCase().includes(doc.currentOffice.toLowerCase())) ||
+                    (employeeDepartment && doc.currentOffice.toLowerCase().includes(employeeDepartment.toLowerCase())) ||
+                    (employeeOfficeName && doc.currentOffice.toLowerCase().includes(employeeOfficeName.toLowerCase()))
+                  );
+                  
+                  // Check if nextOffice matches employee's position/office (document is about to arrive at employee's office)
+                  const matchesNextOffice = doc.nextOffice && (
+                    (employeePosition && doc.nextOffice.toLowerCase() === employeePosition.toLowerCase()) ||
+                    (employeePosition && doc.nextOffice.toLowerCase().includes(employeePosition.toLowerCase()) && employeePosition.toLowerCase().includes(doc.nextOffice.toLowerCase())) ||
+                    (employeeDepartment && doc.nextOffice.toLowerCase().includes(employeeDepartment.toLowerCase())) ||
+                    (employeeOfficeName && doc.nextOffice.toLowerCase().includes(employeeOfficeName.toLowerCase()))
+                  );
+                  
+                  // Include if document is currently at or about to arrive at this employee's office and has routing history
+                  if ((matchesCurrentOffice || matchesNextOffice) && doc.routingHistory && doc.routingHistory.length > 0) {
+                    // Make sure it's not just the initial submission - check if there's a forwarding action
+                    const hasForwardingAction = doc.routingHistory.some(entry => {
+                      const action = (entry.action || '').toLowerCase();
+                      return action.includes('forward') || action.includes('approved');
+                    });
+                    
+                    return hasForwardingAction;
+                  }
+                  
+                  return false;
+                }).map(doc => {
+                  // Add forwardedTimestamp for sorting
+                  let forwardedTimestamp = null;
+                  
+                  if (doc.forwardedDate) {
+                    forwardedTimestamp = new Date(doc.forwardedDate);
+                  } else if (doc.routingHistory && doc.routingHistory.length > 0) {
+                    const forwardedEntry = doc.routingHistory
+                      .filter(entry => {
+                        const action = (entry.action || '').toLowerCase();
+                        return action.includes('forward') || action.includes('approved and forwarded');
+                      })
+                      .sort((a, b) => {
+                        const aTime = new Date(a.timestamp || a.date || 0);
+                        const bTime = new Date(b.timestamp || b.date || 0);
+                        return bTime - aTime;
+                      })[0];
+                    
+                    if (forwardedEntry) {
+                      forwardedTimestamp = new Date(forwardedEntry.timestamp || forwardedEntry.date);
+                    }
+                  }
+                  
+                  return {
+                    ...doc,
+                    forwardedTimestamp: forwardedTimestamp || new Date(0) // Use epoch if no timestamp found
+                  };
+                }).sort((a, b) => {
+                  // Sort by forwarded timestamp (most recent first)
+                  return b.forwardedTimestamp - a.forwardedTimestamp;
+                });
+              };
+
+              const forwardedDocs = getForwardedDocuments();
+
+              const downloadForwardedDocumentsReport = () => {
+                const doc = new jsPDF();
+                
+                doc.setFontSize(18);
+                doc.text('Forwarded Documents Report', 14, 20);
+                doc.setFontSize(10);
+                doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 28);
+                doc.setFontSize(10);
+                doc.text(`Employee: ${employee?.name || 'Unknown'}`, 14, 35);
+                doc.text(`Position: ${employee?.position || 'N/A'}`, 14, 42);
+                
+                if (forwardedDocs.length === 0) {
+                  doc.setFontSize(12);
+                  doc.text('No forwarded documents available.', 14, 55);
+                  doc.save('Forwarded_Documents_Report.pdf');
+                  return;
+                }
+                
+                const tableData = forwardedDocs.map(doc => {
+                  // Get forwarded date and time
+                  let forwardedDate = 'N/A';
+                  let forwardedTime = 'N/A';
+                  let forwardedBy = 'N/A';
+                  
+                  if (doc.forwardedDate) {
+                    const date = new Date(doc.forwardedDate);
+                    forwardedDate = date.toLocaleDateString('en-US', {
+                      year: 'numeric',
+                      month: '2-digit',
+                      day: '2-digit'
+                    });
+                    forwardedTime = date.toLocaleTimeString('en-US', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: true
+                    });
+                    forwardedBy = doc.forwardedBy || 'N/A';
+                  } else if (doc.routingHistory && doc.routingHistory.length > 0) {
+                    const forwardedEntry = doc.routingHistory
+                      .filter(entry => {
+                        const action = (entry.action || '').toLowerCase();
+                        return action.includes('forward') || action.includes('approved and forwarded');
+                      })
+                      .sort((a, b) => {
+                        const aTime = new Date(a.timestamp || a.date || 0);
+                        const bTime = new Date(b.timestamp || b.date || 0);
+                        return bTime - aTime;
+                      })[0];
+                    
+                    if (forwardedEntry) {
+                      const timestamp = forwardedEntry.timestamp || forwardedEntry.date;
+                      if (timestamp) {
+                        const date = new Date(timestamp);
+                        forwardedDate = date.toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: '2-digit',
+                          day: '2-digit'
+                        });
+                        forwardedTime = date.toLocaleTimeString('en-US', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: true
+                        });
+                      }
+                      forwardedBy = forwardedEntry.handler || forwardedEntry.performedBy || 'N/A';
+                    }
+                  }
+                  
+                  return [
+                    doc.documentId || 'N/A',
+                    doc.type || 'N/A',
+                    doc.status || 'Pending',
+                    forwardedBy,
+                    forwardedDate,
+                    forwardedTime
+                  ];
+                });
+                
+                doc.autoTable({
+                  head: [['Document ID', 'Type', 'Status', 'Forwarded By', 'Forwarded Date', 'Forwarded Time']],
+                  body: tableData,
+                  startY: 50,
+                  theme: 'grid',
+                  headStyles: { fillColor: [52, 152, 219] },
+                  styles: { fontSize: 9 },
+                  columnStyles: {
+                    0: { cellWidth: 40 },
+                    1: { cellWidth: 35 },
+                    2: { cellWidth: 30 },
+                    3: { cellWidth: 35 },
+                    4: { cellWidth: 30 },
+                    5: { cellWidth: 30 }
+                  }
+                });
+                
+                doc.save('Forwarded_Documents_Report.pdf');
+              };
+
+              return (
+                <div>
+                  {/* Header with Download Button */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <h2 style={{
+                      margin: 0,
+                      fontSize: '24px',
+                      fontWeight: '600',
+                      color: '#2c3e50'
+                    }}>
+                      Forwarded Documents Report
+                    </h2>
+                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                      <button
+                        onClick={() => fetchDocuments()}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: '#3498db',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          cursor: 'pointer',
+                          transition: 'background-color 0.3s ease'
+                        }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = '#2980b9'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = '#3498db'}
+                      >
+                        Refresh
+                      </button>
+                      <button
+                        onClick={downloadForwardedDocumentsReport}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: '#6c757d',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          cursor: 'pointer',
+                          transition: 'background-color 0.3s ease'
+                        }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = '#5a6268'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = '#6c757d'}
+                      >
+                        Download PDF
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Summary Stats */}
+                  <div style={{ 
+                    display: 'grid', 
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', 
+                    gap: '15px', 
+                    marginBottom: '25px' 
+                  }}>
+                    <div style={{
+                      backgroundColor: '#e3f2fd',
+                      padding: '15px',
+                      borderRadius: '8px',
+                      textAlign: 'center',
+                      border: '2px solid #bbdefb'
+                    }}>
+                      <h3 style={{ margin: '0 0 5px 0', color: '#1976d2', fontSize: '12px', fontWeight: '600' }}>
+                        Total Forwarded
+                      </h3>
+                      <p style={{ fontSize: '24px', fontWeight: 'bold', margin: 0, color: '#1976d2' }}>
+                        {forwardedDocs.length}
+                      </p>
+                    </div>
+                    <div style={{
+                      backgroundColor: '#fff3cd',
+                      padding: '15px',
+                      borderRadius: '8px',
+                      textAlign: 'center',
+                      border: '2px solid #ffeaa7'
+                    }}>
+                      <h3 style={{ margin: '0 0 5px 0', color: '#f39c12', fontSize: '12px', fontWeight: '600' }}>
+                        Pending Review
+                      </h3>
+                      <p style={{ fontSize: '24px', fontWeight: 'bold', margin: 0, color: '#f39c12' }}>
+                        {forwardedDocs.filter(d => ['Under Review', 'Processing', 'Pending'].includes(d.status)).length}
+                      </p>
+                    </div>
+                    <div style={{
+                      backgroundColor: '#e8f5e8',
+                      padding: '15px',
+                      borderRadius: '8px',
+                      textAlign: 'center',
+                      border: '2px solid #c8e6c9'
+                    }}>
+                      <h3 style={{ margin: '0 0 5px 0', color: '#388e3c', fontSize: '12px', fontWeight: '600' }}>
+                        Completed
+                      </h3>
+                      <p style={{ fontSize: '24px', fontWeight: 'bold', margin: 0, color: '#388e3c' }}>
+                        {forwardedDocs.filter(d => ['Approved', 'Completed'].includes(d.status)).length}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Forwarded Documents Table */}
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr>
+                          <th style={{ 
+                            border: '1px solid #ddd', 
+                            padding: '12px 10px', 
+                            textAlign: 'left', 
+                            backgroundColor: '#f8f9fa',
+                            fontSize: '13px',
+                            fontWeight: '600',
+                            color: '#2c3e50',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            Document ID
+                          </th>
+                          <th style={{ 
+                            border: '1px solid #ddd', 
+                            padding: '12px 8px', 
+                            textAlign: 'left', 
+                            backgroundColor: '#f8f9fa',
+                            fontSize: '13px',
+                            fontWeight: '600',
+                            color: '#2c3e50',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            Type
+                          </th>
+                          <th style={{ 
+                            border: '1px solid #ddd', 
+                            padding: '12px 8px', 
+                            textAlign: 'left', 
+                            backgroundColor: '#f8f9fa',
+                            fontSize: '13px',
+                            fontWeight: '600',
+                            color: '#2c3e50',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            Status
+                          </th>
+                          <th style={{ 
+                            border: '1px solid #ddd', 
+                            padding: '12px 8px', 
+                            textAlign: 'left', 
+                            backgroundColor: '#f8f9fa',
+                            fontSize: '13px',
+                            fontWeight: '600',
+                            color: '#2c3e50',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            Forwarded By
+                          </th>
+                          <th style={{ 
+                            border: '1px solid #ddd', 
+                            padding: '12px 8px', 
+                            textAlign: 'left', 
+                            backgroundColor: '#f8f9fa',
+                            fontSize: '13px',
+                            fontWeight: '600',
+                            color: '#2c3e50',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            Forwarded Date
+                          </th>
+                          <th style={{ 
+                            border: '1px solid #ddd', 
+                            padding: '12px 8px', 
+                            textAlign: 'left', 
+                            backgroundColor: '#f8f9fa',
+                            fontSize: '13px',
+                            fontWeight: '600',
+                            color: '#2c3e50',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            Forwarded Time
+                          </th>
+                          <th style={{ 
+                            border: '1px solid #ddd', 
+                            padding: '12px 8px', 
+                            textAlign: 'center', 
+                            backgroundColor: '#f8f9fa',
+                            fontSize: '13px',
+                            fontWeight: '600',
+                            color: '#2c3e50',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {forwardedDocs.length > 0 ? (
+                          forwardedDocs.map((doc) => (
+                            <tr key={doc._id} style={{
+                              borderBottom: '1px solid #e9ecef'
+                            }}>
+                              <td style={{ 
+                                border: '1px solid #ddd', 
+                                padding: '10px 8px',
+                                fontSize: '12px',
+                                color: '#2c3e50',
+                                fontWeight: '500'
+                              }}>
+                                {doc.documentId}
+                              </td>
+                              <td style={{ 
+                                border: '1px solid #ddd', 
+                                padding: '10px 8px',
+                                fontSize: '12px',
+                                color: '#7f8c8d'
+                              }}>
+                                <span style={{
+                                  padding: '4px 8px',
+                                  borderRadius: '4px',
+                                  fontSize: '11px',
+                                  fontWeight: '600',
+                                  backgroundColor: '#ecf0f1',
+                                  color: '#2c3e50'
+                                }}>
+                                  {doc.type}
+                                </span>
+                              </td>
+                              <td style={{ 
+                                border: '1px solid #ddd', 
+                                padding: '10px 8px',
+                                fontSize: '12px'
+                              }}>
+                                <span style={{
+                                  padding: '4px 8px',
+                                  borderRadius: '4px',
+                                  fontSize: '11px',
+                                  fontWeight: '600',
+                                  backgroundColor: doc.status === 'Approved' ? '#d4edda' :
+                                                 doc.status === 'Under Review' ? '#fff3cd' :
+                                                 doc.status === 'Processing' ? '#d1ecf1' :
+                                                 doc.status === 'Rejected' ? '#f8d7da' : '#e9ecef',
+                                  color: doc.status === 'Approved' ? '#155724' :
+                                         doc.status === 'Under Review' ? '#856404' :
+                                         doc.status === 'Processing' ? '#0c5460' :
+                                         doc.status === 'Rejected' ? '#721c24' : '#495057'
+                                }}>
+                                  {doc.status || 'Pending'}
+                                </span>
+                              </td>
+                              <td style={{ 
+                                border: '1px solid #ddd', 
+                                padding: '10px 8px',
+                                fontSize: '12px',
+                                color: '#7f8c8d'
+                              }}>
+                                {(() => {
+                                  // Get forwardedBy from document or from routing history
+                                  if (doc.forwardedBy) {
+                                    return doc.forwardedBy;
+                                  }
+                                  // Find the forwarding entry in routing history
+                                  if (doc.routingHistory && doc.routingHistory.length > 0) {
+                                    const forwardedEntry = doc.routingHistory
+                                      .filter(entry => {
+                                        const action = (entry.action || '').toLowerCase();
+                                        return action.includes('forward') || action.includes('approved and forwarded');
+                                      })
+                                      .sort((a, b) => {
+                                        const aTime = new Date(a.timestamp || a.date || 0);
+                                        const bTime = new Date(b.timestamp || b.date || 0);
+                                        return bTime - aTime;
+                                      })[0];
+                                    
+                                    if (forwardedEntry) {
+                                      return forwardedEntry.handler || forwardedEntry.performedBy || 'Unknown';
+                                    }
+                                  }
+                                  return 'N/A';
+                                })()}
+                              </td>
+                              <td style={{ 
+                                border: '1px solid #ddd', 
+                                padding: '10px 8px',
+                                fontSize: '12px',
+                                color: '#7f8c8d',
+                                whiteSpace: 'nowrap'
+                              }}>
+                                {(() => {
+                                  // Get forwarded date from document or from routing history
+                                  if (doc.forwardedDate) {
+                                    return new Date(doc.forwardedDate).toLocaleDateString('en-US', {
+                                      year: 'numeric',
+                                      month: '2-digit',
+                                      day: '2-digit'
+                                    });
+                                  }
+                                  // Find the forwarding entry in routing history
+                                  if (doc.routingHistory && doc.routingHistory.length > 0) {
+                                    const forwardedEntry = doc.routingHistory
+                                      .filter(entry => {
+                                        const action = (entry.action || '').toLowerCase();
+                                        return action.includes('forward') || action.includes('approved and forwarded');
+                                      })
+                                      .sort((a, b) => {
+                                        const aTime = new Date(a.timestamp || a.date || 0);
+                                        const bTime = new Date(b.timestamp || b.date || 0);
+                                        return bTime - aTime;
+                                      })[0];
+                                    
+                                    if (forwardedEntry) {
+                                      const timestamp = forwardedEntry.timestamp || forwardedEntry.date;
+                                      if (timestamp) {
+                                        return new Date(timestamp).toLocaleDateString('en-US', {
+                                          year: 'numeric',
+                                          month: '2-digit',
+                                          day: '2-digit'
+                                        });
+                                      }
+                                    }
+                                  }
+                                  return 'N/A';
+                                })()}
+                              </td>
+                              <td style={{ 
+                                border: '1px solid #ddd', 
+                                padding: '10px 8px',
+                                fontSize: '12px',
+                                color: '#7f8c8d',
+                                whiteSpace: 'nowrap'
+                              }}>
+                                {(() => {
+                                  // Get forwarded time from document or from routing history
+                                  if (doc.forwardedDate) {
+                                    return new Date(doc.forwardedDate).toLocaleTimeString('en-US', {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                      hour12: true
+                                    });
+                                  }
+                                  // Find the forwarding entry in routing history
+                                  if (doc.routingHistory && doc.routingHistory.length > 0) {
+                                    const forwardedEntry = doc.routingHistory
+                                      .filter(entry => {
+                                        const action = (entry.action || '').toLowerCase();
+                                        return action.includes('forward') || action.includes('approved and forwarded');
+                                      })
+                                      .sort((a, b) => {
+                                        const aTime = new Date(a.timestamp || a.date || 0);
+                                        const bTime = new Date(b.timestamp || b.date || 0);
+                                        return bTime - aTime;
+                                      })[0];
+                                    
+                                    if (forwardedEntry) {
+                                      const timestamp = forwardedEntry.timestamp || forwardedEntry.date;
+                                      if (timestamp) {
+                                        return new Date(timestamp).toLocaleTimeString('en-US', {
+                                          hour: '2-digit',
+                                          minute: '2-digit',
+                                          hour12: true
+                                        });
+                                      }
+                                    }
+                                  }
+                                  return 'N/A';
+                                })()}
+                              </td>
+                              <td style={{ 
+                                border: '1px solid #ddd', 
+                                padding: '10px 8px',
+                                textAlign: 'center'
+                              }}>
+                                <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                                  <button
+                                    onClick={() => {
+                                      setSelectedDocument(doc);
+                                      setShowReviewModal(true);
+                                      setReviewForm({
+                                        status: doc.status || '',
+                                        comments: doc.comments || '',
+                                        reviewer: employee?.name || '',
+                                        nextOffice: doc.nextOffice || ''
+                                      });
+                                    }}
+                                    style={{
+                                      padding: '6px 12px',
+                                      backgroundColor: '#3498db',
+                                      color: 'white',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      fontSize: '11px',
+                                      fontWeight: '600',
+                                      cursor: 'pointer'
+                                    }}
+                                    onMouseEnter={(e) => e.target.style.backgroundColor = '#2980b9'}
+                                    onMouseLeave={(e) => e.target.style.backgroundColor = '#3498db'}
+                                  >
+                                    Review
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setTrackedDocument(doc);
+                                      setShowTrackModal(true);
+                                    }}
+                                    style={{
+                                      padding: '6px 12px',
+                                      backgroundColor: '#f39c12',
+                                      color: 'white',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      fontSize: '11px',
+                                      fontWeight: '600',
+                                      cursor: 'pointer'
+                                    }}
+                                    onMouseEnter={(e) => e.target.style.backgroundColor = '#e67e22'}
+                                    onMouseLeave={(e) => e.target.style.backgroundColor = '#f39c12'}
+                                  >
+                                    Track
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td 
+                              colSpan="7" 
+                              style={{ 
+                                border: '1px solid #ddd', 
+                                padding: '40px',
+                                textAlign: 'center',
+                                color: '#95a5a6',
+                                fontSize: '16px'
+                              }}
+                            >
+                              <h3 style={{ margin: '0 0 8px 0', color: '#7f8c8d', fontSize: '16px' }}>No forwarded documents</h3>
+                              <p style={{ margin: 0, fontSize: '14px' }}>Documents forwarded to you will appear here</p>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -2860,57 +4010,207 @@ function Edashboard({ onLogout }) {
                 </select>
               </div>
 
-              {/* Date and Time */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-                <div>
-                  <label style={{
-                    display: 'block',
-                    marginBottom: '8px',
-                    fontSize: '14px',
-                    fontWeight: '600',
-                    color: '#2c3e50'
-                  }}>
-                    Date *
-                  </label>
-                  <input
-                    type="date"
-                    value={documentForm.date}
-                    onChange={(e) => handleDocumentInputChange('date', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '12px',
-                      border: '1px solid #ddd',
-                      borderRadius: '8px',
+              {/* Date and Time - Hide for TRAVEL ORDER */}
+              {!(documentForm.type && documentForm.type.toUpperCase().includes('TRAVEL ORDER')) && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                  <div>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '8px',
                       fontSize: '14px',
-                      boxSizing: 'border-box'
-                    }}
-                  />
-                </div>
-                <div>
-                  <label style={{
-                    display: 'block',
-                    marginBottom: '8px',
-                    fontSize: '14px',
-                    fontWeight: '600',
-                    color: '#2c3e50'
-                  }}>
-                    Time *
-                  </label>
-                  <input
-                    type="time"
-                    value={documentForm.time}
-                    onChange={(e) => handleDocumentInputChange('time', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '12px',
-                      border: '1px solid #ddd',
-                      borderRadius: '8px',
+                      fontWeight: '600',
+                      color: '#2c3e50'
+                    }}>
+                      Date *
+                    </label>
+                    <input
+                      type="date"
+                      value={documentForm.date}
+                      onChange={(e) => handleDocumentInputChange('date', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '12px',
+                        border: '1px solid #ddd',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '8px',
                       fontSize: '14px',
-                      boxSizing: 'border-box'
-                    }}
-                  />
+                      fontWeight: '600',
+                      color: '#2c3e50'
+                    }}>
+                      Time *
+                    </label>
+                    <input
+                      type="time"
+                      value={documentForm.time}
+                      onChange={(e) => handleDocumentInputChange('time', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '12px',
+                        border: '1px solid #ddd',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Travel Order Specific Fields - Only show for TRAVEL ORDER */}
+              {documentForm.type && documentForm.type.toUpperCase().includes('TRAVEL ORDER') && (
+                <>
+                  <div style={{
+                    marginTop: '20px',
+                    padding: '15px',
+                    backgroundColor: '#f8f9fa',
+                    borderRadius: '8px',
+                    border: '1px solid #e0e0e0'
+                  }}>
+                    <h4 style={{
+                      margin: '0 0 15px 0',
+                      fontSize: '15px',
+                      fontWeight: '600',
+                      color: '#2c3e50'
+                    }}>
+                      Travel Details
+                    </h4>
+                    
+                    {/* When to Go */}
+                    <div style={{ marginBottom: '15px' }}>
+                      <label style={{
+                        display: 'block',
+                        marginBottom: '8px',
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        color: '#2c3e50'
+                      }}>
+                        When to Go *
+                      </label>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                        <div>
+                          <label style={{
+                            display: 'block',
+                            marginBottom: '4px',
+                            fontSize: '12px',
+                            fontWeight: '500',
+                            color: '#666'
+                          }}>
+                            Date
+                          </label>
+                          <input
+                            type="date"
+                            value={documentForm.travelOrderDepartureDate}
+                            onChange={(e) => handleDocumentInputChange('travelOrderDepartureDate', e.target.value)}
+                            style={{
+                              width: '100%',
+                              padding: '12px',
+                              border: '1px solid #ddd',
+                              borderRadius: '8px',
+                              fontSize: '14px',
+                              boxSizing: 'border-box'
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{
+                            display: 'block',
+                            marginBottom: '4px',
+                            fontSize: '12px',
+                            fontWeight: '500',
+                            color: '#666'
+                          }}>
+                            Time
+                          </label>
+                          <input
+                            type="time"
+                            value={documentForm.travelOrderDepartureTime}
+                            onChange={(e) => handleDocumentInputChange('travelOrderDepartureTime', e.target.value)}
+                            style={{
+                              width: '100%',
+                              padding: '12px',
+                              border: '1px solid #ddd',
+                              borderRadius: '8px',
+                              fontSize: '14px',
+                              boxSizing: 'border-box'
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* When to Return */}
+                    <div>
+                      <label style={{
+                        display: 'block',
+                        marginBottom: '8px',
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        color: '#2c3e50'
+                      }}>
+                        When to Return *
+                      </label>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                        <div>
+                          <label style={{
+                            display: 'block',
+                            marginBottom: '4px',
+                            fontSize: '12px',
+                            fontWeight: '500',
+                            color: '#666'
+                          }}>
+                            Date
+                          </label>
+                          <input
+                            type="date"
+                            value={documentForm.travelOrderReturnDate}
+                            onChange={(e) => handleDocumentInputChange('travelOrderReturnDate', e.target.value)}
+                            style={{
+                              width: '100%',
+                              padding: '12px',
+                              border: '1px solid #ddd',
+                              borderRadius: '8px',
+                              fontSize: '14px',
+                              boxSizing: 'border-box'
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{
+                            display: 'block',
+                            marginBottom: '4px',
+                            fontSize: '12px',
+                            fontWeight: '500',
+                            color: '#666'
+                          }}>
+                            Time
+                          </label>
+                          <input
+                            type="time"
+                            value={documentForm.travelOrderReturnTime}
+                            onChange={(e) => handleDocumentInputChange('travelOrderReturnTime', e.target.value)}
+                            style={{
+                              width: '100%',
+                              padding: '12px',
+                              border: '1px solid #ddd',
+                              borderRadius: '8px',
+                              fontSize: '14px',
+                              boxSizing: 'border-box'
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* Receiver */}
               <div>
@@ -3183,7 +4483,7 @@ function Edashboard({ onLogout }) {
                 fontWeight: '600',
                 color: '#2c3e50'
               }}>
-                📄 Document Review
+                Document Review
               </h2>
             </div>
 
@@ -3259,7 +4559,7 @@ function Edashboard({ onLogout }) {
                     textTransform: 'uppercase',
                     letterSpacing: '0.3px'
                   }}>
-                    📋 Progress
+                    Progress
                   </h4>
                   
                   <div style={{
@@ -3269,11 +4569,8 @@ function Edashboard({ onLogout }) {
                     position: 'relative'
                   }}>
                     {stages.map((stage, index) => {
-                      const isLastStage = index === stages.length - 1;
-                      
                       const isCompleted = index < currentStageIndex || (isWorkflowComplete && index === currentStageIndex);
                       const isCurrent = !isWorkflowComplete && index === currentStageIndex;
-                      const isPending = index > currentStageIndex && !(isWorkflowComplete && index === currentStageIndex);
                       
                       return (
                         <React.Fragment key={stage}>
@@ -3644,7 +4941,7 @@ function Edashboard({ onLogout }) {
                   alignItems: 'center',
                   gap: '6px'
                 }}>
-                  📋 Routing History
+                  Routing History
                 </h3>
                 <div style={{
                   maxHeight: '200px',
@@ -3664,15 +4961,29 @@ function Edashboard({ onLogout }) {
                         color: '#2c3e50',
                         marginBottom: '3px'
                       }}>
-                        {entry.action || 'Updated'}
-                        {entry.fromOffice && entry.toOffice && (
+                        {entry.action ? entry.action.charAt(0).toUpperCase() + entry.action.slice(1).replace(/_/g, ' ') : 'Updated'}
+                        {entry.office && (
                           <span style={{ color: '#7f8c8d', fontWeight: 'normal' }}>
-                            {' '}: {entry.fromOffice} → {entry.toOffice}
+                            {' '}at {entry.office}
                           </span>
                         )}
                       </div>
                       <div style={{ color: '#7f8c8d', fontSize: '10px' }}>
-                        By: {entry.performedBy || 'Unknown'} • {new Date(entry.date).toLocaleString()}
+                        {(() => {
+                          const handler = entry.handler || entry.performedBy || 'Unknown';
+                          const timestamp = entry.timestamp || entry.date;
+                          const dateStr = timestamp 
+                            ? new Date(timestamp).toLocaleString('en-US', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: true
+                              })
+                            : 'N/A';
+                          return `By: ${handler} • ${dateStr}`;
+                        })()}
                       </div>
                       {entry.comments && (
                         <div style={{ 
@@ -3954,8 +5265,8 @@ function Edashboard({ onLogout }) {
                   </button>
                   <button
                     onClick={() => {
-                      handleDeleteDocument(selectedDocument._id);
-                      handleCloseReviewModal();
+                        handleDeleteDocument(selectedDocument._id);
+                        handleCloseReviewModal();
                     }}
                     style={{
                       padding: '10px 20px',
@@ -4023,8 +5334,8 @@ function Edashboard({ onLogout }) {
           <div style={{
             backgroundColor: 'white',
             borderRadius: '15px',
-            padding: '30px',
-            maxWidth: '700px',
+            padding: '20px',
+            maxWidth: '900px',
             width: '90%',
             maxHeight: '90vh',
             overflow: 'auto',
@@ -4067,13 +5378,13 @@ function Edashboard({ onLogout }) {
             {/* Modal Header */}
             <div style={{
               textAlign: 'center',
-              marginBottom: '30px',
-              paddingBottom: '20px',
+              marginBottom: '15px',
+              paddingBottom: '12px',
               borderBottom: '2px solid #ecf0f1'
             }}>
               <h2 style={{
-                margin: '0 0 5px 0',
-                fontSize: '24px',
+                margin: '0 0 3px 0',
+                fontSize: '18px',
                 fontWeight: '600',
                 color: '#2c3e50'
               }}>
@@ -4081,7 +5392,7 @@ function Edashboard({ onLogout }) {
               </h2>
               <p style={{
                 margin: 0,
-                fontSize: '14px',
+                fontSize: '12px',
                 color: '#7f8c8d'
               }}>
                 Track the progress of your document
@@ -4091,29 +5402,29 @@ function Edashboard({ onLogout }) {
             {/* Document Info */}
             <div style={{
               backgroundColor: '#f8f9fa',
-              padding: '20px',
+              padding: '12px',
               borderRadius: '8px',
-              marginBottom: '25px'
+              marginBottom: '15px'
             }}>
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
-                marginBottom: '10px'
+                marginBottom: '6px'
               }}>
                 <code style={{
                   backgroundColor: '#e9ecef',
-                  padding: '4px 8px',
+                  padding: '3px 6px',
                   borderRadius: '4px',
-                  fontSize: '12px',
+                  fontSize: '11px',
                   fontWeight: '600',
                   color: '#495057',
-                  marginRight: '10px'
+                  marginRight: '8px'
                 }}>
                   {trackedDocument.documentId}
                 </code>
                 <h3 style={{
                   margin: 0,
-                  fontSize: '18px',
+                  fontSize: '15px',
                   fontWeight: '600',
                   color: '#2c3e50'
                 }}>
@@ -4122,154 +5433,275 @@ function Edashboard({ onLogout }) {
               </div>
               {trackedDocument.description && (
                 <p style={{
-                  margin: '0 0 10px 0',
+                  margin: '0 0 6px 0',
                   color: '#6c757d',
-                  fontSize: '14px'
+                  fontSize: '12px',
+                  lineHeight: '1.3'
                 }}>
                   {trackedDocument.description}
                 </p>
               )}
               <div style={{
                 display: 'flex',
-                gap: '15px',
-                flexWrap: 'wrap'
+                gap: '8px',
+                flexWrap: 'wrap',
+                alignItems: 'center'
               }}>
                 <span style={{
-                  backgroundColor: getStatusColor(trackedDocument.status),
+                  backgroundColor: getStatusColor(getDisplayStatus(trackedDocument)),
                   color: 'white',
-                  padding: '4px 12px',
+                  padding: '2px 8px',
                   borderRadius: '12px',
-                  fontSize: '12px',
+                  fontSize: '10px',
                   fontWeight: '600',
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: '4px'
+                  gap: '3px'
                 }}>
-                  {getStatusIcon(trackedDocument.status)} {trackedDocument.status || 'Submitted'}
+                  {getStatusIcon(getDisplayStatus(trackedDocument))} {getDisplayStatus(trackedDocument) || 'Submitted'}
                 </span>
                 <span style={{
                   color: '#6c757d',
-                  fontSize: '14px'
+                  fontSize: '11px'
                 }}>
                   Submitted: {trackedDocument.dateUploaded ? new Date(trackedDocument.dateUploaded).toLocaleDateString() : 'N/A'}
                 </span>
                 <span style={{
                   color: '#6c757d',
-                  fontSize: '14px'
+                  fontSize: '11px'
                 }}>
                   By: {trackedDocument.submittedBy || 'Unknown'}
                 </span>
               </div>
             </div>
 
-            {/* Tracking Timeline */}
-            <div>
+            {/* Document Route */}
+            <div style={{
+              backgroundColor: '#ffffff',
+              padding: '12px',
+              borderRadius: '8px',
+              border: '1px solid #e9ecef'
+            }}>
               <h4 style={{
-                margin: '0 0 20px 0',
-                fontSize: '16px',
+                margin: '0 0 15px 0',
+                fontSize: '15px',
                 fontWeight: '600',
-                color: '#2c3e50'
+                color: '#2c3e50',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
               }}>
-                📈 Processing Timeline
+                <span style={{ fontSize: '16px' }}>📍</span>
+                Document Route
               </h4>
               
-              <div style={{ position: 'relative' }}>
-                {getTimelineSteps(trackedDocument).map((step, index) => (
-                  <div key={step.id} style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    marginBottom: index < getTimelineSteps(trackedDocument).length - 1 ? '25px' : '0'
-                  }}>
-                    {/* Timeline Line */}
-                    {index < getTimelineSteps(trackedDocument).length - 1 && (
-                      <div style={{
-                        position: 'absolute',
-                        left: '15px',
-                        top: '35px',
-                        width: '2px',
-                        height: '50px',
-                        backgroundColor: step.completed ? '#28a745' : '#e9ecef',
-                        zIndex: 1
-                      }} />
-                    )}
+              {trackedDocument.routingHistory && trackedDocument.routingHistory.length > 0 ? (
+                <div style={{ position: 'relative' }}>
+                  {trackedDocument.routingHistory.map((entry, index) => {
+                    const isLast = index === trackedDocument.routingHistory.length - 1;
+                    const entryDate = entry.timestamp ? new Date(entry.timestamp) : (entry.date ? new Date(entry.date) : null);
+                    const formattedDate = entryDate ? entryDate.toLocaleDateString('en-US', {
+                      year: 'numeric',
+                      month: '2-digit',
+                      day: '2-digit'
+                    }) : 'N/A';
+                    const formattedTime = entryDate ? entryDate.toLocaleTimeString('en-US', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: true
+                    }) : 'N/A';
+                    const handler = entry.handler || entry.performedBy || 'Unknown';
+                    const office = entry.office || entry.toOffice || trackedDocument.currentOffice || 'Unknown Office';
+                    const action = entry.action || 'processed';
                     
-                    {/* Step Icon */}
-                    <div style={{
-                      width: '30px',
-                      height: '30px',
-                      borderRadius: '50%',
-                      backgroundColor: step.completed 
-                        ? (step.isRejected ? '#dc3545' : '#28a745')
-                        : step.active 
-                          ? '#007bff' 
-                          : '#e9ecef',
-                      color: step.completed || step.active ? 'white' : '#6c757d',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      marginRight: '15px',
-                      zIndex: 2,
-                      position: 'relative'
-                    }}>
-                      {step.completed ? (step.isRejected ? 'X' : '✓') : step.active ? '-' : '○'}
-                    </div>
+                    // Determine if this is the current location
+                    const isCurrentLocation = index === trackedDocument.routingHistory.length - 1 && 
+                      trackedDocument.status !== 'Completed' && 
+                      trackedDocument.status !== 'Archived';
                     
-                    {/* Step Content */}
-                    <div style={{ flex: 1 }}>
-                      <div style={{
+                    return (
+                      <div key={index} style={{
                         display: 'flex',
-                        justifyContent: 'space-between',
                         alignItems: 'flex-start',
-                        marginBottom: '5px'
+                        marginBottom: isLast ? '0' : '12px',
+                        position: 'relative'
                       }}>
-                        <h5 style={{
-                          margin: 0,
-                          fontSize: '16px',
-                          fontWeight: '600',
-                          color: step.completed || step.active ? '#2c3e50' : '#6c757d'
-                        }}>
-                          {step.title}
-                        </h5>
-                        {step.date && (
-                          <span style={{
-                            fontSize: '12px',
-                            color: '#6c757d',
-                            backgroundColor: '#f8f9fa',
-                            padding: '2px 8px',
-                            borderRadius: '4px'
-                          }}>
-                            {step.date}
-                          </span>
+                        {/* Route Line */}
+                        {!isLast && (
+                          <div style={{
+                            position: 'absolute',
+                            left: '13px',
+                            top: '28px',
+                            width: '2px',
+                            height: 'calc(100% + 8px)',
+                            backgroundColor: '#28a745',
+                            zIndex: 1
+                          }} />
                         )}
+                        
+                        {/* Route Point Icon */}
+                        <div style={{
+                          width: '26px',
+                          height: '26px',
+                          minWidth: '26px',
+                          borderRadius: '50%',
+                          backgroundColor: isCurrentLocation ? '#007bff' : '#28a745',
+                          color: 'white',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          marginRight: '12px',
+                          zIndex: 2,
+                          position: 'relative',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        }}>
+                          {index + 1}
+                        </div>
+                        
+                        {/* Route Content */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'flex-start',
+                            gap: '15px',
+                            marginBottom: '6px'
+                          }}>
+                            <div style={{ flex: 1 }}>
+                              <h5 style={{
+                                margin: '0 0 4px 0',
+                                fontSize: '14px',
+                                fontWeight: '600',
+                                color: '#2c3e50'
+                              }}>
+                                {office}
+                                {isCurrentLocation && (
+                                  <span style={{
+                                    marginLeft: '8px',
+                                    fontSize: '11px',
+                                    color: '#007bff',
+                                    fontWeight: '500'
+                                  }}>
+                                    (Current)
+                                  </span>
+                                )}
+                              </h5>
+                              <p style={{
+                                margin: 0,
+                                fontSize: '12px',
+                                color: '#6c757d',
+                                lineHeight: '1.3',
+                                textTransform: 'capitalize'
+                              }}>
+                                {action.replace(/_/g, ' ')}
+                              </p>
+                            </div>
+                          </div>
+                          <div style={{
+                            display: 'flex',
+                            gap: '10px',
+                            flexWrap: 'wrap',
+                            marginTop: '6px',
+                            padding: '8px 10px',
+                            backgroundColor: '#f8f9fa',
+                            borderRadius: '6px',
+                            border: '1px solid #e9ecef'
+                          }}>
+                            <span style={{
+                              fontSize: '11px',
+                              color: '#2c3e50',
+                              fontWeight: '500'
+                            }}>
+                              📅 {formattedDate}
+                            </span>
+                            <span style={{
+                              fontSize: '11px',
+                              color: '#2c3e50',
+                              fontWeight: '500'
+                            }}>
+                              🕒 {formattedTime}
+                            </span>
+                            {handler && handler !== 'Unknown' && (
+                              <span style={{
+                                fontSize: '11px',
+                                color: '#2c3e50',
+                                fontWeight: '500'
+                              }}>
+                                👤 {handler}
+                              </span>
+                            )}
+                            {entry.processingTime && (
+                              <span style={{
+                                fontSize: '11px',
+                                color: '#2c3e50',
+                                fontWeight: '500'
+                              }}>
+                                ⏱️ {entry.processingTime.toFixed(1)} hrs
+                              </span>
+                            )}
+                          </div>
+                          {entry.comments && (
+                            <div style={{
+                              marginTop: '6px',
+                              padding: '6px 10px',
+                              backgroundColor: '#e3f2fd',
+                              borderRadius: '4px',
+                              fontSize: '11px',
+                              color: '#1565c0',
+                              fontStyle: 'italic'
+                            }}>
+                              💬 {entry.comments}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <p style={{
-                        margin: 0,
-                        fontSize: '14px',
-                        color: '#6c757d',
-                        lineHeight: '1.4'
-                      }}>
-                        {step.description}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '20px',
+                  color: '#6c757d',
+                  fontSize: '13px'
+                }}>
+                  No routing history available. Document route will appear here as it moves through the system.
+                </div>
+              )}
+              
+              {/* Show current office if different from last routing history entry */}
+              {trackedDocument.currentOffice && 
+               trackedDocument.routingHistory && 
+               trackedDocument.routingHistory.length > 0 &&
+               trackedDocument.routingHistory[trackedDocument.routingHistory.length - 1].office !== trackedDocument.currentOffice && (
+                <div style={{
+                  marginTop: '12px',
+                  padding: '10px',
+                  backgroundColor: '#fff3cd',
+                  borderRadius: '6px',
+                  border: '1px solid #ffc107',
+                  fontSize: '12px',
+                  color: '#856404'
+                }}>
+                  <strong>Current Location:</strong> {trackedDocument.currentOffice}
+                </div>
+              )}
             </div>
 
             {/* Comments Section */}
             {trackedDocument.comments && (
               <div style={{
-                marginTop: '25px',
-                padding: '15px',
+                marginTop: '12px',
+                padding: '10px',
                 backgroundColor: '#f8f9fa',
                 borderRadius: '8px',
                 borderLeft: '4px solid #007bff'
               }}>
                 <h5 style={{
-                  margin: '0 0 8px 0',
-                  fontSize: '14px',
+                  margin: '0 0 4px 0',
+                  fontSize: '12px',
                   fontWeight: '600',
                   color: '#2c3e50'
                 }}>
@@ -4277,9 +5709,9 @@ function Edashboard({ onLogout }) {
                 </h5>
                 <p style={{
                   margin: 0,
-                  fontSize: '14px',
+                  fontSize: '11px',
                   color: '#6c757d',
-                  lineHeight: '1.4'
+                  lineHeight: '1.3'
                 }}>
                   {trackedDocument.comments}
                 </p>
@@ -4290,19 +5722,19 @@ function Edashboard({ onLogout }) {
             <div style={{
               display: 'flex',
               justifyContent: 'center',
-              marginTop: '30px',
-              paddingTop: '20px',
+              marginTop: '15px',
+              paddingTop: '12px',
               borderTop: '2px solid #ecf0f1'
             }}>
               <button
                 onClick={handleCloseTrackModal}
                 style={{
-                  padding: '12px 24px',
+                  padding: '8px 20px',
                   backgroundColor: '#3498db',
                   color: 'white',
                   border: 'none',
                   borderRadius: '8px',
-                  fontSize: '14px',
+                  fontSize: '13px',
                   fontWeight: '600',
                   cursor: 'pointer',
                   transition: 'background-color 0.3s ease'

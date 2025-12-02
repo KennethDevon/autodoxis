@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import QRCodeDisplay from './components/QRCodeDisplay';
 import BarcodeDisplay from './components/BarcodeDisplay';
-import DocumentTracker from './components/DocumentTracker';
 import AdvancedSearch from './components/AdvancedSearch';
-import DelayAlerts from './components/DelayAlerts';
 import DocumentTrackingTimeline from './components/DocumentTrackingTimeline';
 import { showNotification } from './components/NotificationSystem';
 import API_URL from './config';
@@ -24,19 +22,19 @@ function Document() {
   const [showBarcode, setShowBarcode] = useState(null);
   const [showTracker, setShowTracker] = useState(null);
   const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
-  const [showDelayAlerts, setShowDelayAlerts] = useState(false);
   const [showTrackingTimeline, setShowTrackingTimeline] = useState(null);
-  const [showForwardModal, setShowForwardModal] = useState(null);
   const [viewingDocument, setViewingDocument] = useState(null);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [reviewDocument, setReviewDocument] = useState(null);
+  const [reviewForm, setReviewForm] = useState({
+    comments: '',
+    reviewer: ''
+  });
   const [employees, setEmployees] = useState([]);
   const [offices, setOffices] = useState([]);
   const [documentTypes, setDocumentTypes] = useState([]);
-  const [selectedEmployee, setSelectedEmployee] = useState('');
-  const [selectedOffice, setSelectedOffice] = useState('');
   const [selectedOfficeForForm, setSelectedOfficeForForm] = useState('');
   const [filteredEmployeesForForm, setFilteredEmployeesForForm] = useState([]);
-  const [forwardType, setForwardType] = useState('office'); // 'office' or 'employee'
-  const [forwardComments, setForwardComments] = useState('');
   const [expandedDocuments, setExpandedDocuments] = useState(new Set());
   const [formData, setFormData] = useState({
     sender: '',
@@ -349,6 +347,88 @@ function Document() {
     setShowApproveModal(true);
   };
 
+  const handleReviewInputChange = (field, value) => {
+    setReviewForm(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  const handleApproveFromReview = async () => {
+    if (!reviewDocument) return;
+
+    try {
+      const userData = localStorage.getItem('userData');
+      const approverName = userData ? JSON.parse(userData).username || 'Admin' : 'Admin';
+
+      const updateData = {
+        status: 'Approved',
+        reviewer: reviewForm.reviewer || approverName,
+        reviewDate: new Date().toISOString(),
+        comments: reviewForm.comments || `Approved by Admin (${approverName})`,
+        nextOffice: '', // Clear next office - workflow complete
+      };
+
+      const response = await fetch(`${API_URL}/documents/${reviewDocument._id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updateData),
+      });
+
+      if (response.ok) {
+        // Add routing history entry
+        try {
+          await fetch(`${API_URL}/documents/${reviewDocument._id}/routing-history`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              office: reviewDocument.currentOffice || 'Admin',
+              action: 'approved',
+              handler: reviewForm.reviewer || approverName,
+              comments: reviewForm.comments || `Final approval by Admin (${approverName})`
+            }),
+          });
+        } catch (historyError) {
+          console.error('Error adding routing history:', historyError);
+        }
+
+        setShowNotificationPane(true);
+        setNotificationMessage(`Document "${reviewDocument.name}" has been approved successfully!`);
+        setNotificationType('success');
+        setShowReviewModal(false);
+        setReviewDocument(null);
+        fetchDocuments();
+        setTimeout(() => setShowNotificationPane(false), 3000);
+      } else {
+        const errorData = await response.json();
+        setShowNotificationPane(true);
+        setNotificationMessage(`Failed to approve document: ${errorData.message || 'Unknown error'}`);
+        setNotificationType('error');
+        setTimeout(() => setShowNotificationPane(false), 3000);
+      }
+    } catch (error) {
+      console.error('Error approving document:', error);
+      setShowNotificationPane(true);
+      setNotificationMessage('Error approving document');
+      setNotificationType('error');
+      setTimeout(() => setShowNotificationPane(false), 3000);
+    }
+  };
+
+  const handleCloseReviewModal = () => {
+    setShowReviewModal(false);
+    setReviewDocument(null);
+    setReviewForm({
+      comments: '',
+      reviewer: ''
+    });
+    fetchDocuments();
+  };
+
   const confirmApprove = async () => {
     if (!documentToApprove) return;
 
@@ -427,102 +507,6 @@ function Document() {
     setDocumentToApprove(null);
   };
 
-  const handleForward = async () => {
-    if (forwardType === 'employee' && !selectedEmployee) {
-      setShowNotificationPane(true);
-      setNotificationMessage('Please select an employee');
-      setNotificationType('error');
-      setTimeout(() => setShowNotificationPane(false), 3000);
-      return;
-    }
-    if (forwardType === 'office' && !selectedOffice) {
-      setShowNotificationPane(true);
-      setNotificationMessage('Please select an office');
-      setNotificationType('error');
-      setTimeout(() => setShowNotificationPane(false), 3000);
-      return;
-    }
-
-    try {
-      const userData = localStorage.getItem('userData');
-      const forwardedBy = userData ? JSON.parse(userData).username || 'Admin' : 'Admin';
-
-      if (forwardType === 'employee') {
-        // Forward to employee
-        const response = await fetch(`${API_URL}/documents/${showForwardModal._id}/forward-to-employee`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            employeeId: selectedEmployee,
-            forwardedBy: forwardedBy,
-            comments: forwardComments
-          }),
-        });
-
-        if (response.ok) {
-          const result = await response.json();
-          setShowNotificationPane(true);
-          setNotificationMessage(result.message || 'Document forwarded successfully');
-          setNotificationType('success');
-          fetchDocuments();
-          setShowForwardModal(null);
-          setSelectedEmployee('');
-          setSelectedOffice('');
-          setForwardComments('');
-          setForwardType('office');
-          setTimeout(() => setShowNotificationPane(false), 3000);
-        } else {
-          const error = await response.json();
-          setShowNotificationPane(true);
-          setNotificationMessage(`Failed to forward document: ${error.message}`);
-          setNotificationType('error');
-          setTimeout(() => setShowNotificationPane(false), 3000);
-        }
-      } else {
-        // Forward to office
-        const response = await fetch(`${API_URL}/documents/${showForwardModal._id}/forward`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            reviewer: forwardedBy,
-            nextOffice: selectedOffice,
-            currentOffice: selectedOffice,
-            comments: forwardComments || `Forwarded to ${selectedOffice} by ${forwardedBy}`,
-            status: 'Processing'
-          }),
-        });
-
-        if (response.ok) {
-          setShowNotificationPane(true);
-          setNotificationMessage(`Document forwarded to ${selectedOffice} successfully!`);
-          setNotificationType('success');
-          fetchDocuments();
-          setShowForwardModal(null);
-          setSelectedEmployee('');
-          setSelectedOffice('');
-          setForwardComments('');
-          setForwardType('office');
-          setTimeout(() => setShowNotificationPane(false), 3000);
-        } else {
-          const error = await response.json();
-          setShowNotificationPane(true);
-          setNotificationMessage(`Failed to forward document: ${error.message}`);
-          setNotificationType('error');
-          setTimeout(() => setShowNotificationPane(false), 3000);
-        }
-      }
-    } catch (error) {
-      console.error('Error forwarding document:', error);
-      setShowNotificationPane(true);
-      setNotificationMessage('Error forwarding document');
-      setNotificationType('error');
-      setTimeout(() => setShowNotificationPane(false), 3000);
-    }
-  };
 
   const handleCloseModal = () => {
     setShowModal(false);
@@ -577,19 +561,6 @@ function Document() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h2>Document Management</h2>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button 
-            onClick={() => setShowDelayAlerts(true)}
-            style={{ 
-              padding: '10px 20px', 
-              backgroundColor: '#f39c12', 
-              color: 'white', 
-              border: 'none', 
-              borderRadius: '4px', 
-              cursor: 'pointer' 
-            }}
-          >
-            Delay Alerts
-          </button>
           <button 
             onClick={() => setShowAdvancedSearch(true)}
             style={{ 
@@ -826,27 +797,6 @@ function Document() {
                     ✓ Approve
                   </button>
                 )}
-                <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowForwardModal(document);
-                      }}
-                  style={{
-                        padding: '8px 16px',
-                        backgroundColor: '#28a745',
-                    color: 'white',
-                    border: 'none',
-                        borderRadius: '6px',
-                    cursor: 'pointer',
-                        fontSize: '14px',
-                        fontWeight: '500',
-                        transition: 'all 0.2s ease'
-                  }}
-                      onMouseEnter={(e) => e.target.style.transform = 'translateY(-2px)'}
-                      onMouseLeave={(e) => e.target.style.transform = 'translateY(0)'}
-                >
-                      Forward
-                </button>
                 <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -1290,13 +1240,959 @@ function Document() {
         />
       )}
 
-      {/* Document Tracker Modal */}
-      {showTracker && (
-        <DocumentTracker
-          documentId={showTracker.id}
-          documentName={showTracker.name}
-          onClose={() => setShowTracker(null)}
-        />
+      {/* Document Route Tracking Modal */}
+      {showTracker && showTracker.document && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '15px',
+            padding: '20px',
+            maxWidth: '900px',
+            width: '90%',
+            maxHeight: '90vh',
+            overflow: 'auto',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+            position: 'relative'
+          }}>
+            {/* Close Button */}
+            <button
+              onClick={() => setShowTracker(null)}
+              style={{
+                position: 'absolute',
+                top: '15px',
+                right: '15px',
+                background: 'none',
+                border: 'none',
+                fontSize: '24px',
+                cursor: 'pointer',
+                color: '#7f8c8d',
+                padding: '5px',
+                borderRadius: '50%',
+                width: '35px',
+                height: '35px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.3s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = '#f8f9fa';
+                e.target.style.color = '#e74c3c';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = 'transparent';
+                e.target.style.color = '#7f8c8d';
+              }}
+            >
+              ×
+            </button>
+
+            {/* Modal Header */}
+            <div style={{
+              textAlign: 'center',
+              marginBottom: '15px',
+              paddingBottom: '12px',
+              borderBottom: '2px solid #ecf0f1'
+            }}>
+              <h2 style={{
+                margin: '0 0 3px 0',
+                fontSize: '18px',
+                fontWeight: '600',
+                color: '#2c3e50'
+              }}>
+                Document Tracking
+              </h2>
+              <p style={{
+                margin: 0,
+                fontSize: '12px',
+                color: '#7f8c8d'
+              }}>
+                Track the route of your document
+              </p>
+            </div>
+
+            {/* Document Info */}
+            <div style={{
+              backgroundColor: '#f8f9fa',
+              padding: '12px',
+              borderRadius: '8px',
+              marginBottom: '15px'
+            }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                marginBottom: '6px'
+              }}>
+                <code style={{
+                  backgroundColor: '#e9ecef',
+                  padding: '3px 6px',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  color: '#495057',
+                  marginRight: '8px'
+                }}>
+                  {showTracker.document.documentId || showTracker.id}
+                </code>
+                <h3 style={{
+                  margin: 0,
+                  fontSize: '15px',
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  {showTracker.document.name || showTracker.name}
+                </h3>
+              </div>
+              <div style={{
+                display: 'flex',
+                gap: '8px',
+                flexWrap: 'wrap',
+                alignItems: 'center'
+              }}>
+                <span style={{
+                  backgroundColor: showTracker.document.status === 'Approved' ? '#28a745' :
+                                   showTracker.document.status === 'Rejected' ? '#dc3545' :
+                                   showTracker.document.status === 'Processing' ? '#007bff' :
+                                   showTracker.document.status === 'Under Review' ? '#ffc107' : '#6c757d',
+                  color: 'white',
+                  padding: '2px 8px',
+                  borderRadius: '12px',
+                  fontSize: '10px',
+                  fontWeight: '600'
+                }}>
+                  {showTracker.document.status || 'Submitted'}
+                </span>
+                <span style={{
+                  color: '#6c757d',
+                  fontSize: '11px'
+                }}>
+                  Submitted: {showTracker.document.dateUploaded ? new Date(showTracker.document.dateUploaded).toLocaleDateString() : 'N/A'}
+                </span>
+                <span style={{
+                  color: '#6c757d',
+                  fontSize: '11px'
+                }}>
+                  By: {showTracker.document.submittedBy || 'Unknown'}
+                </span>
+              </div>
+            </div>
+
+            {/* Document Route */}
+            <div style={{
+              backgroundColor: '#ffffff',
+              padding: '12px',
+              borderRadius: '8px',
+              border: '1px solid #e9ecef'
+            }}>
+              <h4 style={{
+                margin: '0 0 15px 0',
+                fontSize: '15px',
+                fontWeight: '600',
+                color: '#2c3e50',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}>
+                <span style={{ fontSize: '16px' }}>📍</span>
+                Document Route
+              </h4>
+              
+              {showTracker.document.routingHistory && showTracker.document.routingHistory.length > 0 ? (
+                <div style={{ position: 'relative' }}>
+                  {showTracker.document.routingHistory.map((entry, index) => {
+                    const isLast = index === showTracker.document.routingHistory.length - 1;
+                    const entryDate = entry.timestamp ? new Date(entry.timestamp) : (entry.date ? new Date(entry.date) : null);
+                    const formattedDate = entryDate ? entryDate.toLocaleDateString('en-US', {
+                      year: 'numeric',
+                      month: '2-digit',
+                      day: '2-digit'
+                    }) : 'N/A';
+                    const formattedTime = entryDate ? entryDate.toLocaleTimeString('en-US', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: true
+                    }) : 'N/A';
+                    const handler = entry.handler || entry.performedBy || 'Unknown';
+                    const office = entry.office || entry.toOffice || showTracker.document.currentOffice || 'Unknown Office';
+                    const action = entry.action || 'processed';
+                    
+                    // Determine if this is the current location
+                    const isCurrentLocation = index === showTracker.document.routingHistory.length - 1 && 
+                      showTracker.document.status !== 'Completed' && 
+                      showTracker.document.status !== 'Archived';
+                    
+                    return (
+                      <div key={index} style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        marginBottom: isLast ? '0' : '12px',
+                        position: 'relative'
+                      }}>
+                        {/* Route Line */}
+                        {!isLast && (
+                          <div style={{
+                            position: 'absolute',
+                            left: '13px',
+                            top: '28px',
+                            width: '2px',
+                            height: 'calc(100% + 8px)',
+                            backgroundColor: '#28a745',
+                            zIndex: 1
+                          }} />
+                        )}
+                        
+                        {/* Route Point Icon */}
+                        <div style={{
+                          width: '26px',
+                          height: '26px',
+                          minWidth: '26px',
+                          borderRadius: '50%',
+                          backgroundColor: isCurrentLocation ? '#007bff' : '#28a745',
+                          color: 'white',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          marginRight: '12px',
+                          zIndex: 2,
+                          position: 'relative',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        }}>
+                          {index + 1}
+                        </div>
+                        
+                        {/* Route Content */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'flex-start',
+                            gap: '15px',
+                            marginBottom: '6px'
+                          }}>
+                            <div style={{ flex: 1 }}>
+                              <h5 style={{
+                                margin: '0 0 4px 0',
+                                fontSize: '14px',
+                                fontWeight: '600',
+                                color: '#2c3e50'
+                              }}>
+                                {office}
+                                {isCurrentLocation && (
+                                  <span style={{
+                                    marginLeft: '8px',
+                                    fontSize: '11px',
+                                    color: '#007bff',
+                                    fontWeight: '500'
+                                  }}>
+                                    (Current)
+                                  </span>
+                                )}
+                              </h5>
+                              <p style={{
+                                margin: 0,
+                                fontSize: '12px',
+                                color: '#6c757d',
+                                lineHeight: '1.3',
+                                textTransform: 'capitalize'
+                              }}>
+                                {action.replace(/_/g, ' ')}
+                              </p>
+                            </div>
+                          </div>
+                          <div style={{
+                            display: 'flex',
+                            gap: '10px',
+                            flexWrap: 'wrap',
+                            marginTop: '6px',
+                            padding: '8px 10px',
+                            backgroundColor: '#f8f9fa',
+                            borderRadius: '6px',
+                            border: '1px solid #e9ecef'
+                          }}>
+                            <span style={{
+                              fontSize: '11px',
+                              color: '#2c3e50',
+                              fontWeight: '500'
+                            }}>
+                              📅 {formattedDate}
+                            </span>
+                            <span style={{
+                              fontSize: '11px',
+                              color: '#2c3e50',
+                              fontWeight: '500'
+                            }}>
+                              🕒 {formattedTime}
+                            </span>
+                            {handler && handler !== 'Unknown' && (
+                              <span style={{
+                                fontSize: '11px',
+                                color: '#2c3e50',
+                                fontWeight: '500'
+                              }}>
+                                👤 {handler}
+                              </span>
+                            )}
+                            {entry.processingTime && (
+                              <span style={{
+                                fontSize: '11px',
+                                color: '#2c3e50',
+                                fontWeight: '500'
+                              }}>
+                                ⏱️ {entry.processingTime.toFixed(1)} hrs
+                              </span>
+                            )}
+                          </div>
+                          {entry.comments && (
+                            <div style={{
+                              marginTop: '6px',
+                              padding: '6px 10px',
+                              backgroundColor: '#e3f2fd',
+                              borderRadius: '4px',
+                              fontSize: '11px',
+                              color: '#1565c0',
+                              fontStyle: 'italic'
+                            }}>
+                              💬 {entry.comments}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '20px',
+                  color: '#6c757d',
+                  fontSize: '13px'
+                }}>
+                  No routing history available. Document route will appear here as it moves through the system.
+                </div>
+              )}
+              
+              {/* Show current office if different from last routing history entry */}
+              {showTracker.document.currentOffice && 
+               showTracker.document.routingHistory && 
+               showTracker.document.routingHistory.length > 0 &&
+               showTracker.document.routingHistory[showTracker.document.routingHistory.length - 1].office !== showTracker.document.currentOffice && (
+                <div style={{
+                  marginTop: '12px',
+                  padding: '10px',
+                  backgroundColor: '#fff3cd',
+                  borderRadius: '6px',
+                  border: '1px solid #ffc107',
+                  fontSize: '12px',
+                  color: '#856404'
+                }}>
+                  <strong>Current Location:</strong> {showTracker.document.currentOffice}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'center',
+              marginTop: '15px',
+              paddingTop: '12px',
+              borderTop: '2px solid #ecf0f1'
+            }}>
+              <button
+                onClick={() => setShowTracker(null)}
+                style={{
+                  padding: '8px 20px',
+                  backgroundColor: '#3498db',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.3s ease'
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#2980b9'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = '#3498db'}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Document Review Modal */}
+      {showReviewModal && reviewDocument && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '10px',
+            padding: '15px',
+            maxWidth: '700px',
+            width: '90%',
+            maxHeight: '88vh',
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            boxShadow: '0 15px 50px rgba(0, 0, 0, 0.3)',
+            position: 'relative'
+          }}>
+            {/* Close Button */}
+            <button
+              onClick={handleCloseReviewModal}
+              style={{
+                position: 'absolute',
+                top: '15px',
+                right: '15px',
+                background: 'none',
+                border: 'none',
+                fontSize: '24px',
+                cursor: 'pointer',
+                color: '#7f8c8d',
+                padding: '5px',
+                borderRadius: '50%',
+                width: '35px',
+                height: '35px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.3s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = '#f8f9fa';
+                e.target.style.color = '#e74c3c';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = 'transparent';
+                e.target.style.color = '#7f8c8d';
+              }}
+            >
+              ×
+            </button>
+
+            {/* Modal Header */}
+            <div style={{
+              textAlign: 'center',
+              marginBottom: '12px',
+              paddingBottom: '10px',
+              borderBottom: '2px solid #ecf0f1'
+            }}>
+              <h2 style={{
+                margin: '0',
+                fontSize: '18px',
+                fontWeight: '600',
+                color: '#2c3e50'
+              }}>
+                Document Review
+              </h2>
+            </div>
+
+            {/* Workflow Progress Bar */}
+            {(() => {
+              // Define workflow stages based on document type
+              const getWorkflowStages = () => {
+                const docType = reviewDocument.type?.toUpperCase() || '';
+                const category = reviewDocument.category || '';
+                
+                // For Endorsement Form
+                if (
+                  docType.includes('ENDORSEMENT FORM') ||
+                  category === 'Endorsement Form'
+                ) {
+                  return ['Communication', 'Program Head', 'Vice President', 'Office of the President'];
+                }
+
+                // For Requested Subject - routes to VP
+                if (
+                  docType.includes('REQUESTED SUBJECT') || 
+                  category === 'Requested Subject'
+                ) {
+                  return ['Program Head', 'Dean', 'Vice President'];
+                }
+
+                // For Faculty Loading and Travel Order - routes to Academic VP
+                if (
+                  docType.includes('FACULTY LOADING') || 
+                  docType.includes('TRAVEL ORDER') ||
+                  category === 'Faculty Loading' || 
+                  category === 'Travel Order'
+                ) {
+                  return ['Program Head', 'Dean', 'Academic Vice President'];
+                }
+                
+                // Default workflow
+                return ['Program Head', 'Dean', 'Academic Vice President'];
+              };
+
+              // Check if workflow is complete
+              const isDocumentWorkflowComplete = (doc) => {
+                if (!doc.routingHistory || doc.routingHistory.length === 0) return false;
+                
+                const stages = getWorkflowStages();
+                const finalStage = stages[stages.length - 1];
+                
+                // Check if document has been approved at the final stage
+                const finalApproval = doc.routingHistory.find(entry => 
+                  (entry.action === 'approved' || entry.action === 'Approved and Forwarded') &&
+                  (entry.office === finalStage || 
+                   entry.toOffice === finalStage ||
+                   entry.office?.includes(finalStage) ||
+                   entry.toOffice?.includes(finalStage))
+                );
+                
+                return finalApproval !== undefined || doc.status === 'Approved' || doc.status === 'Completed';
+              };
+
+              const stages = getWorkflowStages();
+              const currentOffice = reviewDocument.currentOffice || reviewDocument.nextOffice || 'Program Head';
+              
+              const isWorkflowComplete = isDocumentWorkflowComplete(reviewDocument);
+
+              // Find current stage index
+              let currentStageIndex = stages.indexOf(currentOffice);
+              if (currentStageIndex === -1) {
+                // Try to match partial strings
+                currentStageIndex = stages.findIndex(stage => 
+                  currentOffice.includes(stage) || stage.includes(currentOffice)
+                );
+              }
+              if (currentStageIndex === -1) currentStageIndex = 0;
+              if (isWorkflowComplete) {
+                currentStageIndex = stages.length - 1;
+              }
+
+              return (
+                <div style={{
+                  backgroundColor: '#f8f9fa',
+                  padding: '10px 12px',
+                  borderRadius: '6px',
+                  marginBottom: '12px',
+                  border: '1px solid #e9ecef'
+                }}>
+                  <h4 style={{
+                    margin: '0 0 8px 0',
+                    fontSize: '10px',
+                    fontWeight: '700',
+                    color: '#495057',
+                    textAlign: 'center',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.3px'
+                  }}>
+                    Progress
+                  </h4>
+                  
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    position: 'relative'
+                  }}>
+                    {stages.map((stage, index) => {
+                      const isCompleted = index < currentStageIndex || (isWorkflowComplete && index === currentStageIndex);
+                      const isCurrent = !isWorkflowComplete && index === currentStageIndex;
+                      
+                      return (
+                        <React.Fragment key={stage}>
+                          {/* Stage Node */}
+                          <div style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            flex: 1,
+                            position: 'relative',
+                            zIndex: 2
+                          }}>
+                            {/* Circle */}
+                            <div style={{
+                              width: '28px',
+                              height: '28px',
+                              borderRadius: '50%',
+                              backgroundColor: isCompleted ? '#27ae60' : isCurrent ? '#3498db' : '#e9ecef',
+                              border: `2px solid ${isCompleted ? '#27ae60' : isCurrent ? '#3498db' : '#dee2e6'}`,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontWeight: 'bold',
+                              color: isCompleted || isCurrent ? 'white' : '#adb5bd',
+                              fontSize: '12px',
+                              marginBottom: '5px',
+                              transition: 'all 0.3s ease',
+                              boxShadow: isCurrent ? '0 0 10px rgba(52, 152, 219, 0.3)' : 'none'
+                            }}>
+                              {isCompleted ? '✓' : isCurrent ? '●' : (index + 1)}
+                            </div>
+                            
+                            {/* Stage Label */}
+                            <div style={{
+                              fontSize: '9px',
+                              fontWeight: isCurrent ? '700' : '600',
+                              color: isCompleted ? '#27ae60' : isCurrent ? '#3498db' : '#adb5bd',
+                              textAlign: 'center',
+                              maxWidth: '80px',
+                              lineHeight: '1.1',
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.1px'
+                            }}>
+                              {stage}
+                            </div>
+                            
+                            {/* Status Badge */}
+                            {isCurrent && (
+                              <div style={{
+                                marginTop: '2px',
+                                backgroundColor: '#3498db',
+                                color: 'white',
+                                fontSize: '7px',
+                                padding: '1px 4px',
+                                borderRadius: '4px',
+                                fontWeight: '600',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.2px'
+                              }}>
+                                Now
+                              </div>
+                            )}
+                            {isCompleted && (
+                              <div style={{
+                                marginTop: '2px',
+                                backgroundColor: '#27ae60',
+                                color: 'white',
+                                fontSize: '7px',
+                                padding: '1px 4px',
+                                borderRadius: '4px',
+                                fontWeight: '600',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.2px'
+                              }}>
+                                Approved
+                              </div>
+                            )}
+                          </div>
+                          
+                          {/* Connector Line */}
+                          {index < stages.length - 1 && (
+                            <div style={{
+                              flex: 1,
+                              height: '2px',
+                              backgroundColor: index < currentStageIndex ? '#27ae60' : '#e9ecef',
+                              margin: '0 -6px',
+                              marginBottom: '24px',
+                              position: 'relative',
+                              zIndex: 1,
+                              transition: 'all 0.3s ease'
+                            }} />
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+                  
+                  {/* Current Location Info */}
+                  <div style={{
+                    marginTop: '8px',
+                    padding: '4px 8px',
+                    backgroundColor: 'white',
+                    borderRadius: '4px',
+                    textAlign: 'center',
+                    border: '1px solid #dee2e6'
+                  }}>
+                    <span style={{
+                      fontSize: '9px',
+                      color: '#6c757d',
+                      fontWeight: '500'
+                    }}>
+                      📍 
+                    </span>
+                    <span style={{
+                      fontSize: '9px',
+                      color: '#3498db',
+                      fontWeight: '700',
+                      marginLeft: '3px'
+                    }}>
+                      {currentOffice}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Document Info */}
+            <div style={{
+              backgroundColor: '#f8f9fa',
+              padding: '10px 12px',
+              borderRadius: '6px',
+              marginBottom: '12px'
+            }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                marginBottom: '6px'
+              }}>
+                <code style={{
+                  backgroundColor: '#e9ecef',
+                  padding: '2px 5px',
+                  borderRadius: '3px',
+                  fontSize: '9px',
+                  fontWeight: '600',
+                  color: '#495057',
+                  marginRight: '6px'
+                }}>
+                  {reviewDocument.documentId}
+                </code>
+                <h3 style={{
+                  margin: 0,
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  {reviewDocument.name}
+                </h3>
+              </div>
+              <div style={{
+                display: 'flex',
+                gap: '8px',
+                flexWrap: 'wrap',
+                alignItems: 'center'
+              }}>
+                <span style={{
+                  backgroundColor: reviewDocument.status === 'Approved' ? '#28a745' :
+                                   reviewDocument.status === 'Rejected' ? '#dc3545' :
+                                   reviewDocument.status === 'Processing' ? '#007bff' :
+                                   reviewDocument.status === 'Under Review' ? '#ffc107' : '#6c757d',
+                  color: 'white',
+                  padding: '2px 8px',
+                  borderRadius: '8px',
+                  fontSize: '10px',
+                  fontWeight: '600'
+                }}>
+                  {reviewDocument.status || 'Submitted'}
+                </span>
+                <span style={{
+                  color: '#6c757d',
+                  fontSize: '10px'
+                }}>
+                  Submitted by: {reviewDocument.submittedBy || 'Unknown'}
+                </span>
+                <span style={{
+                  color: '#6c757d',
+                  fontSize: '10px'
+                }}>
+                  Date: {reviewDocument.dateUploaded ? new Date(reviewDocument.dateUploaded).toLocaleDateString() : 'N/A'}
+                </span>
+              </div>
+            </div>
+
+            {/* Review Form */}
+            <div style={{ display: 'grid', gap: '10px' }}>
+              {/* Reviewer */}
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '4px',
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  Reviewer *
+                </label>
+                <input
+                  type="text"
+                  value={reviewForm.reviewer}
+                  onChange={(e) => handleReviewInputChange('reviewer', e.target.value)}
+                  placeholder="Enter reviewer name"
+                  style={{
+                    width: '100%',
+                    padding: '7px 8px',
+                    border: '2px solid #e1e8ed',
+                    borderRadius: '5px',
+                    fontSize: '12px',
+                    outline: 'none',
+                    transition: 'border-color 0.3s ease',
+                    boxSizing: 'border-box'
+                  }}
+                  onFocus={(e) => e.target.style.borderColor = '#3498db'}
+                  onBlur={(e) => e.target.style.borderColor = '#e1e8ed'}
+                />
+              </div>
+
+              {/* Comments */}
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '4px',
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  Review Comments
+                </label>
+                <textarea
+                  value={reviewForm.comments}
+                  onChange={(e) => handleReviewInputChange('comments', e.target.value)}
+                  placeholder="Enter review comments or feedback..."
+                  rows="3"
+                  style={{
+                    width: '100%',
+                    padding: '7px 8px',
+                    border: '2px solid #e1e8ed',
+                    borderRadius: '5px',
+                    fontSize: '12px',
+                    resize: 'vertical',
+                    outline: 'none',
+                    transition: 'border-color 0.3s ease',
+                    boxSizing: 'border-box'
+                  }}
+                  onFocus={(e) => e.target.style.borderColor = '#3498db'}
+                  onBlur={(e) => e.target.style.borderColor = '#e1e8ed'}
+                />
+              </div>
+            </div>
+
+            {/* Routing History */}
+            {reviewDocument?.routingHistory && reviewDocument.routingHistory.length > 0 && (
+              <div style={{
+                marginTop: '15px',
+                padding: '12px',
+                backgroundColor: '#f8f9fa',
+                borderRadius: '8px',
+                border: '1px solid #e9ecef'
+              }}>
+                <h3 style={{
+                  margin: '0 0 10px 0',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  Routing History
+                </h3>
+                <div style={{
+                  maxHeight: '200px',
+                  overflowY: 'auto'
+                }}>
+                  {reviewDocument.routingHistory.map((entry, index) => (
+                    <div key={index} style={{
+                      padding: '8px 10px',
+                      marginBottom: '6px',
+                      backgroundColor: 'white',
+                      borderRadius: '6px',
+                      borderLeft: '3px solid #3498db',
+                      fontSize: '11px'
+                    }}>
+                      <div style={{ 
+                        fontWeight: '600', 
+                        color: '#2c3e50',
+                        marginBottom: '3px'
+                      }}>
+                        {entry.action ? entry.action.charAt(0).toUpperCase() + entry.action.slice(1).replace(/_/g, ' ') : 'Updated'}
+                        {entry.office && (
+                          <span style={{ color: '#7f8c8d', fontWeight: 'normal' }}>
+                            {' '}at {entry.office}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ color: '#7f8c8d', fontSize: '10px' }}>
+                        {(() => {
+                          const handler = entry.handler || entry.performedBy || 'Unknown';
+                          const timestamp = entry.timestamp || entry.date;
+                          const dateStr = timestamp 
+                            ? new Date(timestamp).toLocaleString('en-US', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: true
+                              })
+                            : 'N/A';
+                          return `By: ${handler} • ${dateStr}`;
+                        })()}
+                      </div>
+                      {entry.comments && (
+                        <div style={{ 
+                          marginTop: '4px', 
+                          color: '#495057',
+                          fontStyle: 'italic'
+                        }}>
+                          "{entry.comments}"
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div style={{
+              marginTop: '15px',
+              paddingTop: '12px',
+              borderTop: '2px solid #ecf0f1',
+              display: 'flex',
+              gap: '10px',
+              justifyContent: 'flex-end'
+            }}>
+              <button
+                onClick={handleCloseReviewModal}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: '#95a5a6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '5px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer'
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#7f8c8d'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = '#95a5a6'}
+              >
+                Close
+              </button>
+              {reviewDocument.status !== 'Approved' && reviewDocument.status !== 'Completed' && (
+                <button
+                  onClick={handleApproveFromReview}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#27ae60',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '5px',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    cursor: 'pointer'
+                  }}
+                  onMouseEnter={(e) => e.target.style.backgroundColor = '#229954'}
+                  onMouseLeave={(e) => e.target.style.backgroundColor = '#27ae60'}
+                >
+                  ✓ Approve
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Advanced Search Modal */}
@@ -1310,64 +2206,6 @@ function Document() {
         />
       )}
 
-      {/* Delay Alerts Dashboard */}
-      {showDelayAlerts && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 3000,
-          padding: '20px',
-          overflowY: 'auto'
-        }}>
-          <div style={{
-            backgroundColor: 'white',
-            borderRadius: '15px',
-            padding: '30px',
-            width: '95%',
-            maxWidth: '1400px',
-            maxHeight: '90vh',
-            overflowY: 'auto',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
-            position: 'relative'
-          }}>
-            <button
-              onClick={() => setShowDelayAlerts(false)}
-              style={{
-                position: 'absolute',
-                top: '20px',
-                right: '20px',
-                background: 'none',
-                border: 'none',
-                fontSize: '28px',
-                cursor: 'pointer',
-                color: '#95a5a6',
-                padding: '5px 10px',
-                borderRadius: '50%',
-                transition: 'all 0.3s ease',
-                zIndex: 1
-              }}
-              onMouseEnter={(e) => {
-                e.target.style.backgroundColor = '#f8f9fa';
-                e.target.style.color = '#e74c3c';
-              }}
-              onMouseLeave={(e) => {
-                e.target.style.backgroundColor = 'transparent';
-                e.target.style.color = '#95a5a6';
-              }}
-            >
-              ×
-            </button>
-            <DelayAlerts />
-          </div>
-        </div>
-      )}
 
       {/* Forward to Employee Modal */}
       {/* View Document Modal */}
@@ -1721,12 +2559,17 @@ function Document() {
               </button>
               <button
                 onClick={() => {
-                  setShowTracker({ id: viewingDocument._id, name: viewingDocument.name });
+                  setReviewDocument(viewingDocument);
+                  setReviewForm({
+                    comments: viewingDocument.comments || '',
+                    reviewer: viewingDocument.reviewer || ''
+                  });
+                  setShowReviewModal(true);
                   setViewingDocument(null);
                 }}
                 style={{
                   padding: '10px 20px',
-                  backgroundColor: '#fd7e14',
+                  backgroundColor: '#3498db',
                   color: 'white',
                   border: 'none',
                   borderRadius: '6px',
@@ -1735,31 +2578,10 @@ function Document() {
                   fontWeight: '600',
                   transition: 'all 0.2s ease'
                 }}
-                onMouseEnter={(e) => e.target.style.backgroundColor = '#e8590c'}
-                onMouseLeave={(e) => e.target.style.backgroundColor = '#fd7e14'}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#2980b9'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = '#3498db'}
               >
-                Track
-              </button>
-              <button
-                onClick={() => {
-                  setShowTrackingTimeline(viewingDocument._id);
-                  setViewingDocument(null);
-                }}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: '#17a2b8',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  fontWeight: '600',
-                  transition: 'all 0.2s ease'
-                }}
-                onMouseEnter={(e) => e.target.style.backgroundColor = '#117a8b'}
-                onMouseLeave={(e) => e.target.style.backgroundColor = '#17a2b8'}
-              >
-                Timeline
+                Review
               </button>
               <button
                 onClick={() => setViewingDocument(null)}
@@ -1784,187 +2606,6 @@ function Document() {
         </div>
       )}
 
-      {showForwardModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 1000
-        }}>
-          <div style={{
-            backgroundColor: 'white',
-            padding: '30px',
-            borderRadius: '8px',
-            width: '550px',
-            maxWidth: '90%'
-          }}>
-            <h3 style={{ marginTop: 0, marginBottom: '20px' }}>Forward Document</h3>
-            <p style={{ color: '#666', marginBottom: '20px' }}>
-              Document: <strong>{showForwardModal.name}</strong>
-            </p>
-            
-            {/* Forward Type Selection */}
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
-                Forward To:
-              </label>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button
-                  onClick={() => {
-                    setForwardType('office');
-                    setSelectedEmployee('');
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '10px',
-                    backgroundColor: forwardType === 'office' ? '#007bff' : '#e9ecef',
-                    color: forwardType === 'office' ? 'white' : '#333',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontWeight: forwardType === 'office' ? '600' : '400'
-                  }}
-                >
-                  Office
-                </button>
-                <button
-                  onClick={() => {
-                    setForwardType('employee');
-                    setSelectedOffice('');
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '10px',
-                    backgroundColor: forwardType === 'employee' ? '#007bff' : '#e9ecef',
-                    color: forwardType === 'employee' ? 'white' : '#333',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontWeight: forwardType === 'employee' ? '600' : '400'
-                  }}
-                >
-                  Employee
-                </button>
-              </div>
-            </div>
-
-            {/* Office Selection */}
-            {forwardType === 'office' && (
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
-                  Select Office: <span style={{ color: 'red' }}>*</span>
-                </label>
-                <select
-                  value={selectedOffice}
-                  onChange={(e) => setSelectedOffice(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    border: '1px solid #ddd',
-                    borderRadius: '4px',
-                    fontSize: '14px'
-                  }}
-                >
-                  <option value="">-- Select an office --</option>
-                  {offices.map((office) => (
-                    <option key={office._id} value={office.name}>
-                      {office.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Employee Selection */}
-            {forwardType === 'employee' && (
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
-                  Select Employee: <span style={{ color: 'red' }}>*</span>
-                </label>
-                <select
-                  value={selectedEmployee}
-                  onChange={(e) => setSelectedEmployee(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    border: '1px solid #ddd',
-                    borderRadius: '4px',
-                    fontSize: '14px'
-                  }}
-                >
-                  <option value="">-- Select an employee --</option>
-                  {employees.map((employee) => (
-                    <option key={employee._id} value={employee._id}>
-                      {employee.name} - {employee.position} ({employee.office?.name || 'No office'})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
-                Comments (Optional):
-              </label>
-              <textarea
-                value={forwardComments}
-                onChange={(e) => setForwardComments(e.target.value)}
-                placeholder="Add any comments or instructions..."
-                style={{
-                  width: '100%',
-                  padding: '10px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
-                  fontSize: '14px',
-                  minHeight: '80px',
-                  resize: 'vertical'
-                }}
-              />
-            </div>
-
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => {
-                  setShowForwardModal(null);
-                  setSelectedEmployee('');
-                  setSelectedOffice('');
-                  setForwardComments('');
-                  setForwardType('office');
-                }}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: '#6c757d',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleForward}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: '#28a745',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-              >
-                Forward Document
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Document Tracking Timeline Modal */}
       {showTrackingTimeline && (

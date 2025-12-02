@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Document = require('../models/Document');
 const Employee = require('../models/Employee');
+const Office = require('../models/Office');
 const QRCode = require('qrcode');
 const JsBarcode = require('jsbarcode');
 
@@ -62,7 +63,12 @@ router.post('/', async (req, res) => {
       assignedTo: req.body.assignedTo || [],
       currentHandler: req.body.currentHandler || null,
       forwardedBy: req.body.forwardedBy || '',
-      forwardedDate: req.body.forwardedDate || null
+      forwardedDate: req.body.forwardedDate || null,
+      // Travel Order specific fields
+      travelOrderDepartureDate: req.body.travelOrderDepartureDate || null,
+      travelOrderDepartureTime: req.body.travelOrderDepartureTime || '',
+      travelOrderReturnDate: req.body.travelOrderReturnDate || null,
+      travelOrderReturnTime: req.body.travelOrderReturnTime || ''
     });
 
     // If document is assigned to an employee, add routing history
@@ -140,6 +146,29 @@ router.patch('/:id', async (req, res) => {
     if (req.body.category != null) {
       document.category = req.body.category;
     }
+    
+    // Handle routing history update if provided
+    if (req.body.$push && req.body.$push.routingHistory) {
+      const historyEntry = req.body.$push.routingHistory;
+      
+      // Calculate processing time for previous stage
+      if (document.routingHistory.length > 0) {
+        const lastEntry = document.routingHistory[document.routingHistory.length - 1];
+        const processingTime = (new Date() - new Date(lastEntry.timestamp || lastEntry.date || new Date())) / (1000 * 60 * 60);
+        lastEntry.processingTime = Math.round(processingTime * 10) / 10;
+      }
+      
+      // Add routing history entry
+      document.routingHistory.push({
+        office: historyEntry.toOffice || historyEntry.office || document.nextOffice || document.currentOffice,
+        action: historyEntry.action || 'forwarded',
+        handler: historyEntry.performedBy || historyEntry.handler || document.reviewer || 'Unknown',
+        timestamp: new Date(historyEntry.date || Date.now()),
+        comments: historyEntry.comments || '',
+        processingTime: 0
+      });
+    }
+    
     const updatedDocument = await document.save();
     console.log('✓ Document updated:', updatedDocument.documentId, '- Status:', updatedDocument.status, '- nextOffice:', updatedDocument.nextOffice, '- currentOffice:', updatedDocument.currentOffice);
     res.json(updatedDocument);
@@ -826,6 +855,8 @@ router.get('/analytics/daily-activity', async (req, res) => {
   try {
     const { startDate, endDate, office } = req.query;
     
+    console.log('Daily activity request - office:', office, 'startDate:', startDate, 'endDate:', endDate);
+    
     // Default to last 30 days if no dates provided
     const end = endDate ? new Date(endDate) : new Date();
     const start = startDate ? new Date(startDate) : new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -838,11 +869,35 @@ router.get('/analytics/daily-activity', async (req, res) => {
       dateUploaded: { $gte: start, $lte: end }
     };
 
-    if (office) {
-      query.currentOffice = office;
-    }
+    let documents = await Document.find(query);
+    console.log(`Found ${documents.length} documents in date range`);
 
-    const documents = await Document.find(query);
+    // If office filter is provided, filter documents that have passed through that office
+    if (office && office.trim() !== '') {
+      const initialCount = documents.length;
+      documents = documents.filter(doc => {
+        // Check if document's current office matches
+        if (doc.currentOffice && doc.currentOffice.trim() === office.trim()) {
+          return true;
+        }
+        
+        // Check if document's next office matches
+        if (doc.nextOffice && doc.nextOffice.trim() === office.trim()) {
+          return true;
+        }
+        
+        // Check routing history - if document has been in this office
+        if (doc.routingHistory && doc.routingHistory.length > 0) {
+          const hasOffice = doc.routingHistory.some(entry => 
+            entry.office && entry.office.trim() === office.trim()
+          );
+          return hasOffice;
+        }
+        
+        return false;
+      });
+      console.log(`After office filter (${office}): ${documents.length} documents (filtered from ${initialCount})`);
+    }
 
     // Group documents by date
     const dailyStats = {};
@@ -931,6 +986,103 @@ router.get('/analytics/daily-activity', async (req, res) => {
       })));
     }
 
+    // Get submitter office breakdown
+    const officeBreakdown = {};
+    
+    // Get all employees to map submitter names to offices
+    const employees = await Employee.find().populate('office');
+    
+    // Create a map of submitter names to their offices
+    const submitterToOffice = {};
+    employees.forEach(emp => {
+      if (emp.office && emp.office.name) {
+        submitterToOffice[emp.name] = emp.office.name;
+      } else if (emp.department) {
+        submitterToOffice[emp.name] = emp.department;
+      }
+    });
+    
+    // Group documents by submitter's office
+    documents.forEach(doc => {
+      let submitterOffice = 'Unknown';
+      
+      if (doc.submittedBy) {
+        // Try to find the submitter's office
+        if (submitterToOffice[doc.submittedBy]) {
+          submitterOffice = submitterToOffice[doc.submittedBy];
+        } else {
+          // Try to find by matching name partially
+          const matchingEmployee = employees.find(emp => 
+            emp.name.toLowerCase().includes(doc.submittedBy.toLowerCase()) ||
+            doc.submittedBy.toLowerCase().includes(emp.name.toLowerCase())
+          );
+          
+          if (matchingEmployee) {
+            if (matchingEmployee.office && matchingEmployee.office.name) {
+              submitterOffice = matchingEmployee.office.name;
+            } else if (matchingEmployee.department) {
+              submitterOffice = matchingEmployee.department;
+            }
+          }
+        }
+      }
+      
+      // If document has department field, use it as fallback
+      if (submitterOffice === 'Unknown' && doc.department) {
+        submitterOffice = doc.department;
+      }
+      
+      if (!officeBreakdown[submitterOffice]) {
+        officeBreakdown[submitterOffice] = {
+          office: submitterOffice,
+          totalDocuments: 0,
+          pending: 0,
+          forwarded: 0,
+          completed: 0,
+          approved: 0,
+          rejected: 0,
+          underReview: 0,
+          delayed: 0
+        };
+      }
+      
+      officeBreakdown[submitterOffice].totalDocuments++;
+      
+      // Count by status
+      switch (doc.status) {
+        case 'Pending':
+        case 'Submitted':
+          officeBreakdown[submitterOffice].pending++;
+          break;
+        case 'Forwarded':
+        case 'Processing':
+          officeBreakdown[submitterOffice].forwarded++;
+          break;
+        case 'Completed':
+        case 'Archived':
+          officeBreakdown[submitterOffice].completed++;
+          break;
+        case 'Approved':
+          officeBreakdown[submitterOffice].approved++;
+          break;
+        case 'Rejected':
+          officeBreakdown[submitterOffice].rejected++;
+          break;
+        case 'Under Review':
+          officeBreakdown[submitterOffice].underReview++;
+          break;
+      }
+      
+      if (doc.isDelayed) {
+        officeBreakdown[submitterOffice].delayed++;
+      }
+    });
+    
+    // Convert to array and sort by total documents (descending)
+    const officeBreakdownArray = Object.values(officeBreakdown).sort((a, b) => 
+      b.totalDocuments - a.totalDocuments
+    );
+
     // Calculate summary statistics
     const summary = {
       totalDocuments: documents.length,
@@ -955,7 +1107,8 @@ router.get('/analytics/daily-activity', async (req, res) => {
     res.json({
       summary,
       dailyActivity: dailyArray,
-      office: office || 'All Offices'
+      office: office || 'All Offices',
+      officeBreakdown: officeBreakdownArray
     });
   } catch (err) {
     console.error('Error fetching daily activity:', err);

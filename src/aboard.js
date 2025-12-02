@@ -4,13 +4,11 @@ import Office from './Office';
 import Document from './Document';
 import Modal from './Modal';
 import Reports from './Reports';
-import NotificationSystem, { showNotification } from './components/NotificationSystem';
+import { showNotification } from './components/NotificationSystem';
 import API_URL from './config';
 
 function Aboard({ onLogout }) {
   const [currentScreen, setCurrentScreen] = useState('Dashboard');
-  const [employees, setEmployees] = useState([]);
-  const [offices, setOffices] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [users, setUsers] = useState([]);
   const [documentTypes, setDocumentTypes] = useState([]);
@@ -102,8 +100,6 @@ function Aboard({ onLogout }) {
       const officesData = await officesRes.json();
       const documentsData = await documentsRes.json();
 
-      setEmployees(employeesData);
-      setOffices(officesData);
       setDocuments(documentsData);
       
       // System notification for successful data load
@@ -1059,6 +1055,7 @@ function Aboard({ onLogout }) {
                       <tr style={{ backgroundColor: '#3498db', color: 'white' }}>
                         <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #2980b9' }}>Document ID</th>
                         <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #2980b9' }}>Name</th>
+                        <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #2980b9' }}>Submitted By</th>
                         <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #2980b9' }}>Type</th>
                         <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #2980b9' }}>Status</th>
                       </tr>
@@ -1068,6 +1065,9 @@ function Aboard({ onLogout }) {
                         <tr key={doc._id} style={{ borderBottom: '1px solid #ecf0f1' }}>
                           <td style={{ padding: '12px', color: '#7f8c8d', textAlign: 'center' }}>{doc.documentId}</td>
                           <td style={{ padding: '12px', fontWeight: '500', color: '#2c3e50', textAlign: 'center' }}>{doc.name}</td>
+                          <td style={{ padding: '12px', color: '#6c757d', textAlign: 'center', fontSize: '12px' }}>
+                            {doc.submittedBy || 'N/A'}
+                          </td>
                           <td style={{ padding: '12px', textAlign: 'center' }}>
                             <span style={{
                               padding: '4px 8px',

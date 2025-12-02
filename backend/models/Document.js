@@ -161,6 +161,23 @@ const documentSchema = new mongoose.Schema({
     type: Date,
     default: null,
   },
+  // Travel Order specific fields
+  travelOrderDepartureDate: {
+    type: Date,
+    default: null,
+  },
+  travelOrderDepartureTime: {
+    type: String,
+    default: '',
+  },
+  travelOrderReturnDate: {
+    type: Date,
+    default: null,
+  },
+  travelOrderReturnTime: {
+    type: String,
+    default: '',
+  },
 });
 
 module.exports = mongoose.model('Document', documentSchema);

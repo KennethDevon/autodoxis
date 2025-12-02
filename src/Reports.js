@@ -59,8 +59,17 @@ function Reports() {
     setExpandedRecentDocs(newExpanded);
   };
 
+
   useEffect(() => {
     fetchAllData();
+    
+    // Optional: Set up interval to refresh every 30 seconds for real-time updates
+    // Uncomment the lines below if you want automatic refreshing
+    // const interval = setInterval(() => {
+    //   fetchAllData();
+    // }, 30000); // Refresh every 30 seconds
+    
+    // return () => clearInterval(interval);
   }, []);
 
   const fetchAllData = async () => {
@@ -124,6 +133,23 @@ function Reports() {
     return documents
       .sort((a, b) => new Date(b.dateUploaded) - new Date(a.dateUploaded))
       .slice(0, 5);
+  };
+
+
+  // Helper function to format hours into readable format
+  const formatHours = (hours) => {
+    if (hours < 1) {
+      return `${Math.round(hours * 60)} min`;
+    } else if (hours < 24) {
+      return `${hours.toFixed(1)} hrs`;
+    } else {
+      const days = Math.floor(hours / 24);
+      const remainingHours = hours % 24;
+      if (remainingHours < 1) {
+        return `${days} day${days > 1 ? 's' : ''}`;
+      }
+      return `${days} day${days > 1 ? 's' : ''} ${remainingHours.toFixed(1)} hrs`;
+    }
   };
 
   // Download report functions
@@ -364,6 +390,7 @@ function Reports() {
     doc.save('Full_System_Report.pdf');
   };
 
+
   if (loading) {
     return (
       <div style={{ padding: '20px', textAlign: 'center' }}>
@@ -494,6 +521,7 @@ function Reports() {
           <p style={{ fontSize: '2em', fontWeight: 'bold', margin: 0, color: '#388e3c' }}>{documents.length}</p>
         </div>
       </div>
+
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px', marginBottom: '30px' }}>
         {/* Employees by Department */}
@@ -690,18 +718,13 @@ function Reports() {
                     if (!isExpanded) e.currentTarget.style.backgroundColor = '#f8f9fa';
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <span style={{ fontSize: '14px', fontWeight: '500', color: '#2c3e50' }}>
                       {isExpanded ? '▼' : '▶'}
                     </span>
-                    <div>
-                      <div style={{ fontSize: '15px', fontWeight: '600', color: '#2c3e50', marginBottom: '2px' }}>
-                        {office.name}
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#6c757d' }}>
-                        {office.location || 'No location specified'}
-                      </div>
-                    </div>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: '#2c3e50' }}>
+                      {office.name}
+                    </span>
                   </div>
                   <span style={{
                     padding: '4px 12px',
@@ -723,18 +746,13 @@ function Reports() {
                           padding: '10px',
                           backgroundColor: index % 2 === 0 ? '#f8f9fa' : 'white',
                           borderRadius: '4px',
-                          marginBottom: '5px',
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center'
+                          marginBottom: '5px'
                         }}>
-                          <div>
-                            <div style={{ fontSize: '14px', fontWeight: '600', color: '#2c3e50', marginBottom: '4px' }}>
-                              {emp.name}
-                            </div>
-                            <div style={{ fontSize: '12px', color: '#6c757d' }}>
-                              {emp.position} • ID: {emp.employeeId}
-                            </div>
+                          <div style={{ fontSize: '14px', fontWeight: '600', color: '#2c3e50', marginBottom: '4px' }}>
+                            {emp.name}
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#6c757d' }}>
+                            {emp.position} • ID: {emp.employeeId}
                           </div>
                         </div>
                       ))
@@ -789,71 +807,46 @@ function Reports() {
                     if (!isExpanded) e.currentTarget.style.backgroundColor = '#f8f9fa';
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <span style={{ fontSize: '14px', fontWeight: '500', color: '#2c3e50' }}>
                       {isExpanded ? '▼' : '▶'}
                     </span>
-                    <div>
-                      <div style={{ fontSize: '15px', fontWeight: '600', color: '#2c3e50', marginBottom: '2px' }}>
-                        {document.name}
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#6c757d' }}>
-                        ID: {document.documentId}
-                      </div>
-                    </div>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: '#2c3e50' }}>
+                      {document.name}
+                    </span>
                   </div>
                   <span style={{
                     padding: '4px 12px',
                     borderRadius: '12px',
-                    fontSize: '12px',
+                    fontSize: '13px',
                     fontWeight: '600',
-                    backgroundColor: 
-                      document.status === 'Approved' ? '#d4edda' :
-                      document.status === 'Under Review' ? '#fff3cd' :
-                      document.status === 'Rejected' ? '#f8d7da' :
-                      '#e9ecef',
-                    color: 
-                      document.status === 'Approved' ? '#155724' :
-                      document.status === 'Under Review' ? '#856404' :
-                      document.status === 'Rejected' ? '#721c24' :
-                      '#495057'
+                    backgroundColor: '#fff3cd',
+                    color: '#856404'
                   }}>
-                    {document.status || 'Submitted'}
+                    {document.type || 'Document'}
                   </span>
                 </div>
                 
                 {isExpanded && (
-                  <div style={{ padding: '20px', borderTop: '1px solid #ddd' }}>
-                    <div style={{ 
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-                      gap: '15px'
-                    }}>
-                      <div>
-                        <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>Type</div>
-                        <div style={{ fontSize: '14px', fontWeight: '500', color: '#2c3e50' }}>
-                          {document.type || 'N/A'}
-                        </div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>Date Uploaded</div>
-                        <div style={{ fontSize: '14px', fontWeight: '500', color: '#2c3e50' }}>
-                          {document.dateUploaded ? new Date(document.dateUploaded).toLocaleDateString() : 'N/A'}
-                        </div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>Submitted By</div>
-                        <div style={{ fontSize: '14px', fontWeight: '500', color: '#2c3e50' }}>
-                          {document.submittedBy || 'N/A'}
-                        </div>
+                  <div style={{ padding: '15px', borderTop: '1px solid #ddd' }}>
+                    <div style={{ marginBottom: '10px' }}>
+                      <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>Type</div>
+                      <div style={{ fontSize: '14px', fontWeight: '600', color: '#2c3e50' }}>{document.type}</div>
+                    </div>
+                    <div style={{ marginBottom: '10px' }}>
+                      <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>Submitted By</div>
+                      <div style={{ fontSize: '14px', fontWeight: '600', color: '#2c3e50' }}>{document.submittedBy || 'N/A'}</div>
+                    </div>
+                    <div style={{ marginBottom: '10px' }}>
+                      <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>Date Uploaded</div>
+                      <div style={{ fontSize: '14px', fontWeight: '600', color: '#2c3e50' }}>
+                        {document.dateUploaded ? new Date(document.dateUploaded).toLocaleDateString() : 'N/A'}
                       </div>
                     </div>
                     {document.description && (
-                      <div style={{ marginTop: '15px', paddingTop: '15px', borderTop: '1px solid #e9ecef' }}>
+                      <div>
                         <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>Description</div>
-                        <div style={{ fontSize: '14px', color: '#2c3e50', lineHeight: '1.6' }}>
-                          {document.description}
-                        </div>
+                        <div style={{ fontSize: '14px', color: '#2c3e50' }}>{document.description}</div>
                       </div>
                     )}
                   </div>
