@@ -879,8 +879,8 @@ router.get('/analytics/daily-activity', async (req, res) => {
         // Check if document's current office matches
         if (doc.currentOffice && doc.currentOffice.trim() === office.trim()) {
           return true;
-        }
-        
+    }
+
         // Check if document's next office matches
         if (doc.nextOffice && doc.nextOffice.trim() === office.trim()) {
           return true;

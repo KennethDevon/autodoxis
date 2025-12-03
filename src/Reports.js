@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import DailyActivityReport from './components/DailyActivityReport';
-import TrendsAndInsights from './components/TrendsAndInsights';
 import NotificationSystem from './components/NotificationSystem';
 import API_URL from './config';
 
@@ -477,13 +476,13 @@ function Reports() {
           Daily Activity Report
         </button>
         <button
-          onClick={() => setActiveTab('trends')}
+          onClick={() => setActiveTab('delays')}
           style={{
             padding: '10px 20px',
-            backgroundColor: activeTab === 'trends' ? '#3498db' : 'transparent',
-            color: activeTab === 'trends' ? 'white' : '#2c3e50',
+            backgroundColor: activeTab === 'delays' ? '#3498db' : 'transparent',
+            color: activeTab === 'delays' ? 'white' : '#2c3e50',
             border: 'none',
-            borderBottom: activeTab === 'trends' ? '3px solid #2980b9' : '3px solid transparent',
+            borderBottom: activeTab === 'delays' ? '3px solid #2980b9' : '3px solid transparent',
             fontSize: '14px',
             fontWeight: '600',
             cursor: 'pointer',
@@ -492,15 +491,399 @@ function Reports() {
             whiteSpace: 'nowrap'
           }}
         >
-          Trends & Insights
+          Department Delays
         </button>
       </div>
 
       {/* Conditional Rendering based on Active Tab */}
       {activeTab === 'daily' ? (
         <DailyActivityReport />
-      ) : activeTab === 'trends' ? (
-        <TrendsAndInsights />
+      ) : activeTab === 'delays' ? (
+        <div>
+          {(() => {
+            // Helper function to get submitter's department
+            const getSubmitterDepartment = (submittedBy) => {
+              if (!submittedBy) return null;
+              const submitter = employees.find(emp => 
+                emp.name?.toLowerCase() === submittedBy.toLowerCase() ||
+                emp.name?.toLowerCase().includes(submittedBy.toLowerCase()) ||
+                submittedBy.toLowerCase().includes(emp.name?.toLowerCase())
+              );
+              return submitter ? (submitter.office?.name || submitter.department) : null;
+            };
+
+            // Group documents by department
+            const documentsByDepartment = {};
+            documents.forEach(doc => {
+              const dept = getSubmitterDepartment(doc.submittedBy) || 'Unknown';
+              if (!documentsByDepartment[dept]) {
+                documentsByDepartment[dept] = [];
+              }
+              documentsByDepartment[dept].push(doc);
+            });
+
+            // Helper function to check if document is approved
+            const isDocumentApproved = (doc) => {
+              return doc.status === 'Approved' || 
+                     (doc.status === 'Processing' && !doc.nextOffice) ||
+                     (doc.status === 'Approved' && (!doc.nextOffice || doc.nextOffice === ''));
+            };
+            
+            // Calculate delay information for each document
+            const calculateDelayInfo = (doc) => {
+              const expectedHours = doc.expectedProcessingTime || 24;
+              let startTime = null;
+              let endTime = new Date(); // Default to current time
+              let isApproved = false;
+              
+              // Check if document is approved - find the final approval time
+              if (isDocumentApproved(doc)) {
+                // Find the latest approved entry in routing history
+                if (doc.routingHistory && doc.routingHistory.length > 0) {
+                  const approvedEntries = doc.routingHistory
+                    .filter(entry => entry.action === 'approved' || entry.action === 'final approved')
+                    .sort((a, b) => {
+                      const dateA = new Date(a.timestamp || a.date || 0);
+                      const dateB = new Date(b.timestamp || b.date || 0);
+                      return dateB - dateA; // Sort descending to get latest first
+                    });
+                  
+                  if (approvedEntries.length > 0) {
+                    const latestApproval = approvedEntries[0];
+                    const approvedTime = latestApproval.timestamp ? new Date(latestApproval.timestamp) : 
+                                      latestApproval.date ? new Date(latestApproval.date) : null;
+                    
+                    if (approvedTime) {
+                      endTime = approvedTime;
+                      isApproved = true;
+                    }
+                  }
+                }
+                
+                // If no routing history entry found but document has reviewDate, use that
+                if (!isApproved && doc.reviewDate) {
+                  endTime = new Date(doc.reviewDate);
+                  isApproved = true;
+                }
+              }
+              
+              if (doc.routingHistory && doc.routingHistory.length > 0) {
+                const firstEntry = doc.routingHistory[0];
+                startTime = firstEntry.timestamp ? new Date(firstEntry.timestamp) : 
+                            firstEntry.date ? new Date(firstEntry.date) : 
+                            new Date(doc.dateUploaded);
+              } else {
+                startTime = new Date(doc.dateUploaded);
+              }
+              
+              const timeSpentMs = endTime - startTime;
+              const timeSpentHours = timeSpentMs / (1000 * 60 * 60);
+              const timeRemainingMs = (expectedHours * 60 * 60 * 1000) - timeSpentMs;
+              const isExceeded = timeRemainingMs < 0;
+              const delayHours = isExceeded ? Math.abs(timeRemainingMs) / (1000 * 60 * 60) : 0;
+              
+              const formatTime = (hours) => {
+                if (hours < 1) {
+                  const minutes = Math.floor(hours * 60);
+                  return `${minutes} min`;
+                } else if (hours < 24) {
+                  const hrs = Math.floor(hours);
+                  const mins = Math.floor((hours - hrs) * 60);
+                  return `${hrs} hr${hrs > 1 ? 's' : ''} ${mins} min`;
+                } else {
+                  const days = Math.floor(hours / 24);
+                  const remainingHours = hours % 24;
+                  const hrs = Math.floor(remainingHours);
+                  const mins = Math.floor((remainingHours - hrs) * 60);
+                  let result = `${days} day${days > 1 ? 's' : ''}`;
+                  if (hrs > 0) result += ` ${hrs} hr${hrs > 1 ? 's' : ''}`;
+                  if (mins > 0 && days === 0) result += ` ${mins} min`;
+                  return result;
+                }
+              };
+              
+              return {
+                expectedHours,
+                timeSpentHours,
+                delayHours,
+                isExceeded,
+                isApproved,
+                timeSpent: formatTime(timeSpentHours),
+                delayFormatted: delayHours > 0 ? formatTime(delayHours) : null,
+                startTime,
+                endTime,
+                percentage: Math.min((timeSpentHours / expectedHours) * 100, 100)
+              };
+            };
+
+            const formatHours = (hours) => {
+              if (hours < 1) {
+                return `${Math.round(hours * 60)} min`;
+              } else if (hours < 24) {
+                return `${hours.toFixed(1)} hrs`;
+              } else {
+                const days = Math.floor(hours / 24);
+                const remainingHours = hours % 24;
+                if (remainingHours < 1) {
+                  return `${days} day${days > 1 ? 's' : ''}`;
+                }
+                return `${days} day${days > 1 ? 's' : ''} ${remainingHours.toFixed(1)} hrs`;
+              }
+            };
+
+            const getStatusColor = (status) => {
+              const colors = {
+                'Approved': '#28a745',
+                'Processing': '#17a2b8',
+                'Under Review': '#ffc107',
+                'Rejected': '#dc3545',
+                'On Hold': '#6c757d',
+                'Completed': '#28a745'
+              };
+              return colors[status] || '#6c757d';
+            };
+
+            // Calculate department statistics
+            const departmentStats = Object.keys(documentsByDepartment).map(deptName => {
+              const deptDocs = documentsByDepartment[deptName].map(doc => ({
+                ...doc,
+                delayInfo: calculateDelayInfo(doc)
+              }));
+
+              const total = deptDocs.length;
+              const delayed = deptDocs.filter(d => d.delayInfo.isExceeded).length;
+              const completed = deptDocs.filter(d => d.delayInfo.isApproved || d.status === 'Approved').length;
+              const rejected = deptDocs.filter(d => d.status === 'Rejected').length;
+              const totalDelayHours = deptDocs
+                .filter(d => d.delayInfo.isExceeded)
+                .reduce((sum, d) => sum + d.delayInfo.delayHours, 0);
+              const avgDelay = delayed > 0 ? totalDelayHours / delayed : 0;
+
+              return {
+                department: deptName,
+                total,
+                delayed,
+                completed,
+                rejected,
+                totalDelayHours,
+                averageDelay: avgDelay,
+                documents: deptDocs.sort((a, b) => {
+                  if (a.delayInfo.isExceeded !== b.delayInfo.isExceeded) {
+                    return b.delayInfo.isExceeded - a.delayInfo.isExceeded;
+                  }
+                  return b.delayInfo.delayHours - a.delayInfo.delayHours;
+                })
+              };
+            }).sort((a, b) => b.delayed - a.delayed || b.totalDelayHours - a.totalDelayHours);
+
+            return (
+              <div>
+                <h2 style={{
+                  margin: '0 0 20px 0',
+                  fontSize: '24px',
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  Department Delays Analysis
+                </h2>
+
+                {departmentStats.map((deptStat) => (
+                  <div key={deptStat.department} style={{
+                    backgroundColor: 'white',
+                    borderRadius: '8px',
+                    padding: '20px',
+                    marginBottom: '20px',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                  }}>
+                    {/* Department Header */}
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: '15px',
+                      paddingBottom: '15px',
+                      borderBottom: '2px solid #e0e0e0'
+                    }}>
+                      <div>
+                        <h3 style={{
+                          margin: '0 0 5px 0',
+                          fontSize: '18px',
+                          fontWeight: '600',
+                          color: '#2c3e50'
+                        }}>
+                          {deptStat.department}
+                        </h3>
+                        <div style={{
+                          display: 'flex',
+                          gap: '20px',
+                          fontSize: '13px',
+                          color: '#6c757d',
+                          flexWrap: 'wrap'
+                        }}>
+                          <span><strong>Total:</strong> {deptStat.total}</span>
+                          <span style={{ color: deptStat.completed > 0 ? '#28a745' : '#6c757d' }}>
+                            <strong>Completed:</strong> {deptStat.completed}
+                          </span>
+                          <span style={{ color: deptStat.rejected > 0 ? '#dc3545' : '#6c757d' }}>
+                            <strong>Rejected:</strong> {deptStat.rejected}
+                          </span>
+                          <span style={{ color: deptStat.delayed > 0 ? '#d32f2f' : '#388e3c' }}>
+                            <strong>Delayed:</strong> {deptStat.delayed}
+                          </span>
+                          {deptStat.delayed > 0 && (
+                            <>
+                              <span><strong>Total Delay:</strong> {formatHours(deptStat.totalDelayHours)}</span>
+                              <span><strong>Avg Delay:</strong> {formatHours(deptStat.averageDelay)}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Documents Table */}
+                    {deptStat.documents.length > 0 ? (
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ backgroundColor: '#f8f9fa' }}>
+                              <th style={{ border: '1px solid #ddd', padding: '10px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#2c3e50' }}>
+                                Document ID
+                              </th>
+                              <th style={{ border: '1px solid #ddd', padding: '10px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#2c3e50' }}>
+                                Name
+                              </th>
+                              <th style={{ border: '1px solid #ddd', padding: '10px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#2c3e50' }}>
+                                Type
+                              </th>
+                              <th style={{ border: '1px solid #ddd', padding: '10px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#2c3e50' }}>
+                                Status
+                              </th>
+                              <th style={{ border: '1px solid #ddd', padding: '10px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#2c3e50' }}>
+                                Time Spent
+                              </th>
+                              <th style={{ border: '1px solid #ddd', padding: '10px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#2c3e50' }}>
+                                Expected Time
+                              </th>
+                              <th style={{ border: '1px solid #ddd', padding: '10px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#2c3e50' }}>
+                                Delay Status
+                              </th>
+                              <th style={{ border: '1px solid #ddd', padding: '10px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#2c3e50' }}>
+                                Submitted By
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {deptStat.documents.map((doc) => (
+                              <tr key={doc._id} style={{ 
+                                backgroundColor: doc.delayInfo.isExceeded ? '#fff5f5' : 'white',
+                                borderLeft: doc.delayInfo.isExceeded ? '4px solid #dc3545' : 'none'
+                              }}>
+                                <td style={{ border: '1px solid #ddd', padding: '10px', fontSize: '12px', color: '#2c3e50' }}>
+                                  <code style={{
+                                    backgroundColor: '#f8f9fa',
+                                    padding: '2px 5px',
+                                    borderRadius: '3px',
+                                    fontSize: '10px',
+                                    fontWeight: '600',
+                                    color: '#6c757d'
+                                  }}>
+                                    {doc.documentId}
+                                  </code>
+                                </td>
+                                <td style={{ border: '1px solid #ddd', padding: '10px', fontSize: '12px', fontWeight: '500', color: '#2c3e50' }}>
+                                  {doc.name}
+                                </td>
+                                <td style={{ border: '1px solid #ddd', padding: '10px', fontSize: '12px', color: '#2c3e50' }}>
+                                  <span style={{
+                                    backgroundColor: '#e8f5e8',
+                                    color: '#388e3c',
+                                    padding: '2px 6px',
+                                    borderRadius: '8px',
+                                    fontSize: '10px',
+                                    fontWeight: '600',
+                                    textTransform: 'uppercase'
+                                  }}>
+                                    {doc.type || 'N/A'}
+                                  </span>
+                                </td>
+                                <td style={{ border: '1px solid #ddd', padding: '10px', fontSize: '12px' }}>
+                                  <span style={{
+                                    padding: '3px 8px',
+                                    borderRadius: '10px',
+                                    fontSize: '10px',
+                                    fontWeight: '600',
+                                    backgroundColor: getStatusColor(doc.status || 'Processing'),
+                                    color: 'white'
+                                  }}>
+                                    {doc.status || 'Processing'}
+                                  </span>
+                                </td>
+                                <td style={{ border: '1px solid #ddd', padding: '10px', fontSize: '12px', color: '#2c3e50' }}>
+                                  {doc.delayInfo.timeSpent}
+                                </td>
+                                <td style={{ border: '1px solid #ddd', padding: '10px', fontSize: '12px', color: '#6c757d' }}>
+                                  {formatHours(doc.delayInfo.expectedHours)}
+                                </td>
+                                <td style={{ border: '1px solid #ddd', padding: '10px', fontSize: '12px' }}>
+                                  {doc.delayInfo.isExceeded ? (
+                                    <span style={{
+                                      padding: '3px 8px',
+                                      borderRadius: '10px',
+                                      fontSize: '10px',
+                                      fontWeight: '600',
+                                      backgroundColor: '#f8d7da',
+                                      color: '#721c24'
+                                    }}>
+                                      ⚠️ {doc.delayInfo.delayFormatted} over
+                                    </span>
+                                  ) : (
+                                    <span style={{
+                                      padding: '3px 8px',
+                                      borderRadius: '10px',
+                                      fontSize: '10px',
+                                      fontWeight: '600',
+                                      backgroundColor: '#d4edda',
+                                      color: '#155724'
+                                    }}>
+                                      ✓ On Time
+                                    </span>
+                                  )}
+                                </td>
+                                <td style={{ border: '1px solid #ddd', padding: '10px', fontSize: '12px', color: '#6c757d' }}>
+                                  {doc.submittedBy || 'N/A'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div style={{
+                        padding: '20px',
+                        textAlign: 'center',
+                        color: '#999',
+                        fontSize: '14px'
+                      }}>
+                        No documents in this department.
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {departmentStats.length === 0 && (
+                  <div style={{
+                    padding: '40px',
+                    textAlign: 'center',
+                    color: '#999',
+                    fontSize: '14px'
+                  }}>
+                    No documents found to analyze.
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </div>
       ) : (
         <div>
       
@@ -723,7 +1106,7 @@ function Reports() {
                       {isExpanded ? '▼' : '▶'}
                     </span>
                     <span style={{ fontSize: '14px', fontWeight: '600', color: '#2c3e50' }}>
-                      {office.name}
+                        {office.name}
                     </span>
                   </div>
                   <span style={{
@@ -748,11 +1131,11 @@ function Reports() {
                           borderRadius: '4px',
                           marginBottom: '5px'
                         }}>
-                          <div style={{ fontSize: '14px', fontWeight: '600', color: '#2c3e50', marginBottom: '4px' }}>
-                            {emp.name}
-                          </div>
-                          <div style={{ fontSize: '12px', color: '#6c757d' }}>
-                            {emp.position} • ID: {emp.employeeId}
+                            <div style={{ fontSize: '14px', fontWeight: '600', color: '#2c3e50', marginBottom: '4px' }}>
+                              {emp.name}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#6c757d' }}>
+                              {emp.position} • ID: {emp.employeeId}
                           </div>
                         </div>
                       ))
@@ -812,7 +1195,7 @@ function Reports() {
                       {isExpanded ? '▼' : '▶'}
                     </span>
                     <span style={{ fontSize: '14px', fontWeight: '600', color: '#2c3e50' }}>
-                      {document.name}
+                        {document.name}
                     </span>
                   </div>
                   <span style={{
@@ -830,17 +1213,17 @@ function Reports() {
                 {isExpanded && (
                   <div style={{ padding: '15px', borderTop: '1px solid #ddd' }}>
                     <div style={{ marginBottom: '10px' }}>
-                      <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>Type</div>
+                        <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>Type</div>
                       <div style={{ fontSize: '14px', fontWeight: '600', color: '#2c3e50' }}>{document.type}</div>
-                    </div>
+                        </div>
                     <div style={{ marginBottom: '10px' }}>
                       <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>Submitted By</div>
                       <div style={{ fontSize: '14px', fontWeight: '600', color: '#2c3e50' }}>{document.submittedBy || 'N/A'}</div>
-                    </div>
+                      </div>
                     <div style={{ marginBottom: '10px' }}>
-                      <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>Date Uploaded</div>
+                        <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>Date Uploaded</div>
                       <div style={{ fontSize: '14px', fontWeight: '600', color: '#2c3e50' }}>
-                        {document.dateUploaded ? new Date(document.dateUploaded).toLocaleDateString() : 'N/A'}
+                          {document.dateUploaded ? new Date(document.dateUploaded).toLocaleDateString() : 'N/A'}
                       </div>
                     </div>
                     {document.description && (

@@ -51,6 +51,8 @@ function Edashboard({ onLogout }) {
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [showTrackModal, setShowTrackModal] = useState(false);
   const [trackedDocument, setTrackedDocument] = useState(null);
+  const [showApprovalTimeModal, setShowApprovalTimeModal] = useState(false);
+  const [approvalTimeDocument, setApprovalTimeDocument] = useState(null);
   const [reviewForm, setReviewForm] = useState({
     status: '',
     comments: '',
@@ -150,21 +152,86 @@ function Edashboard({ onLogout }) {
               
               // Filter documents based on employee position
               const position = currentEmployee.position;
+              const employeeDepartment = currentEmployee.department;
+              const employeeOfficeName = currentEmployee.office?.name;
+              
+              // ALL positions are now department-specific (no shared positions)
+              // OP, VP, Academic VP, Dean, Program Head, etc. - all are department-specific
+              const isSharedPosition = false; // No positions are shared anymore
+              
+              // Helper function to get submitter's department
+              const getSubmitterDepartment = (submittedBy) => {
+                if (!submittedBy) return null;
+                const submitter = allEmployees.find(emp => 
+                  emp.name?.toLowerCase() === submittedBy.toLowerCase() ||
+                  emp.name?.toLowerCase().includes(submittedBy.toLowerCase()) ||
+                  submittedBy.toLowerCase().includes(emp.name?.toLowerCase())
+                );
+                return submitter ? (submitter.office?.name || submitter.department) : null;
+              };
+              
+              // Helper function to check if document is from same department
+              const isFromSameDepartment = (doc) => {
+                const submitterDept = getSubmitterDepartment(doc.submittedBy);
+                if (!submitterDept) return false;
+                
+                // Strict department matching: document must be from the same department/office as the employee
+                const docDeptLower = submitterDept.toLowerCase();
+                const empDeptLower = employeeDepartment?.toLowerCase() || '';
+                const empOfficeLower = employeeOfficeName?.toLowerCase() || '';
+                
+                // Check exact matches or if one contains the other (for variations like "Faculty of Agriculture and Life Sciences" vs "FALS")
+                const matchesDept = docDeptLower === empDeptLower || 
+                                   docDeptLower === empOfficeLower ||
+                                   empDeptLower === docDeptLower ||
+                                   empOfficeLower === docDeptLower ||
+                                   (docDeptLower.includes(empDeptLower) && empDeptLower.length > 0) ||
+                                   (empDeptLower.includes(docDeptLower) && docDeptLower.length > 0) ||
+                                   (docDeptLower.includes(empOfficeLower) && empOfficeLower.length > 0) ||
+                                   (empOfficeLower.includes(docDeptLower) && docDeptLower.length > 0);
+                
+                return matchesDept;
+              };
+              
+              // Helper function to verify document routing matches employee's department
+              const isDocumentRoutedToMyDepartment = (doc) => {
+                // For shared positions (OP), always return true
+                if (isSharedPosition) return true;
+                
+                // For department-specific positions, verify document is from same department
+                return isFromSameDepartment(doc);
+              };
+              
               let filteredDocuments = [];
               
               if (position === 'Communication' || position === 'Communications' || position === 'Secretary') {
                 filteredDocuments = fetchedDocuments.filter(doc => {
-                  const routedToOffice = doc.nextOffice === 'Communication' || doc.currentOffice === 'Communication' ||
-                    doc.nextOffice === 'Secretary' || doc.currentOffice === 'Secretary';
+                  // STRICT: Position must match AND department must match
+                  if (!isDocumentRoutedToMyDepartment(doc)) {
+                    return false;
+                  }
+                  // Enhanced routing check: verify office match AND department context
+                  const routedToOffice = (doc.nextOffice === 'Communication' || doc.currentOffice === 'Communication' ||
+                    doc.nextOffice === 'Secretary' || doc.currentOffice === 'Secretary') &&
+                    // Ensure department context matches
+                    isDocumentRoutedToMyDepartment(doc);
                   const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
                   return routedToOffice || forwardedToEmployee;
                 });
                 console.log('Filtered for Communication/Secretary:', filteredDocuments.length);
               } else if (position === 'Program Head') {
                 // Show documents routed to Program Head OR forwarded to this employee
+                // STRICT: Only show documents from the SAME department
                 filteredDocuments = fetchedDocuments.filter(doc => {
-                  // Check if routed to Program Head
-                  const routedToPH = doc.nextOffice === 'Program Head' || doc.currentOffice === 'Program Head';
+                  // STRICT: Position must match AND department must match
+                  if (!isDocumentRoutedToMyDepartment(doc)) {
+                    return false;
+                  }
+                  
+                  // Enhanced routing check: verify Program Head match AND department context
+                  const routedToPH = (doc.nextOffice === 'Program Head' || doc.currentOffice === 'Program Head') &&
+                    // Ensure department context matches
+                    isDocumentRoutedToMyDepartment(doc);
                   
                   // Check if forwarded directly to this employee
                   const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
@@ -186,12 +253,14 @@ function Edashboard({ onLogout }) {
                     doc.type?.toLowerCase().includes('endorsement form');
                   
                   // Show if routed to PH OR forwarded to employee OR if it's a Faculty Loading type document that's Under Review/Submitted
-                  const shouldShow = routedToPH || forwardedToEmployee || 
+                  // BUT ONLY if from same department
+                  const shouldShow = (routedToPH || forwardedToEmployee || 
                     (isFacultyLoadingDoc && 
-                     (doc.status === 'Under Review' || doc.status === 'Submitted'));
+                     (doc.status === 'Under Review' || doc.status === 'Submitted'))) &&
+                    isDocumentRoutedToMyDepartment(doc);
                   
                   if (shouldShow) {
-                    console.log('✓ Program Head will see:', doc.name, '- Type:', doc.type, '- Status:', doc.status);
+                    console.log('✓ Program Head will see:', doc.name, '- Type:', doc.type, '- Status:', doc.status, '- Dept:', getSubmitterDepartment(doc.submittedBy));
                   }
                   
                   return shouldShow;
@@ -199,54 +268,103 @@ function Edashboard({ onLogout }) {
                 console.log('Filtered for Program Head:', filteredDocuments.length);
               } else if (position === 'Dean') {
                 // Show documents routed to Dean OR forwarded to this employee
+                // STRICT: Only show documents from the SAME department
                 filteredDocuments = fetchedDocuments.filter(doc => {
-                  const routedToDean = doc.nextOffice === 'Dean' || doc.currentOffice === 'Dean';
+                  // STRICT: Position must match AND department must match
+                  if (!isDocumentRoutedToMyDepartment(doc)) {
+                    return false;
+                  }
+                  // Enhanced routing check: verify Dean match AND department context
+                  const routedToDean = (doc.nextOffice === 'Dean' || doc.currentOffice === 'Dean') &&
+                    // Ensure department context matches
+                    isDocumentRoutedToMyDepartment(doc);
                   const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
                   
                   if (routedToDean || forwardedToEmployee) {
-                    console.log('✓ Dean will see:', doc.name);
+                    console.log('✓ Dean will see:', doc.name, '- Dept:', getSubmitterDepartment(doc.submittedBy));
                   }
                   return routedToDean || forwardedToEmployee;
                 });
                 console.log('Filtered for Dean:', filteredDocuments.length);
               } else if (position === 'Academic VP' || position === 'Academic Vice President') {
                 // Show documents routed to Academic Vice President OR forwarded to this employee
+                // STRICT: Academic VP is department-specific - only show documents from SAME department
                 filteredDocuments = fetchedDocuments.filter(doc => {
-                  const routedToOffice = doc.nextOffice === 'Academic Vice President' || 
-                    doc.nextOffice === 'Academic VP' ||
-                    doc.currentOffice === 'Academic Vice President' ||
-                    doc.currentOffice === 'Academic VP';
+                  // STRICT: Position must match AND department must match
+                  if (!isDocumentRoutedToMyDepartment(doc)) {
+                    return false;
+                  }
+                  // Enhanced routing check: verify Academic VP match AND department context
+                  const routedToOffice = (doc.nextOffice === 'Academic Vice President' || 
+                  doc.nextOffice === 'Academic VP' ||
+                  doc.currentOffice === 'Academic Vice President' ||
+                    doc.currentOffice === 'Academic VP') &&
+                    // Ensure department context matches
+                    isDocumentRoutedToMyDepartment(doc);
                   const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  
+                  if (routedToOffice || forwardedToEmployee) {
+                    console.log('✓ Academic VP will see:', doc.name, '- Dept:', getSubmitterDepartment(doc.submittedBy));
+                  }
                   return routedToOffice || forwardedToEmployee;
                 });
                 console.log('Filtered for Academic VP:', filteredDocuments.length);
               } else if (position === 'Vice President' || position === 'VP') {
                 // Show documents routed to Vice President OR forwarded to this employee
+                // STRICT: VP is department-specific - only show documents from SAME department
                 filteredDocuments = fetchedDocuments.filter(doc => {
-                  const routedToOffice = doc.nextOffice === 'Vice President' || 
-                    doc.nextOffice === 'VP' ||
-                    doc.currentOffice === 'Vice President' ||
-                    doc.currentOffice === 'VP';
+                  // STRICT: Position must match AND department must match
+                  if (!isDocumentRoutedToMyDepartment(doc)) {
+                    return false;
+                  }
+                  // Enhanced routing check: verify VP match AND department context
+                  const routedToOffice = (doc.nextOffice === 'Vice President' || 
+                  doc.nextOffice === 'VP' ||
+                  doc.currentOffice === 'Vice President' ||
+                    doc.currentOffice === 'VP') &&
+                    // Ensure department context matches
+                    isDocumentRoutedToMyDepartment(doc);
                   const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  
+                  if (routedToOffice || forwardedToEmployee) {
+                    console.log('✓ VP will see:', doc.name, '- Dept:', getSubmitterDepartment(doc.submittedBy));
+                  }
                   return routedToOffice || forwardedToEmployee;
                 });
                 console.log('Filtered for Vice President:', filteredDocuments.length);
               } else if (position === 'OP' || position === 'Office of the President' || position === 'President') {
                 // Show documents routed to Office of the President OR forwarded to this employee
+                // STRICT: OP is now department-specific - only show documents from SAME department
                 filteredDocuments = fetchedDocuments.filter(doc => {
-                  const routedToOffice = doc.nextOffice === 'Office of the President' || 
-                    doc.nextOffice === 'OP' ||
-                    doc.nextOffice === 'President' ||
-                    doc.currentOffice === 'Office of the President' ||
-                    doc.currentOffice === 'OP' ||
-                    doc.currentOffice === 'President';
+                  // STRICT: Position must match AND department must match
+                  if (!isDocumentRoutedToMyDepartment(doc)) {
+                    return false;
+                  }
+                  // Enhanced routing check: verify OP match AND department context
+                  const routedToOffice = (doc.nextOffice === 'Office of the President' || 
+                  doc.nextOffice === 'OP' ||
+                  doc.nextOffice === 'President' ||
+                  doc.currentOffice === 'Office of the President' ||
+                  doc.currentOffice === 'OP' ||
+                    doc.currentOffice === 'President') &&
+                    // Ensure department context matches
+                    isDocumentRoutedToMyDepartment(doc);
                   const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  
+                  if (routedToOffice || forwardedToEmployee) {
+                    console.log('✓ OP will see:', doc.name, '- Dept:', getSubmitterDepartment(doc.submittedBy));
+                  }
                   return routedToOffice || forwardedToEmployee;
                 });
                 console.log('Filtered for Office of the President:', filteredDocuments.length);
               } else if (position === 'Faculty' || position === 'Staff') {
                 // Faculty/Staff see documents they submitted, assigned to them, or forwarded to them
+                // STRICT: Only show documents from the SAME department
                 filteredDocuments = fetchedDocuments.filter(doc => {
+                  // STRICT: Position must match AND department must match
+                  if (!isDocumentRoutedToMyDepartment(doc)) {
+                    return false;
+                  }
                   const isSubmitted = doc.submittedBy === parsedUser.username;
                   const isAssignedOrForwarded = isDocumentAssignedToEmployee(doc, currentEmployee._id);
                   return isSubmitted || isAssignedOrForwarded;
@@ -254,9 +372,14 @@ function Edashboard({ onLogout }) {
                 console.log('Filtered for Faculty/Staff:', filteredDocuments.length);
               } else {
                 // Default: show documents assigned to or forwarded to this employee
-                filteredDocuments = fetchedDocuments.filter(doc => 
-                  isDocumentAssignedToEmployee(doc, currentEmployee._id)
-                );
+                // STRICT: Only show documents from the SAME department
+                filteredDocuments = fetchedDocuments.filter(doc => {
+                  // STRICT: Position must match AND department must match
+                  if (!isDocumentRoutedToMyDepartment(doc)) {
+                    return false;
+                  }
+                  return isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                });
                 console.log('Filtered for other position:', filteredDocuments.length);
               }
               
@@ -325,6 +448,17 @@ function Edashboard({ onLogout }) {
     fetchDocuments();
     fetchDocumentTypes();
     fetchOffices();
+    // Fetch employees for department filtering
+    const fetchEmployeesList = async () => {
+      try {
+        const response = await fetch(`${API_URL}/employees`);
+        const data = await response.json();
+        setEmployees(data);
+      } catch (error) {
+        console.error('Error fetching employees:', error);
+      }
+    };
+    fetchEmployeesList();
   }, [fetchDocuments]);
 
   // Refresh documents when History Logs or Forwarded Documents tab is opened to ensure status is up-to-date
@@ -407,6 +541,169 @@ function Edashboard({ onLogout }) {
   const handleCloseTrackModal = () => {
     setShowTrackModal(false);
     setTrackedDocument(null);
+  };
+
+  const handleCloseApprovalTimeModal = () => {
+    setShowApprovalTimeModal(false);
+    setApprovalTimeDocument(null);
+  };
+
+  // Helper function to calculate approval time information
+  const getApprovalTimeInfo = (doc) => {
+    if (!doc) return null;
+
+    // Expected processing time (default 24 hours if not set)
+    const expectedHours = doc.expectedProcessingTime || 24;
+    const expectedMs = expectedHours * 60 * 60 * 1000;
+
+    // Calculate time spent in processing
+    let startTime = null;
+    let endTime = new Date(); // Default to current time
+    let isApproved = false;
+    let isRejected = false;
+    let approvedTime = null;
+    let rejectedTime = null;
+    
+    // Check if document is approved - find the final approval time
+    if (doc.status === 'Approved' || getDisplayStatus(doc) === 'Approved') {
+      // Find the latest approved entry in routing history
+      if (doc.routingHistory && doc.routingHistory.length > 0) {
+        const approvedEntries = doc.routingHistory
+          .filter(entry => entry.action === 'approved' || entry.action === 'final approved')
+          .sort((a, b) => {
+            const dateA = new Date(a.timestamp || a.date || 0);
+            const dateB = new Date(b.timestamp || b.date || 0);
+            return dateB - dateA; // Sort descending to get latest first
+          });
+        
+        if (approvedEntries.length > 0) {
+          const latestApproval = approvedEntries[0];
+          approvedTime = latestApproval.timestamp ? new Date(latestApproval.timestamp) : 
+                        latestApproval.date ? new Date(latestApproval.date) : null;
+          
+          if (approvedTime) {
+            endTime = approvedTime;
+            isApproved = true;
+          }
+        }
+      }
+      
+      // If no routing history entry found but document has reviewDate, use that
+      if (!approvedTime && doc.reviewDate) {
+        approvedTime = new Date(doc.reviewDate);
+        endTime = approvedTime;
+        isApproved = true;
+      }
+    }
+    
+    // Check if document is rejected - find the rejection time
+    if (doc.status === 'Rejected') {
+      // Find the latest rejected entry in routing history
+      if (doc.routingHistory && doc.routingHistory.length > 0) {
+        const rejectedEntries = doc.routingHistory
+          .filter(entry => entry.action === 'rejected')
+          .sort((a, b) => {
+            const dateA = new Date(a.timestamp || a.date || 0);
+            const dateB = new Date(b.timestamp || b.date || 0);
+            return dateB - dateA; // Sort descending to get latest first
+          });
+        
+        if (rejectedEntries.length > 0) {
+          const latestRejection = rejectedEntries[0];
+          rejectedTime = latestRejection.timestamp ? new Date(latestRejection.timestamp) : 
+                        latestRejection.date ? new Date(latestRejection.date) : null;
+          
+          if (rejectedTime) {
+            endTime = rejectedTime;
+            isRejected = true;
+          }
+        }
+      }
+      
+      // If no routing history entry found but document has reviewDate, use that
+      if (!rejectedTime && doc.reviewDate) {
+        rejectedTime = new Date(doc.reviewDate);
+        endTime = rejectedTime;
+        isRejected = true;
+      }
+    }
+    
+    // Find the first entry in routing history or use dateUploaded
+    if (doc.routingHistory && doc.routingHistory.length > 0) {
+      const firstEntry = doc.routingHistory[0];
+      startTime = firstEntry.timestamp ? new Date(firstEntry.timestamp) : 
+                  firstEntry.date ? new Date(firstEntry.date) : 
+                  new Date(doc.dateUploaded);
+    } else {
+      startTime = new Date(doc.dateUploaded);
+    }
+
+    const timeSpentMs = endTime - startTime;
+    const timeSpentHours = timeSpentMs / (1000 * 60 * 60);
+    
+    // Calculate time remaining or exceeded
+    const timeRemainingMs = expectedMs - timeSpentMs;
+    const isExceeded = timeRemainingMs < 0;
+    const timeRemainingHours = Math.abs(timeRemainingMs) / (1000 * 60 * 60);
+
+    // Format time helper - shows exact time with hours, minutes, and seconds
+    const formatTime = (hours) => {
+      const totalMinutes = Math.floor(hours * 60);
+      const totalSeconds = Math.floor(hours * 3600);
+      
+      if (hours < 1) {
+        const minutes = Math.floor(hours * 60);
+        const seconds = Math.floor((hours * 60 - minutes) * 60);
+        if (seconds > 0) {
+          return `${minutes} min ${seconds} sec`;
+        }
+        return `${minutes} min`;
+      } else if (hours < 24) {
+        const hrs = Math.floor(hours);
+        const mins = Math.floor((hours - hrs) * 60);
+        const secs = Math.floor(((hours - hrs) * 60 - mins) * 60);
+        if (secs > 0) {
+          return `${hrs} hr${hrs > 1 ? 's' : ''} ${mins} min ${secs} sec`;
+        }
+        return `${hrs} hr${hrs > 1 ? 's' : ''} ${mins} min`;
+      } else {
+        const days = Math.floor(hours / 24);
+        const remainingHours = hours % 24;
+        const hrs = Math.floor(remainingHours);
+        const mins = Math.floor((remainingHours - hrs) * 60);
+        const secs = Math.floor(((remainingHours - hrs) * 60 - mins) * 60);
+        
+        let result = `${days} day${days > 1 ? 's' : ''}`;
+        if (hrs > 0) {
+          result += ` ${hrs} hr${hrs > 1 ? 's' : ''}`;
+        }
+        if (mins > 0) {
+          result += ` ${mins} min`;
+        }
+        if (secs > 0 && days === 0) {
+          result += ` ${secs} sec`;
+        }
+        return result;
+      }
+    };
+
+    return {
+      expectedTime: formatTime(expectedHours),
+      expectedHours: expectedHours,
+      timeSpent: formatTime(timeSpentHours),
+      timeSpentHours: timeSpentHours,
+      timeRemaining: formatTime(timeRemainingHours),
+      timeRemainingHours: timeRemainingHours,
+      isExceeded: isExceeded,
+      isApproved: isApproved,
+      isRejected: isRejected,
+      approvedTime: approvedTime,
+      rejectedTime: rejectedTime,
+      endTime: endTime,
+      startTime: startTime,
+      deadline: new Date(startTime.getTime() + expectedMs),
+      percentage: Math.min((timeSpentHours / expectedHours) * 100, 100)
+    };
   };
 
   const handleCloseReviewModal = () => {
@@ -510,33 +807,84 @@ function Edashboard({ onLogout }) {
     return doc.status || 'Submitted';
   };
 
-  // Get next office based on current position
+  // Get next office based on current position, maintaining department context
   const getNextOffice = () => {
-    if (!employee) return null;
+    if (!employee || !selectedDocument) return null;
     
     const position = employee.position;
+    const employeeDepartment = employee.department;
+    const employeeOfficeName = employee.office?.name;
     const endorsementFlow = isEndorsementDocument(selectedDocument);
     const requestedSubjectFlow = isRequestedSubjectDocument(selectedDocument);
     
+    // Get document submitter's department to maintain context
+    const getSubmitterDepartment = (submittedBy) => {
+      if (!submittedBy) return employeeDepartment || employeeOfficeName;
+      const submitter = employees.find(emp => 
+        emp.name?.toLowerCase() === submittedBy.toLowerCase() ||
+        emp.name?.toLowerCase().includes(submittedBy.toLowerCase()) ||
+        submittedBy.toLowerCase().includes(emp.name?.toLowerCase())
+      );
+      return submitter ? (submitter.office?.name || submitter.department) : (employeeDepartment || employeeOfficeName);
+    };
+    
+    const documentDepartment = getSubmitterDepartment(selectedDocument.submittedBy);
+    
+    // Helper to find employee with specific position in the same department
+    const findDepartmentEmployee = (targetPosition) => {
+      const deptEmployees = employees.filter(emp => {
+        const empDept = emp.office?.name || emp.department;
+        const matchesDept = empDept && documentDepartment && (
+          empDept.toLowerCase() === documentDepartment.toLowerCase() ||
+          empDept.toLowerCase().includes(documentDepartment.toLowerCase()) ||
+          documentDepartment.toLowerCase().includes(empDept.toLowerCase())
+        );
+        const matchesPosition = emp.position === targetPosition || 
+                               (targetPosition === 'Academic VP' && (emp.position === 'Academic Vice President' || emp.position === 'Academic VP')) ||
+                               (targetPosition === 'VP' && (emp.position === 'Vice President' || emp.position === 'VP')) ||
+                               (targetPosition === 'OP' && (emp.position === 'Office of the President' || emp.position === 'President' || emp.position === 'OP'));
+        return matchesDept && matchesPosition;
+      });
+      return deptEmployees.length > 0 ? deptEmployees[0] : null;
+    };
+    
+    // ALL positions are now department-specific (no shared positions)
+    // OP, VP, Academic VP, Dean, Program Head, etc. - all are department-specific
+    const isSharedPosition = targetPos => false; // No positions are shared anymore
+    
+    // Determine next position in workflow
+    let nextPosition = null;
     if (position === 'Communication' || position === 'Communications' || position === 'Secretary') {
-      return 'Program Head';
+      nextPosition = 'Program Head';
     } else if (position === 'Program Head') {
-      // Endorsement Form goes to VP, others go to Dean
-      return endorsementFlow ? 'Vice President' : 'Dean';
+      nextPosition = endorsementFlow ? 'Vice President' : 'Dean';
     } else if (position === 'Dean') {
-      // Requested Subject goes to VP, others go to Academic VP
-      return requestedSubjectFlow ? 'Vice President' : 'Academic Vice President';
+      nextPosition = requestedSubjectFlow ? 'Vice President' : 'Academic Vice President';
     } else if (position === 'Academic VP' || position === 'Academic Vice President') {
-      // Academic VP is final approver for Faculty Loading and Travel Order
-      return null;
+      return null; // Final approver for Faculty Loading and Travel Order
     } else if (position === 'Vice President' || position === 'VP') {
-      // VP routes to OP for Endorsement Form, is final for Requested Subject
-      return endorsementFlow ? 'Office of the President' : null;
+      nextPosition = endorsementFlow ? 'Office of the President' : null;
     } else if (position === 'Office of the President' || position === 'President') {
       return null; // Final approver
     }
     
-    return null;
+    if (!nextPosition) return null;
+    
+    // All positions are department-specific and will be filtered by department
+    // Return the position name - filtering will ensure only same department sees it
+    if (nextPosition === 'Office of the President') {
+      return 'OP';
+    }
+    
+    // For department-specific positions, try to find employee in same department
+    const deptEmployee = findDepartmentEmployee(nextPosition);
+    if (deptEmployee) {
+      // Return the position name - filtering will ensure only same department sees it
+      return nextPosition;
+    }
+    
+    // Fallback to position name if no employee found (shouldn't happen in normal flow)
+    return nextPosition;
   };
 
   // Quick action: Approve & Forward
@@ -555,6 +903,28 @@ function Edashboard({ onLogout }) {
       
       // Keep status as 'Processing' when forwarding to next office
       // Only final approval (handleFinalApprove) sets status to 'Approved'
+      // Get document submitter's department to maintain context
+      const getSubmitterDepartment = (submittedBy) => {
+        if (!submittedBy) return employee?.department || employee?.office?.name;
+        const submitter = employees.find(emp => 
+          emp.name?.toLowerCase() === submittedBy.toLowerCase() ||
+          emp.name?.toLowerCase().includes(submittedBy.toLowerCase()) ||
+          submittedBy.toLowerCase().includes(emp.name?.toLowerCase())
+        );
+        return submitter ? (submitter.office?.name || submitter.department) : (employee?.department || employee?.office?.name);
+      };
+      
+      const documentDepartment = getSubmitterDepartment(selectedDocument.submittedBy);
+      
+      // Build office name with department context for routing history
+      // ALL positions are now department-specific (no shared positions)
+      const isSharedPosition = false; // No positions are shared anymore
+      
+      const officeForHistory = isSharedPosition ? nextOffice : nextOffice;
+      const commentsWithDept = documentDepartment && !isSharedPosition
+        ? (reviewForm.comments || `Approved and forwarded to ${nextOffice} of ${documentDepartment} by ${approverName}`)
+        : (reviewForm.comments || `Approved and forwarded to ${nextOffice} by ${approverName}`);
+      
       const updateData = {
         status: 'Processing',
         comments: reviewForm.comments || `Approved by ${approverName}`,
@@ -564,12 +934,13 @@ function Edashboard({ onLogout }) {
         currentOffice: nextOffice,
         $push: {
           routingHistory: {
-            fromOffice: currentPosition,
+            office: officeForHistory,
             toOffice: nextOffice,
-            action: 'Approved and Forwarded',
+            action: 'approved',
             performedBy: approverName,
+            handler: approverName,
             date: new Date().toISOString(),
-            comments: reviewForm.comments || `Approved by ${approverName}`
+            comments: commentsWithDept
           }
         }
       };
@@ -594,7 +965,9 @@ function Edashboard({ onLogout }) {
           }, 300);
         }
       } else {
-        alert('Failed to approve and forward document');
+        const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
+        console.error('Error response:', errorData);
+        alert(`Failed to approve and forward document: ${errorData.message || 'Unknown error'}`);
       }
     } catch (error) {
       console.error('Error approving and forwarding:', error);
@@ -663,19 +1036,36 @@ function Edashboard({ onLogout }) {
       const currentPosition = employee?.position || user?.username;
       const approverName = employee?.name || user?.username || 'Unknown';
       
+      // Get document submitter's department to maintain context
+      const getSubmitterDepartment = (submittedBy) => {
+        if (!submittedBy) return employee?.department || employee?.office?.name;
+        const submitter = employees.find(emp => 
+          emp.name?.toLowerCase() === submittedBy.toLowerCase() ||
+          emp.name?.toLowerCase().includes(submittedBy.toLowerCase()) ||
+          submittedBy.toLowerCase().includes(emp.name?.toLowerCase())
+        );
+        return submitter ? (submitter.office?.name || submitter.department) : (employee?.department || employee?.office?.name);
+      };
+      
+      const documentDepartment = getSubmitterDepartment(selectedDocument.submittedBy);
+      const officeForHistory = documentDepartment ? `${currentPosition} of ${documentDepartment}` : currentPosition;
+      
       const updateData = {
         status: 'Rejected',
         comments: reviewForm.comments,
         reviewer: approverName,
         reviewDate: new Date().toISOString(),
+        nextOffice: '', // Clear next office when rejected
+        currentOffice: '', // Clear current office when rejected
         $push: {
           routingHistory: {
-            fromOffice: currentPosition,
+            office: officeForHistory,
             toOffice: 'Returned to Submitter',
-            action: 'Rejected',
+            action: 'rejected', // Must be lowercase per schema enum
             performedBy: approverName,
+            handler: approverName,
             date: new Date().toISOString(),
-            comments: reviewForm.comments
+            comments: reviewForm.comments || `Document rejected by ${approverName}`
           }
         }
       };
@@ -700,11 +1090,13 @@ function Edashboard({ onLogout }) {
           }, 300);
         }
       } else {
-        alert('Failed to reject document');
+        const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
+        console.error('Reject error:', errorData);
+        alert(`Failed to reject document: ${errorData.message || 'Unknown error'}`);
       }
     } catch (error) {
       console.error('Error rejecting:', error);
-      alert('Error rejecting document');
+      alert(`Error rejecting document: ${error.message || 'Unknown error'}`);
     }
   };
 
@@ -899,7 +1291,13 @@ function Edashboard({ onLogout }) {
       if (!document.routingHistory || document.routingHistory.length === 0) return null;
       return document.routingHistory
         .filter(entry => entry.action === action)
-        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0] || null;
+        .sort((a, b) => new Date(b.timestamp || b.date || 0) - new Date(a.timestamp || a.date || 0))[0] || null;
+    };
+    
+    // Helper to get handler from entry
+    const getHandler = (entry) => {
+      if (!entry) return null;
+      return entry.handler || entry.performedBy || entry.handlerName || entry.name || null;
     };
 
     // Get submitted info
@@ -911,14 +1309,27 @@ function Edashboard({ onLogout }) {
 
     // Get received/reviewed info
     const receivedEntry = findRoutingEntry('reviewed') || findRoutingEntry('received');
+    
+    // Get all forwarded entries to show all approvers
+    const allForwardedEntries = document.routingHistory && document.routingHistory.length > 0
+      ? document.routingHistory.filter(entry => 
+          entry.action === 'forwarded' || entry.action === 'approved and forwarded'
+        ).sort((a, b) => new Date(a.timestamp || a.date || 0) - new Date(b.timestamp || b.date || 0))
+      : [];
+    const forwardedEntry = allForwardedEntries.length > 0 ? allForwardedEntries[allForwardedEntries.length - 1] : null;
 
-    // Get forwarded info
-    const forwardedEntry = findRoutingEntry('forwarded');
-
-    // Get approved/rejected info
-    const approvedEntry = findRoutingEntry('approved');
+    // Get approved/rejected info - get the latest one
+    const approvedEntries = document.routingHistory && document.routingHistory.length > 0
+      ? document.routingHistory.filter(entry => entry.action === 'approved')
+        .sort((a, b) => new Date(b.timestamp || b.date || 0) - new Date(a.timestamp || a.date || 0))
+      : [];
     const rejectedEntry = findRoutingEntry('rejected');
-    const completedEntry = approvedEntry || rejectedEntry;
+    const completedEntry = approvedEntries.length > 0 ? approvedEntries[0] : rejectedEntry;
+    
+    // Get all unique handlers for review step (from all forwarded entries)
+    const reviewHandlers = [...new Set(allForwardedEntries
+      .map(entry => getHandler(entry))
+      .filter(Boolean))];
 
     const steps = [
       {
@@ -935,7 +1346,7 @@ function Edashboard({ onLogout }) {
           minute: '2-digit',
           hour12: true
         }) : null,
-        person: submittedEntry?.handler || document.submittedBy || 'N/A',
+        person: getHandler(submittedEntry) || document.submittedBy || 'N/A',
         completed: true,
         active: document.status === 'Submitted'
       },
@@ -961,7 +1372,7 @@ function Edashboard({ onLogout }) {
           minute: '2-digit',
           hour12: true
         }) : null),
-        person: receivedEntry?.handler || document.reviewer || 'N/A',
+        person: getHandler(receivedEntry) || document.reviewer || 'N/A',
         completed: document.status !== 'Submitted',
         active: document.status === 'Under Review'
       },
@@ -989,7 +1400,9 @@ function Edashboard({ onLogout }) {
           minute: '2-digit',
           hour12: true
         }) : null),
-        person: forwardedEntry?.handler || document.reviewer || 'N/A',
+        person: reviewHandlers.length > 0 
+          ? reviewHandlers.join(', ') 
+          : (getHandler(forwardedEntry) || document.reviewer || 'N/A'),
         completed: getDisplayStatus(document) === 'Approved' || document.status === 'Rejected' || getDisplayStatus(document) === 'Processing',
         active: document.status === 'Under Review'
       },
@@ -1019,7 +1432,7 @@ function Edashboard({ onLogout }) {
               minute: '2-digit',
               hour12: true
             }) : null),
-        person: completedEntry?.handler || document.reviewer || 'N/A',
+        person: getHandler(completedEntry) || document.reviewer || 'N/A',
         completed: getDisplayStatus(document) === 'Approved' || document.status === 'Rejected',
         active: false,
         isRejected: document.status === 'Rejected'
@@ -1478,7 +1891,7 @@ function Edashboard({ onLogout }) {
                 History Logs
               </button>
             </li>
-            <li>
+            <li style={{ marginBottom: '5px' }}>
               <button
                 onClick={() => setActiveSidebarTab('forwarded')}
                 style={{
@@ -2331,6 +2744,32 @@ function Edashboard({ onLogout }) {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
+                                  setApprovalTimeDocument(document);
+                                  setShowApprovalTimeModal(true);
+                                }}
+                                style={{
+                                  backgroundColor: '#9b59b6',
+                                  color: 'white',
+                                  border: 'none',
+                                  padding: '5px 10px',
+                                  borderRadius: '4px',
+                                  fontSize: '11px',
+                                  fontWeight: '500',
+                                  cursor: 'pointer',
+                                  transition: 'background-color 0.3s ease'
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.target.style.backgroundColor = '#8e44ad';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.target.style.backgroundColor = '#9b59b6';
+                                }}
+                              >
+                                Approval Time
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   handleDeleteDocument(document._id);
                                 }}
                                 style={{
@@ -2407,7 +2846,7 @@ function Edashboard({ onLogout }) {
                       border: '1px solid #ddd', 
                       padding: '12px 10px', 
                       textAlign: 'left', 
-                      backgroundColor: '#f8f9fa',
+              backgroundColor: '#f8f9fa',
                       fontSize: '13px',
                       fontWeight: '600',
                       color: '#2c3e50',
@@ -2526,8 +2965,67 @@ function Edashboard({ onLogout }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {allDocuments.length > 0 ? (
-                    allDocuments.map((doc) => (
+                  {(() => {
+                    // Filter documents by department for History Logs
+                    const getFilteredHistoryDocuments = () => {
+                      if (!employee || !allDocuments.length) return [];
+                      
+                      const employeeDepartment = employee.department;
+                      const employeeOfficeName = employee.office?.name;
+                      const employeePosition = employee.position;
+                      
+                      // ALL positions are now department-specific (no shared positions)
+                      // OP, VP, Academic VP, Dean, Program Head, etc. - all are department-specific
+                      const isSharedPosition = false; // No positions are shared anymore
+                      
+                      // Helper function to get submitter's department
+                      const getSubmitterDepartment = (submittedBy) => {
+                        if (!submittedBy) return null;
+                        const submitter = employees.find(emp => 
+                          emp.name?.toLowerCase() === submittedBy.toLowerCase() ||
+                          emp.name?.toLowerCase().includes(submittedBy.toLowerCase()) ||
+                          submittedBy.toLowerCase().includes(emp.name?.toLowerCase())
+                        );
+                        return submitter ? (submitter.office?.name || submitter.department) : null;
+                      };
+                      
+                      // Enhanced department matching function
+                      const isFromSameDepartment = (doc) => {
+                        const submitterDept = getSubmitterDepartment(doc.submittedBy);
+                        if (!submitterDept) return false;
+                        
+                        // Strict department matching: document must be from the same department/office as the employee
+                        const docDeptLower = submitterDept.toLowerCase();
+                        const empDeptLower = employeeDepartment?.toLowerCase() || '';
+                        const empOfficeLower = employeeOfficeName?.toLowerCase() || '';
+                        
+                        // Check exact matches or if one contains the other (for variations like "Faculty of Agriculture and Life Sciences" vs "FALS")
+                        const matchesDept = docDeptLower === empDeptLower || 
+                                           docDeptLower === empOfficeLower ||
+                                           empDeptLower === docDeptLower ||
+                                           empOfficeLower === docDeptLower ||
+                                           (docDeptLower.includes(empDeptLower) && empDeptLower.length > 0) ||
+                                           (empDeptLower.includes(docDeptLower) && docDeptLower.length > 0) ||
+                                           (docDeptLower.includes(empOfficeLower) && empOfficeLower.length > 0) ||
+                                           (empOfficeLower.includes(docDeptLower) && docDeptLower.length > 0);
+                        
+                        return matchesDept;
+                      };
+                      
+                      return allDocuments.filter(doc => {
+                        // STRICT: ALL positions are department-specific - only show documents from same department
+                        if (!isFromSameDepartment(doc)) {
+                          return false;
+                        }
+                        
+                        return true;
+                      });
+                    };
+                    
+                    const filteredHistoryDocs = getFilteredHistoryDocuments();
+                    
+                    return filteredHistoryDocs.length > 0 ? (
+                      filteredHistoryDocs.map((doc) => (
                       <tr key={doc._id} style={{ cursor: 'pointer' }} onClick={() => handleDocumentClick(doc)}>
                         <td style={{ 
                           border: '1px solid #ddd', 
@@ -2728,24 +3226,25 @@ function Edashboard({ onLogout }) {
                           </div>
                         </td>
                       </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td 
-                        colSpan="10" 
-                        style={{ 
-                          border: '1px solid #ddd', 
-                          padding: '40px',
-                          textAlign: 'center',
-                          color: '#95a5a6',
-                          fontSize: '16px'
-                        }}
-                      >
-                        <h3 style={{ margin: '0 0 8px 0', color: '#7f8c8d', fontSize: '16px' }}>No documents found</h3>
-                        <p style={{ margin: 0, fontSize: '14px' }}>Documents will appear here once submitted</p>
-                      </td>
-                    </tr>
-                  )}
+                      ))
+                    ) : (
+                      <tr>
+                        <td 
+                          colSpan="10" 
+                          style={{ 
+                            border: '1px solid #ddd', 
+                            padding: '40px',
+                            textAlign: 'center',
+                            color: '#95a5a6',
+                            fontSize: '16px'
+                          }}
+                        >
+                          <h3 style={{ margin: '0 0 8px 0', color: '#7f8c8d', fontSize: '16px' }}>No documents found</h3>
+                          <p style={{ margin: 0, fontSize: '14px' }}>Documents will appear here once submitted</p>
+                        </td>
+                      </tr>
+                    );
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -2771,7 +3270,51 @@ function Edashboard({ onLogout }) {
                 const employeeDepartment = employee.department;
                 const employeeOfficeName = employee.office?.name;
                 
+                // Helper function to get submitter's department
+                const getSubmitterDepartment = (submittedBy) => {
+                  if (!submittedBy) return null;
+                  // Try to find the submitter in employees list
+                  const submitter = employees.find(emp => 
+                    emp.name?.toLowerCase() === submittedBy.toLowerCase() ||
+                    emp.name?.toLowerCase().includes(submittedBy.toLowerCase()) ||
+                    submittedBy.toLowerCase().includes(emp.name?.toLowerCase())
+                  );
+                  return submitter ? (submitter.office?.name || submitter.department) : null;
+                };
+                
+                // ALL positions are now department-specific (no shared positions)
+                // OP, VP, Academic VP, Dean, Program Head, etc. - all are department-specific
+                const isSharedPosition = false; // No positions are shared anymore
+                
+                // Enhanced department matching function
+                const isFromSameDepartment = (doc) => {
+                  const submitterDept = getSubmitterDepartment(doc.submittedBy);
+                  if (!submitterDept) return false;
+                  
+                  // Strict department matching: document must be from the same department/office as the employee
+                  const docDeptLower = submitterDept.toLowerCase();
+                  const empDeptLower = employeeDepartment?.toLowerCase() || '';
+                  const empOfficeLower = employeeOfficeName?.toLowerCase() || '';
+                  
+                  // Check exact matches or if one contains the other (for variations like "Faculty of Agriculture and Life Sciences" vs "FALS")
+                  const matchesDept = docDeptLower === empDeptLower || 
+                                     docDeptLower === empOfficeLower ||
+                                     empDeptLower === docDeptLower ||
+                                     empOfficeLower === docDeptLower ||
+                                     (docDeptLower.includes(empDeptLower) && empDeptLower.length > 0) ||
+                                     (empDeptLower.includes(docDeptLower) && docDeptLower.length > 0) ||
+                                     (docDeptLower.includes(empOfficeLower) && empOfficeLower.length > 0) ||
+                                     (empOfficeLower.includes(docDeptLower) && docDeptLower.length > 0);
+                  
+                  return matchesDept;
+                };
+                
                 return allDocuments.filter(doc => {
+                  // STRICT: ALL positions are department-specific - only show documents from same department
+                  if (!isFromSameDepartment(doc)) {
+                    return false;
+                  }
+                  
                   // Check if employee is in assignedTo array
                   const isAssigned = doc.assignedTo?.some(assignedId => {
                     if (!assignedId) return false;
@@ -2804,23 +3347,60 @@ function Edashboard({ onLogout }) {
                     const forwardedToEmployee = forwardingEntries.some(entry => {
                       const destinationOffice = entry.toOffice || entry.office || '';
                       
-                      // Check if the destination office matches employee's position/office
+                      // For shared positions, check if destination matches position
+                      if (isSharedPosition) {
+                        const matchesPosition = employeePosition && (
+                          destinationOffice.toLowerCase() === employeePosition.toLowerCase() ||
+                          destinationOffice.toLowerCase().includes(employeePosition.toLowerCase()) ||
+                          employeePosition.toLowerCase().includes(destinationOffice.toLowerCase())
+                        );
+                        return matchesPosition;
+                      }
+                      
+                      // For department-specific positions, must match department
+                      const matchesDepartment = employeeDepartment && (
+                        destinationOffice.toLowerCase().includes(employeeDepartment.toLowerCase()) ||
+                        employeeDepartment.toLowerCase().includes(destinationOffice.toLowerCase())
+                      );
+                      const matchesOffice = employeeOfficeName && (
+                        destinationOffice.toLowerCase() === employeeOfficeName.toLowerCase() ||
+                        destinationOffice.toLowerCase().includes(employeeOfficeName.toLowerCase()) ||
+                        employeeOfficeName.toLowerCase().includes(destinationOffice.toLowerCase())
+                      );
+                      
+                      // Position match (for non-shared positions, must also have department match)
                       const matchesPosition = employeePosition && (
                         destinationOffice.toLowerCase() === employeePosition.toLowerCase() ||
                         destinationOffice.toLowerCase().includes(employeePosition.toLowerCase()) ||
                         employeePosition.toLowerCase().includes(destinationOffice.toLowerCase())
                       );
-                      const matchesDepartment = employeeDepartment && destinationOffice.toLowerCase().includes(employeeDepartment.toLowerCase());
-                      const matchesOffice = employeeOfficeName && destinationOffice.toLowerCase().includes(employeeOfficeName.toLowerCase());
+                      
+                      // For non-shared positions, require department or office match AND document must be from same department
+                      if (!isSharedPosition) {
+                        // Only return true if department/office matches AND document is from same department
+                        if (matchesDepartment || matchesOffice) {
+                          return isFromSameDepartment; // Document must be from same department
+                        }
+                        return false;
+                      }
+                      
+                      // For shared positions, position match is enough
+                      if (matchesPosition) {
+                        return true;
+                      }
                       
                       // Also check if the entry's office field matches (when toOffice is not available)
                       const entryOfficeMatches = entry.office && (
-                        (employeePosition && entry.office.toLowerCase().includes(employeePosition.toLowerCase())) ||
                         (employeeDepartment && entry.office.toLowerCase().includes(employeeDepartment.toLowerCase())) ||
-                        (employeeOfficeName && entry.office.toLowerCase().includes(employeeOfficeName.toLowerCase()))
+                        (employeeOfficeName && entry.office.toLowerCase() === employeeOfficeName.toLowerCase())
                       );
                       
-                      return matchesPosition || matchesDepartment || matchesOffice || entryOfficeMatches;
+                      // For non-shared positions, entry office must match AND document from same department
+                      if (!isSharedPosition && entryOfficeMatches) {
+                        return isFromSameDepartment;
+                      }
+                      
+                      return matchesDepartment || matchesOffice || entryOfficeMatches;
                     });
                     
                     if (forwardedToEmployee) {
@@ -2829,20 +3409,44 @@ function Edashboard({ onLogout }) {
                   }
                   
                   // Check if currentOffice matches employee's position/office (document is currently at employee's office)
-                  const matchesCurrentOffice = doc.currentOffice && (
-                    (employeePosition && doc.currentOffice.toLowerCase() === employeePosition.toLowerCase()) ||
-                    (employeePosition && doc.currentOffice.toLowerCase().includes(employeePosition.toLowerCase()) && employeePosition.toLowerCase().includes(doc.currentOffice.toLowerCase())) ||
-                    (employeeDepartment && doc.currentOffice.toLowerCase().includes(employeeDepartment.toLowerCase())) ||
-                    (employeeOfficeName && doc.currentOffice.toLowerCase().includes(employeeOfficeName.toLowerCase()))
-                  );
+                  let matchesCurrentOffice = false;
+                  if (doc.currentOffice) {
+                    if (isSharedPosition) {
+                      matchesCurrentOffice = employeePosition && (
+                        doc.currentOffice.toLowerCase() === employeePosition.toLowerCase() ||
+                        doc.currentOffice.toLowerCase().includes(employeePosition.toLowerCase()) ||
+                        employeePosition.toLowerCase().includes(doc.currentOffice.toLowerCase())
+                      );
+                    } else {
+                      // For non-shared positions, must match department
+                      const matchesDept = employeeDepartment && doc.currentOffice.toLowerCase().includes(employeeDepartment.toLowerCase());
+                      const matchesOffice = employeeOfficeName && (
+                        doc.currentOffice.toLowerCase() === employeeOfficeName.toLowerCase() ||
+                        doc.currentOffice.toLowerCase().includes(employeeOfficeName.toLowerCase())
+                      );
+                      matchesCurrentOffice = matchesDept || matchesOffice;
+                    }
+                  }
                   
                   // Check if nextOffice matches employee's position/office (document is about to arrive at employee's office)
-                  const matchesNextOffice = doc.nextOffice && (
-                    (employeePosition && doc.nextOffice.toLowerCase() === employeePosition.toLowerCase()) ||
-                    (employeePosition && doc.nextOffice.toLowerCase().includes(employeePosition.toLowerCase()) && employeePosition.toLowerCase().includes(doc.nextOffice.toLowerCase())) ||
-                    (employeeDepartment && doc.nextOffice.toLowerCase().includes(employeeDepartment.toLowerCase())) ||
-                    (employeeOfficeName && doc.nextOffice.toLowerCase().includes(employeeOfficeName.toLowerCase()))
-                  );
+                  let matchesNextOffice = false;
+                  if (doc.nextOffice) {
+                    if (isSharedPosition) {
+                      matchesNextOffice = employeePosition && (
+                        doc.nextOffice.toLowerCase() === employeePosition.toLowerCase() ||
+                        doc.nextOffice.toLowerCase().includes(employeePosition.toLowerCase()) ||
+                        employeePosition.toLowerCase().includes(doc.nextOffice.toLowerCase())
+                      );
+                    } else {
+                      // For non-shared positions, must match department
+                      const matchesDept = employeeDepartment && doc.nextOffice.toLowerCase().includes(employeeDepartment.toLowerCase());
+                      const matchesOffice = employeeOfficeName && (
+                        doc.nextOffice.toLowerCase() === employeeOfficeName.toLowerCase() ||
+                        doc.nextOffice.toLowerCase().includes(employeeOfficeName.toLowerCase())
+                      );
+                      matchesNextOffice = matchesDept || matchesOffice;
+                    }
+                  }
                   
                   // Include if document is currently at or about to arrive at this employee's office and has routing history
                   if ((matchesCurrentOffice || matchesNextOffice) && doc.routingHistory && doc.routingHistory.length > 0) {
@@ -3051,7 +3655,7 @@ function Edashboard({ onLogout }) {
                     <div style={{
                       backgroundColor: '#e3f2fd',
                       padding: '15px',
-                      borderRadius: '8px',
+              borderRadius: '8px',
                       textAlign: 'center',
                       border: '2px solid #bbdefb'
                     }}>
@@ -3090,12 +3694,12 @@ function Edashboard({ onLogout }) {
                         {forwardedDocs.filter(d => ['Approved', 'Completed'].includes(d.status)).length}
                       </p>
                     </div>
-                  </div>
+            </div>
 
                   {/* Forwarded Documents Table */}
-                  <div style={{ overflowX: 'auto' }}>
+            <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead>
+                <thead>
                         <tr>
                           <th style={{ 
                             border: '1px solid #ddd', 
@@ -3181,9 +3785,9 @@ function Edashboard({ onLogout }) {
                           }}>
                             Actions
                           </th>
-                        </tr>
-                      </thead>
-                      <tbody>
+                  </tr>
+                </thead>
+                <tbody>
                         {forwardedDocs.length > 0 ? (
                           forwardedDocs.map((doc) => (
                             <tr key={doc._id} style={{
@@ -3204,27 +3808,27 @@ function Edashboard({ onLogout }) {
                                 fontSize: '12px',
                                 color: '#7f8c8d'
                               }}>
-                                <span style={{
-                                  padding: '4px 8px',
-                                  borderRadius: '4px',
-                                  fontSize: '11px',
-                                  fontWeight: '600',
-                                  backgroundColor: '#ecf0f1',
-                                  color: '#2c3e50'
-                                }}>
-                                  {doc.type}
-                                </span>
-                              </td>
+                          <span style={{
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            fontSize: '11px',
+                            fontWeight: '600',
+                            backgroundColor: '#ecf0f1',
+                            color: '#2c3e50'
+                          }}>
+                            {doc.type}
+                          </span>
+                        </td>
                               <td style={{ 
                                 border: '1px solid #ddd', 
                                 padding: '10px 8px',
                                 fontSize: '12px'
                               }}>
-                                <span style={{
-                                  padding: '4px 8px',
-                                  borderRadius: '4px',
-                                  fontSize: '11px',
-                                  fontWeight: '600',
+                          <span style={{
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            fontSize: '11px',
+                            fontWeight: '600',
                                   backgroundColor: doc.status === 'Approved' ? '#d4edda' :
                                                  doc.status === 'Under Review' ? '#fff3cd' :
                                                  doc.status === 'Processing' ? '#d1ecf1' :
@@ -3235,8 +3839,8 @@ function Edashboard({ onLogout }) {
                                          doc.status === 'Rejected' ? '#721c24' : '#495057'
                                 }}>
                                   {doc.status || 'Pending'}
-                                </span>
-                              </td>
+                          </span>
+                        </td>
                               <td style={{ 
                                 border: '1px solid #ddd', 
                                 padding: '10px 8px',
@@ -3267,7 +3871,7 @@ function Edashboard({ onLogout }) {
                                   }
                                   return 'N/A';
                                 })()}
-                              </td>
+                        </td>
                               <td style={{ 
                                 border: '1px solid #ddd', 
                                 padding: '10px 8px',
@@ -3310,7 +3914,7 @@ function Edashboard({ onLogout }) {
                                   }
                                   return 'N/A';
                                 })()}
-                              </td>
+                        </td>
                               <td style={{ 
                                 border: '1px solid #ddd', 
                                 padding: '10px 8px',
@@ -3353,14 +3957,14 @@ function Edashboard({ onLogout }) {
                                   }
                                   return 'N/A';
                                 })()}
-                              </td>
+                        </td>
                               <td style={{ 
                                 border: '1px solid #ddd', 
                                 padding: '10px 8px',
                                 textAlign: 'center'
                               }}>
                                 <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                                  <button
+                          <button
                                     onClick={() => {
                                       setSelectedDocument(doc);
                                       setShowReviewModal(true);
@@ -3371,21 +3975,21 @@ function Edashboard({ onLogout }) {
                                         nextOffice: doc.nextOffice || ''
                                       });
                                     }}
-                                    style={{
+                            style={{
                                       padding: '6px 12px',
-                                      backgroundColor: '#3498db',
-                                      color: 'white',
-                                      border: 'none',
-                                      borderRadius: '4px',
+                              backgroundColor: '#3498db',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
                                       fontSize: '11px',
                                       fontWeight: '600',
                                       cursor: 'pointer'
-                                    }}
-                                    onMouseEnter={(e) => e.target.style.backgroundColor = '#2980b9'}
-                                    onMouseLeave={(e) => e.target.style.backgroundColor = '#3498db'}
-                                  >
+                            }}
+                            onMouseEnter={(e) => e.target.style.backgroundColor = '#2980b9'}
+                            onMouseLeave={(e) => e.target.style.backgroundColor = '#3498db'}
+                          >
                                     Review
-                                  </button>
+                          </button>
                                   <button
                                     onClick={() => {
                                       setTrackedDocument(doc);
@@ -3407,29 +4011,29 @@ function Edashboard({ onLogout }) {
                                     Track
                                   </button>
                                 </div>
-                              </td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
                             <td 
                               colSpan="7" 
                               style={{ 
                                 border: '1px solid #ddd', 
-                                padding: '40px',
-                                textAlign: 'center',
+                        padding: '40px',
+                        textAlign: 'center',
                                 color: '#95a5a6',
                                 fontSize: '16px'
                               }}
                             >
                               <h3 style={{ margin: '0 0 8px 0', color: '#7f8c8d', fontSize: '16px' }}>No forwarded documents</h3>
                               <p style={{ margin: 0, fontSize: '14px' }}>Documents forwarded to you will appear here</p>
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
                 </div>
               );
             })()}
@@ -4012,56 +4616,56 @@ function Edashboard({ onLogout }) {
 
               {/* Date and Time - Hide for TRAVEL ORDER */}
               {!(documentForm.type && documentForm.type.toUpperCase().includes('TRAVEL ORDER')) && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-                  <div>
-                    <label style={{
-                      display: 'block',
-                      marginBottom: '8px',
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                <div>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    color: '#2c3e50'
+                  }}>
+                    Date *
+                  </label>
+                  <input
+                    type="date"
+                    value={documentForm.date}
+                    onChange={(e) => handleDocumentInputChange('date', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
                       fontSize: '14px',
-                      fontWeight: '600',
-                      color: '#2c3e50'
-                    }}>
-                      Date *
-                    </label>
-                    <input
-                      type="date"
-                      value={documentForm.date}
-                      onChange={(e) => handleDocumentInputChange('date', e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '12px',
-                        border: '1px solid #ddd',
-                        borderRadius: '8px',
-                        fontSize: '14px',
-                        boxSizing: 'border-box'
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{
-                      display: 'block',
-                      marginBottom: '8px',
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      color: '#2c3e50'
-                    }}>
-                      Time *
-                    </label>
-                    <input
-                      type="time"
-                      value={documentForm.time}
-                      onChange={(e) => handleDocumentInputChange('time', e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '12px',
-                        border: '1px solid #ddd',
-                        borderRadius: '8px',
-                        fontSize: '14px',
-                        boxSizing: 'border-box'
-                      }}
-                    />
-                  </div>
+                      boxSizing: 'border-box'
+                    }}
+                  />
                 </div>
+                <div>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    color: '#2c3e50'
+                  }}>
+                    Time *
+                  </label>
+                  <input
+                    type="time"
+                    value={documentForm.time}
+                    onChange={(e) => handleDocumentInputChange('time', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+              </div>
               )}
 
               {/* Travel Order Specific Fields - Only show for TRAVEL ORDER */}
@@ -5475,220 +6079,123 @@ function Edashboard({ onLogout }) {
               </div>
             </div>
 
-            {/* Document Route */}
-            <div style={{
-              backgroundColor: '#ffffff',
-              padding: '12px',
-              borderRadius: '8px',
-              border: '1px solid #e9ecef'
-            }}>
+            {/* Processing Timeline */}
+            {(() => {
+              const timelineSteps = getTimelineSteps(trackedDocument);
+              return (
+                <div style={{
+                  backgroundColor: '#ffffff',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: '1px solid #e9ecef'
+                }}>
               <h4 style={{
-                margin: '0 0 15px 0',
-                fontSize: '15px',
+                    margin: '0 0 15px 0',
+                    fontSize: '15px',
                 fontWeight: '600',
-                color: '#2c3e50',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px'
+                    color: '#2c3e50',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
               }}>
-                <span style={{ fontSize: '16px' }}>📍</span>
-                Document Route
+                    Processing Timeline
               </h4>
               
-              {trackedDocument.routingHistory && trackedDocument.routingHistory.length > 0 ? (
-                <div style={{ position: 'relative' }}>
-                  {trackedDocument.routingHistory.map((entry, index) => {
-                    const isLast = index === trackedDocument.routingHistory.length - 1;
-                    const entryDate = entry.timestamp ? new Date(entry.timestamp) : (entry.date ? new Date(entry.date) : null);
-                    const formattedDate = entryDate ? entryDate.toLocaleDateString('en-US', {
-                      year: 'numeric',
-                      month: '2-digit',
-                      day: '2-digit'
-                    }) : 'N/A';
-                    const formattedTime = entryDate ? entryDate.toLocaleTimeString('en-US', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      hour12: true
-                    }) : 'N/A';
-                    const handler = entry.handler || entry.performedBy || 'Unknown';
-                    const office = entry.office || entry.toOffice || trackedDocument.currentOffice || 'Unknown Office';
-                    const action = entry.action || 'processed';
-                    
-                    // Determine if this is the current location
-                    const isCurrentLocation = index === trackedDocument.routingHistory.length - 1 && 
-                      trackedDocument.status !== 'Completed' && 
-                      trackedDocument.status !== 'Archived';
-                    
-                    return (
-                      <div key={index} style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        marginBottom: isLast ? '0' : '12px',
-                        position: 'relative'
-                      }}>
-                        {/* Route Line */}
-                        {!isLast && (
-                          <div style={{
-                            position: 'absolute',
-                            left: '13px',
-                            top: '28px',
-                            width: '2px',
-                            height: 'calc(100% + 8px)',
-                            backgroundColor: '#28a745',
-                            zIndex: 1
-                          }} />
-                        )}
-                        
-                        {/* Route Point Icon */}
-                        <div style={{
-                          width: '26px',
-                          height: '26px',
-                          minWidth: '26px',
-                          borderRadius: '50%',
-                          backgroundColor: isCurrentLocation ? '#007bff' : '#28a745',
-                          color: 'white',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '12px',
-                          fontWeight: '600',
-                          marginRight: '12px',
-                          zIndex: 2,
+                  <div style={{ position: 'relative', paddingLeft: '30px' }}>
+                    {timelineSteps.map((step, index) => {
+                      const isLast = index === timelineSteps.length - 1;
+                      const isCompleted = step.completed || step.active;
+                      
+                      return (
+                  <div key={step.id} style={{
                           position: 'relative',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                        }}>
-                          {index + 1}
-                        </div>
-                        
-                        {/* Route Content */}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'flex-start',
-                            gap: '15px',
-                            marginBottom: '6px'
+                          marginBottom: isLast ? '0' : '20px'
+                  }}>
+                    {/* Timeline Line */}
+                          {!isLast && (
+                      <div style={{
+                        position: 'absolute',
+                              left: '-23px',
+                              top: '20px',
+                        width: '2px',
+                              height: 'calc(100% + 4px)',
+                              backgroundColor: isCompleted ? '#28a745' : '#dee2e6',
+                              zIndex: 0
+                      }} />
+                    )}
+                    
+                          {/* Timeline Icon */}
+                    <div style={{
+                            position: 'absolute',
+                            left: '-30px',
+                            top: '2px',
+                            width: '20px',
+                            height: '20px',
+                      borderRadius: '50%',
+                            backgroundColor: isCompleted ? '#28a745' : '#dee2e6',
+                            border: '2px solid white',
+                            zIndex: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
                           }}>
-                            <div style={{ flex: 1 }}>
-                              <h5 style={{
-                                margin: '0 0 4px 0',
-                                fontSize: '14px',
-                                fontWeight: '600',
-                                color: '#2c3e50'
+                            {isCompleted && (
+                              <span style={{ color: 'white', fontSize: '12px', fontWeight: 'bold' }}>✓</span>
+                            )}
+                    </div>
+                    
+                          {/* Timeline Content */}
+                          <div>
+                        <h5 style={{
+                              margin: '0 0 4px 0',
+                              fontSize: '14px',
+                          fontWeight: '600',
+                              color: '#2c3e50'
+                        }}>
+                          {step.title}
+                        </h5>
+                            <p style={{
+                              margin: '0 0 8px 0',
+                            fontSize: '12px',
+                        color: '#6c757d',
+                        lineHeight: '1.4'
+                      }}>
+                        {step.description}
+                      </p>
+                            {(step.date || step.time || step.person) && (
+                              <div style={{
+                                display: 'flex',
+                                gap: '12px',
+                                flexWrap: 'wrap',
+                                fontSize: '11px',
+                                color: '#7f8c8d'
                               }}>
-                                {office}
-                                {isCurrentLocation && (
+                                {step.date && (
+                                  <span>{step.date}</span>
+                                )}
+                                {step.time && (
+                                  <span>{step.time}</span>
+                                )}
+                                {step.person && step.person !== 'N/A' && (
                                   <span style={{
-                                    marginLeft: '8px',
-                                    fontSize: '11px',
-                                    color: '#007bff',
-                                    fontWeight: '500'
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px'
                                   }}>
-                                    (Current)
+                                    👤 {step.person}
                                   </span>
                                 )}
-                              </h5>
-                              <p style={{
-                                margin: 0,
-                                fontSize: '12px',
-                                color: '#6c757d',
-                                lineHeight: '1.3',
-                                textTransform: 'capitalize'
-                              }}>
-                                {action.replace(/_/g, ' ')}
-                              </p>
-                            </div>
-                          </div>
-                          <div style={{
-                            display: 'flex',
-                            gap: '10px',
-                            flexWrap: 'wrap',
-                            marginTop: '6px',
-                            padding: '8px 10px',
-                            backgroundColor: '#f8f9fa',
-                            borderRadius: '6px',
-                            border: '1px solid #e9ecef'
-                          }}>
-                            <span style={{
-                              fontSize: '11px',
-                              color: '#2c3e50',
-                              fontWeight: '500'
-                            }}>
-                              📅 {formattedDate}
-                            </span>
-                            <span style={{
-                              fontSize: '11px',
-                              color: '#2c3e50',
-                              fontWeight: '500'
-                            }}>
-                              🕒 {formattedTime}
-                            </span>
-                            {handler && handler !== 'Unknown' && (
-                              <span style={{
-                                fontSize: '11px',
-                                color: '#2c3e50',
-                                fontWeight: '500'
-                              }}>
-                                👤 {handler}
-                              </span>
+                    </div>
                             )}
-                            {entry.processingTime && (
-                              <span style={{
-                                fontSize: '11px',
-                                color: '#2c3e50',
-                                fontWeight: '500'
-                              }}>
-                                ⏱️ {entry.processingTime.toFixed(1)} hrs
-                              </span>
-                            )}
-                          </div>
-                          {entry.comments && (
-                            <div style={{
-                              marginTop: '6px',
-                              padding: '6px 10px',
-                              backgroundColor: '#e3f2fd',
-                              borderRadius: '4px',
-                              fontSize: '11px',
-                              color: '#1565c0',
-                              fontStyle: 'italic'
-                            }}>
-                              💬 {entry.comments}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div style={{
-                  textAlign: 'center',
-                  padding: '20px',
-                  color: '#6c757d',
-                  fontSize: '13px'
-                }}>
-                  No routing history available. Document route will appear here as it moves through the system.
-                </div>
-              )}
-              
-              {/* Show current office if different from last routing history entry */}
-              {trackedDocument.currentOffice && 
-               trackedDocument.routingHistory && 
-               trackedDocument.routingHistory.length > 0 &&
-               trackedDocument.routingHistory[trackedDocument.routingHistory.length - 1].office !== trackedDocument.currentOffice && (
-                <div style={{
-                  marginTop: '12px',
-                  padding: '10px',
-                  backgroundColor: '#fff3cd',
-                  borderRadius: '6px',
-                  border: '1px solid #ffc107',
-                  fontSize: '12px',
-                  color: '#856404'
-                }}>
-                  <strong>Current Location:</strong> {trackedDocument.currentOffice}
-                </div>
-              )}
+                  </div>
+              </div>
+                      );
+                    })}
             </div>
+                </div>
+              );
+            })()}
 
             {/* Comments Section */}
             {trackedDocument.comments && (
@@ -5752,6 +6259,624 @@ function Edashboard({ onLogout }) {
           </div>
         </div>
       )}
+
+      {/* Approval Time Modal */}
+      {showApprovalTimeModal && approvalTimeDocument && (() => {
+        const timeInfo = getApprovalTimeInfo(approvalTimeDocument);
+        if (!timeInfo) return null;
+
+        return (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000
+          }}>
+            <div style={{
+              backgroundColor: 'white',
+              borderRadius: '15px',
+              padding: '25px',
+              maxWidth: '700px',
+              width: '90%',
+              maxHeight: '90vh',
+              overflow: 'auto',
+              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+              position: 'relative'
+            }}>
+              {/* Close Button */}
+              <button
+                onClick={handleCloseApprovalTimeModal}
+                style={{
+                  position: 'absolute',
+                  top: '15px',
+                  right: '15px',
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '24px',
+                  cursor: 'pointer',
+                  color: '#7f8c8d',
+                  padding: '5px',
+                  borderRadius: '50%',
+                  width: '35px',
+                  height: '35px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'all 0.3s ease'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#f8f9fa';
+                  e.target.style.color = '#e74c3c';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = 'transparent';
+                  e.target.style.color = '#7f8c8d';
+                }}
+              >
+                ×
+              </button>
+
+              {/* Modal Header */}
+              <div style={{
+                textAlign: 'center',
+                marginBottom: '20px',
+                paddingBottom: '15px',
+                borderBottom: '2px solid #ecf0f1'
+              }}>
+                <h2 style={{
+                  margin: '0 0 5px 0',
+                  fontSize: '20px',
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  Approval Time Status
+                </h2>
+                <p style={{
+                  margin: 0,
+                  fontSize: '13px',
+                  color: '#7f8c8d'
+                }}>
+                  Track how long it should take to accept and forward
+                </p>
+              </div>
+
+              {/* Document Info */}
+              <div style={{
+                backgroundColor: '#f8f9fa',
+                padding: '15px',
+                borderRadius: '8px',
+                marginBottom: '20px'
+              }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  marginBottom: '8px'
+                }}>
+                  <code style={{
+                    backgroundColor: '#e9ecef',
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#495057',
+                    marginRight: '10px'
+                  }}>
+                    {approvalTimeDocument.documentId}
+                  </code>
+                  <span style={{
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    color: '#2c3e50'
+                  }}>
+                    {approvalTimeDocument.name}
+                  </span>
+                </div>
+                <div style={{
+                  fontSize: '12px',
+                  color: '#6c757d',
+                  marginTop: '5px'
+                }}>
+                  Type: <strong>{approvalTimeDocument.type || 'N/A'}</strong> • 
+                  Status: <strong>{getDisplayStatus(approvalTimeDocument)}</strong>
+                </div>
+              </div>
+
+              {/* Analytics Time Metrics */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, 1fr)',
+                gap: '15px',
+                marginBottom: '20px'
+              }}>
+                {/* Expected Time */}
+                <div style={{
+                  backgroundColor: '#e3f2fd',
+                  padding: '15px',
+                  borderRadius: '8px',
+                  border: '2px solid #bbdefb'
+                }}>
+                  <div style={{
+                    fontSize: '11px',
+                    color: '#1565c0',
+                    fontWeight: '600',
+                    textTransform: 'uppercase',
+                    marginBottom: '8px'
+                  }}>
+                    Expected Processing Time
+                  </div>
+                  <div style={{
+                    fontSize: '20px',
+                    fontWeight: 'bold',
+                    color: '#1976d2',
+                    marginBottom: '10px'
+                  }}>
+                    {timeInfo.expectedTime}
+                  </div>
+                  <div style={{
+                    fontSize: '11px',
+                    color: '#6c757d',
+                    marginTop: '4px',
+                    paddingTop: '8px',
+                    borderTop: '1px solid #bbdefb'
+                  }}>
+                    <div><strong>Expected Hours:</strong> {timeInfo.expectedHours.toFixed(2)} hrs</div>
+                  </div>
+                </div>
+
+                {/* Time Spent */}
+                <div style={{
+                  backgroundColor: timeInfo.isExceeded ? '#ffebee' : '#e8f5e9',
+                  padding: '15px',
+                  borderRadius: '8px',
+                  border: `2px solid ${timeInfo.isExceeded ? '#ffcdd2' : '#c8e6c9'}`
+                }}>
+                  <div style={{
+                    fontSize: '11px',
+                    color: timeInfo.isExceeded ? '#c62828' : '#2e7d32',
+                    fontWeight: '600',
+                    textTransform: 'uppercase',
+                    marginBottom: '8px'
+                  }}>
+                    Actual Time Spent
+                  </div>
+                  <div style={{
+                    fontSize: '20px',
+                    fontWeight: 'bold',
+                    color: timeInfo.isExceeded ? '#d32f2f' : '#388e3c',
+                    marginBottom: '10px'
+                  }}>
+                    {timeInfo.timeSpent}
+                  </div>
+                  <div style={{
+                    fontSize: '11px',
+                    color: '#6c757d',
+                    marginTop: '4px',
+                    paddingTop: '8px',
+                    borderTop: `1px solid ${timeInfo.isExceeded ? '#ffcdd2' : '#c8e6c9'}`
+                  }}>
+                    <div><strong>Hours:</strong> {timeInfo.timeSpentHours.toFixed(2)} hrs</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Date and Time Information */}
+              <div style={{
+                backgroundColor: '#f8f9fa',
+                padding: '15px',
+                borderRadius: '8px',
+                marginBottom: '20px',
+                border: '1px solid #e9ecef'
+              }}>
+                <div style={{
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  color: '#2c3e50',
+                  marginBottom: '12px'
+                }}>
+                  Timestamps for Analytics
+                </div>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, 1fr)',
+                  gap: '12px',
+                  fontSize: '12px',
+                  color: '#6c757d'
+                }}>
+                  <div>
+                    <div style={{ fontWeight: '600', color: '#495057', marginBottom: '4px' }}>Start Date & Time:</div>
+                    <div style={{ fontSize: '11px' }}>
+                      {timeInfo.startTime.toLocaleString('en-US', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: true
+                      })}
+                    </div>
+                    <div style={{ fontSize: '10px', marginTop: '2px', fontFamily: 'monospace' }}>
+                      ({timeInfo.startTime.toISOString()})
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: '600', color: '#495057', marginBottom: '4px' }}>
+                      {timeInfo.isApproved ? 'Approved Date & Time:' : 'Current Date & Time:'}
+                    </div>
+                    <div style={{ fontSize: '11px' }}>
+                      {timeInfo.endTime.toLocaleString('en-US', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: true
+                      })}
+                    </div>
+                    <div style={{ fontSize: '10px', marginTop: '2px', fontFamily: 'monospace' }}>
+                      ({timeInfo.endTime.toISOString()})
+                    </div>
+                    {timeInfo.isApproved && (
+                      <div style={{ 
+                        fontSize: '10px', 
+                        marginTop: '4px', 
+                        color: '#28a745',
+                        fontWeight: '600'
+                      }}>
+                        ✓ Document Approved
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Progress Bar */}
+              <div style={{
+                marginBottom: '20px'
+              }}>
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: '8px'
+                }}>
+                  <span style={{
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    color: '#2c3e50'
+                  }}>
+                    {timeInfo.isApproved ? 'Final Processing Progress' : 
+                     timeInfo.isRejected ? 'Final Processing Progress' : 
+                     'Processing Progress'}
+                  </span>
+                  <span style={{
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    color: timeInfo.isApproved ? '#28a745' : 
+                           timeInfo.isRejected ? '#dc3545' : 
+                           (timeInfo.isExceeded ? '#d32f2f' : '#388e3c')
+                  }}>
+                    {timeInfo.percentage.toFixed(1)}%
+                    {timeInfo.isApproved && ' ✓'}
+                    {timeInfo.isRejected && ' ✗'}
+                  </span>
+                </div>
+                <div style={{
+                  width: '100%',
+                  height: '25px',
+                  backgroundColor: '#e9ecef',
+                  borderRadius: '12px',
+                  overflow: 'hidden',
+                  position: 'relative'
+                }}>
+                  <div style={{
+                    width: `${Math.min(timeInfo.percentage, 100)}%`,
+                    height: '100%',
+                    backgroundColor: timeInfo.isApproved ? '#28a745' : 
+                                   timeInfo.isRejected ? '#dc3545' : 
+                                   (timeInfo.isExceeded ? '#dc3545' : '#28a745'),
+                    transition: 'width 0.3s ease',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'flex-end',
+                    paddingRight: '8px'
+                  }}>
+                  </div>
+                  {timeInfo.isApproved && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '50%',
+                      left: '50%',
+                      transform: 'translate(-50%, -50%)',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      color: 'white'
+                    }}>
+                      ✓ Approved
+                    </div>
+                  )}
+                  {timeInfo.isRejected && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '50%',
+                      left: '50%',
+                      transform: 'translate(-50%, -50%)',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      color: 'white'
+                    }}>
+                      ✗ Rejected
+                    </div>
+                  )}
+                  {!timeInfo.isApproved && !timeInfo.isRejected && timeInfo.percentage >= 100 && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '50%',
+                      left: '50%',
+                      transform: 'translate(-50%, -50%)',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      color: 'white'
+                    }}>
+                      ⚠️ Exceeded
+                    </div>
+                  )}
+                </div>
+                {timeInfo.isApproved && (
+                  <div style={{
+                    fontSize: '11px',
+                    color: '#28a745',
+                    marginTop: '6px',
+                    fontWeight: '600',
+                    textAlign: 'center'
+                  }}>
+                    Progress stopped at approval time
+                  </div>
+                )}
+                {timeInfo.isRejected && (
+                  <div style={{
+                    fontSize: '11px',
+                    color: '#dc3545',
+                    marginTop: '6px',
+                    fontWeight: '600',
+                    textAlign: 'center'
+                  }}>
+                    Progress stopped at rejection time
+                  </div>
+                )}
+              </div>
+
+              {/* Time Remaining/Exceeded - Only show for active documents */}
+              {!timeInfo.isApproved && !timeInfo.isRejected && (
+                <div style={{
+                  backgroundColor: timeInfo.isExceeded ? '#fff3cd' : '#d1ecf1',
+                  padding: '15px',
+                  borderRadius: '8px',
+                  border: `2px solid ${timeInfo.isExceeded ? '#ffc107' : '#bee5eb'}`,
+                  marginBottom: '20px'
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px'
+                  }}>
+                    <span style={{
+                      fontSize: '24px'
+                    }}>
+                      {timeInfo.isExceeded ? '⚠️' : '⏱️'}
+                    </span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        color: timeInfo.isExceeded ? '#856404' : '#0c5460',
+                        marginBottom: '4px'
+                      }}>
+                        {timeInfo.isExceeded ? 'Time Exceeded' : 'Time Remaining'}
+                      </div>
+                      <div style={{
+                        fontSize: '18px',
+                        fontWeight: 'bold',
+                        color: timeInfo.isExceeded ? '#d32f2f' : '#0c5460'
+                      }}>
+                        {timeInfo.isExceeded ? `${timeInfo.timeRemaining} over deadline` : timeInfo.timeRemaining}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Approved Status Display */}
+              {timeInfo.isApproved && (
+                <div style={{
+                  backgroundColor: '#d4edda',
+                  padding: '15px',
+                  borderRadius: '8px',
+                  border: '2px solid #c3e6cb',
+                  marginBottom: '20px'
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px'
+                  }}>
+                    <span style={{
+                      fontSize: '24px'
+                    }}>
+                      ✓
+                    </span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        color: '#155724',
+                        marginBottom: '4px'
+                      }}>
+                        Document Approved
+                      </div>
+                      <div style={{
+                        fontSize: '14px',
+                        color: '#155724',
+                        marginBottom: '8px'
+                      }}>
+                        Final time spent: <strong>{timeInfo.timeSpent}</strong>
+                      </div>
+                      {timeInfo.isExceeded && (
+                        <div style={{
+                          fontSize: '12px',
+                          color: '#856404',
+                          marginTop: '4px'
+                        }}>
+                          ⚠️ Exceeded expected time by {timeInfo.timeRemaining}
+                        </div>
+                      )}
+                      {!timeInfo.isExceeded && (
+                        <div style={{
+                          fontSize: '12px',
+                          color: '#155724',
+                          marginTop: '4px'
+                        }}>
+                          ✓ Completed within expected time (saved {timeInfo.timeRemaining})
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Rejected Status Display */}
+              {timeInfo.isRejected && (
+                <div style={{
+                  backgroundColor: '#f8d7da',
+                  padding: '15px',
+                  borderRadius: '8px',
+                  border: '2px solid #f5c6cb',
+                  marginBottom: '20px'
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px'
+                  }}>
+                    <span style={{
+                      fontSize: '24px'
+                    }}>
+                      ✗
+                    </span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        color: '#721c24',
+                        marginBottom: '4px'
+                      }}>
+                        Document Rejected
+                      </div>
+                      <div style={{
+                        fontSize: '14px',
+                        color: '#721c24',
+                        marginBottom: '8px'
+                      }}>
+                        Time spent before rejection: <strong>{timeInfo.timeSpent}</strong>
+                      </div>
+                      {timeInfo.isExceeded && (
+                        <div style={{
+                          fontSize: '12px',
+                          color: '#856404',
+                          marginTop: '4px'
+                        }}>
+                          ⚠️ Exceeded expected time by {timeInfo.timeRemaining} before rejection
+                        </div>
+                      )}
+                      {!timeInfo.isExceeded && (
+                        <div style={{
+                          fontSize: '12px',
+                          color: '#721c24',
+                          marginTop: '4px'
+                        }}>
+                          Rejected with {timeInfo.timeRemaining} remaining
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Current Stage Info */}
+              <div style={{
+                backgroundColor: '#f8f9fa',
+                padding: '15px',
+                borderRadius: '8px',
+                marginBottom: '20px'
+              }}>
+                <div style={{
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  color: '#2c3e50',
+                  marginBottom: '10px'
+                }}>
+                  Current Status
+                </div>
+                <div style={{
+                  fontSize: '12px',
+                  color: '#6c757d',
+                  lineHeight: '1.6'
+                }}>
+                  <div><strong>Status:</strong> {getDisplayStatus(approvalTimeDocument)}</div>
+                  {approvalTimeDocument.currentOffice && (
+                    <div><strong>Current Office:</strong> {approvalTimeDocument.currentOffice}</div>
+                  )}
+                  {approvalTimeDocument.nextOffice && (
+                    <div><strong>Next Office:</strong> {approvalTimeDocument.nextOffice}</div>
+                  )}
+                  {approvalTimeDocument.reviewer && (
+                    <div><strong>Reviewer:</strong> {approvalTimeDocument.reviewer}</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div style={{
+                display: 'flex',
+                justifyContent: 'center',
+                marginTop: '20px',
+                paddingTop: '15px',
+                borderTop: '2px solid #ecf0f1'
+              }}>
+                <button
+                  onClick={handleCloseApprovalTimeModal}
+                  style={{
+                    padding: '10px 25px',
+                    backgroundColor: '#9b59b6',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    transition: 'background-color 0.3s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.backgroundColor = '#8e44ad';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.backgroundColor = '#9b59b6';
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Delete Document Confirmation Modal */}
       {showDeleteDocumentModal && documentToDelete && (

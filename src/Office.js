@@ -231,73 +231,100 @@ function Office() {
         />
       </div>
       
-      <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '20px' }}>
-        <thead>
-          <tr>
-            <th style={{ border: '1px solid #ddd', padding: '8px', textAlign: 'left', backgroundColor: '#f8f9fa' }}>
-              Office ID
-            </th>
-            <th style={{ border: '1px solid #ddd', padding: '8px', textAlign: 'left', backgroundColor: '#f8f9fa' }}>
-              Office Name
-            </th>
-            <th style={{ border: '1px solid #ddd', padding: '8px', textAlign: 'left', backgroundColor: '#f8f9fa' }}>
-              Department
-            </th>
-            <th style={{ border: '1px solid #ddd', padding: '8px', textAlign: 'center', backgroundColor: '#f8f9fa' }}>
-              Number of Employees
-            </th>
-            <th style={{ border: '1px solid #ddd', padding: '8px', textAlign: 'left', backgroundColor: '#f8f9fa' }}>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filteredAndSortedOffices.map((office) => (
-            <tr key={office._id}>
-              <td style={{ border: '1px solid #ddd', padding: '8px' }}>{office.officeId}</td>
-              <td style={{ border: '1px solid #ddd', padding: '8px' }}>{office.name}</td>
-              <td style={{ border: '1px solid #ddd', padding: '8px' }}>{office.department}</td>
-              <td style={{ 
-                border: '1px solid #ddd', 
-                padding: '8px', 
-                textAlign: 'center',
-                fontWeight: 'bold',
-                fontSize: '16px',
-                color: office.employees && office.employees.length > 0 ? '#007bff' : '#999'
-              }}>
-                {office.employees ? office.employees.length : 0}
-              </td>
-              <td style={{ border: '1px solid #ddd', padding: '8px' }}>
-                <button
-                  onClick={() => handleEdit(office)}
-                  style={{
-                    padding: '5px 10px',
-                    backgroundColor: '#ffc107',
-                    color: 'black',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: 'pointer',
-                    marginRight: '5px'
-                  }}
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={() => handleRemove(office._id)}
-                  style={{
-                    padding: '5px 10px',
-                    backgroundColor: '#dc3545',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  Remove
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {/* Office Table */}
+      <div style={{ marginTop: '20px', backgroundColor: 'white', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ backgroundColor: '#f8f9fa' }}>
+                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                  Office ID
+                </th>
+                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                  Office Name
+                </th>
+                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                  Department
+                </th>
+                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'center', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                  Number of Employees
+                </th>
+                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'center', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredAndSortedOffices.map((office) => (
+                <tr key={office._id} style={{ backgroundColor: 'white' }}>
+                  <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', color: '#2c3e50' }}>
+                    <code style={{
+                      backgroundColor: '#f8f9fa',
+                      padding: '2px 5px',
+                      borderRadius: '3px',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      color: '#6c757d'
+                    }}>
+                      {office.officeId}
+                    </code>
+                  </td>
+                  <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', fontWeight: '500', color: '#2c3e50' }}>{office.name}</td>
+                  <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', color: '#2c3e50' }}>{office.department}</td>
+                  <td style={{ 
+                    border: '1px solid #e0e0e0', 
+                    padding: '12px', 
+                    textAlign: 'center',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    color: office.employees && office.employees.length > 0 ? '#007bff' : '#999'
+                  }}>
+                    {office.employees ? office.employees.length : 0}
+                  </td>
+                  <td style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'center' }}>
+                    <div style={{ display: 'flex', gap: '5px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => handleEdit(office)}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: '#ffc107',
+                          color: 'black',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontSize: '11px',
+                          fontWeight: '500',
+                          transition: 'background-color 0.2s ease'
+                        }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = '#ffb300'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = '#ffc107'}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleRemove(office._id)}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: '#dc3545',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontSize: '11px',
+                          fontWeight: '500',
+                          transition: 'background-color 0.2s ease'
+                        }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = '#c82333'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = '#dc3545'}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && officeToDelete && (

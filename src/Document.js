@@ -447,43 +447,43 @@ function Document() {
 
       const response = await fetch(`${API_URL}/documents/${document._id}`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+          headers: {
+            'Content-Type': 'application/json',
+          },
         body: JSON.stringify(updateData),
-      });
+        });
 
-      if (response.ok) {
+        if (response.ok) {
         // Add routing history entry
         try {
           await fetch(`${API_URL}/documents/${document._id}/routing-history`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
               office: document.currentOffice || 'Admin',
               action: 'approved',
               handler: approverName,
               comments: `Final approval by Admin (${approverName})`
-            }),
-          });
+          }),
+        });
         } catch (historyError) {
           console.error('Error adding routing history:', historyError);
           // Don't fail the approval if history fails
         }
 
-        setShowNotificationPane(true);
+          setShowNotificationPane(true);
         setNotificationMessage(`Document "${document.name}" has been approved successfully!`);
-        setNotificationType('success');
+          setNotificationType('success');
         fetchDocuments(); // Refresh the list
-        setTimeout(() => setShowNotificationPane(false), 3000);
-      } else {
+          setTimeout(() => setShowNotificationPane(false), 3000);
+        } else {
         const errorData = await response.json();
-        setShowNotificationPane(true);
+          setShowNotificationPane(true);
         setNotificationMessage(`Failed to approve document: ${errorData.message || 'Unknown error'}`);
-        setNotificationType('error');
-        setTimeout(() => setShowNotificationPane(false), 3000);
+          setNotificationType('error');
+          setTimeout(() => setShowNotificationPane(false), 3000);
       }
     } catch (error) {
       console.error('Error approving document:', error);
@@ -607,223 +607,177 @@ function Document() {
         />
       </div>
       
-      <div style={{ marginTop: '20px' }}>
-        {filteredAndSortedDocuments.map((document) => {
-          const isExpanded = expandedDocuments.has(document._id);
-          
-          return (
-            <div key={document._id} style={{ 
-              marginBottom: '10px',
-              border: '1px solid #ddd',
-              borderRadius: '8px',
-              overflow: 'hidden',
-              backgroundColor: 'white'
-            }}>
-              {/* Document Header - Always Visible */}
-              <div
-                onClick={() => toggleDocument(document._id)}
-                style={{
-                  padding: '15px 20px',
-                  backgroundColor: isExpanded ? '#e3f2fd' : '#f8f9fa',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  transition: 'background-color 0.2s ease',
-                  borderBottom: isExpanded ? '1px solid #ddd' : 'none'
-                }}
-                onMouseEnter={(e) => {
-                  if (!isExpanded) e.currentTarget.style.backgroundColor = '#e9ecef';
-                }}
-                onMouseLeave={(e) => {
-                  if (!isExpanded) e.currentTarget.style.backgroundColor = '#f8f9fa';
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flex: 1 }}>
-                <span style={{
-                    fontSize: '18px',
-                    fontWeight: '500',
-                    color: '#2c3e50'
-                  }}>
-                    {isExpanded ? '▼' : '▶'}
-                  </span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ 
-                      fontSize: '16px', 
-                      fontWeight: '600',
-                      color: '#2c3e50',
-                      marginBottom: '4px'
-                    }}>
+      {/* Document Table */}
+      <div style={{ marginTop: '20px', backgroundColor: 'white', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ backgroundColor: '#f8f9fa' }}>
+                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                  Document ID
+                </th>
+                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                  Name
+                </th>
+                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                  Type
+                </th>
+                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                  Submitted By
+                </th>
+                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                  Date
+                </th>
+                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                  Status
+                </th>
+                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                  Reviewer
+                </th>
+                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'center', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredAndSortedDocuments.length > 0 ? (
+                filteredAndSortedDocuments.map((document) => (
+                  <tr key={document._id} style={{ backgroundColor: 'white' }}>
+                    <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', color: '#2c3e50' }}>
+                      <code style={{
+                        backgroundColor: '#f8f9fa',
+                        padding: '2px 5px',
+                        borderRadius: '3px',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        color: '#6c757d'
+                      }}>
+                        {document.documentId}
+                      </code>
+                    </td>
+                    <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', fontWeight: '500', color: '#2c3e50' }}>
                       {document.name}
-                    </div>
-                    <div style={{ 
-                      fontSize: '12px',
-                      color: '#7f8c8d'
-                    }}>
-                      ID: {document.documentId}
-                    </div>
-                  </div>
-                </div>
-                <span style={{
-                  padding: '6px 12px',
-                  borderRadius: '12px',
-                  fontSize: '12px',
-                  fontWeight: '600',
-                  backgroundColor: 
-                    document.status === 'Approved' ? '#d4edda' :
-                    document.status === 'Under Review' ? '#fff3cd' :
-                    document.status === 'Rejected' ? '#f8d7da' :
-                    document.status === 'On Hold' ? '#e2e3e5' :
-                    document.status === 'Processing' ? '#d1ecf1' :
-                    '#e9ecef',
-                  color: 
-                    document.status === 'Approved' ? '#155724' :
-                    document.status === 'Under Review' ? '#856404' :
-                    document.status === 'Rejected' ? '#721c24' :
-                    document.status === 'On Hold' ? '#383d41' :
-                    document.status === 'Processing' ? '#0c5460' :
-                    '#495057'
-                }}>
-                  {document.status || 'Submitted'}
-                </span>
-              </div>
-
-              {/* Document Details - Shown when Expanded */}
-              {isExpanded && (
-                <div style={{ padding: '20px' }}>
-                  {/* Document Information */}
-                  <div style={{ 
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-                    gap: '15px',
-                    marginBottom: '20px',
-                    paddingBottom: '20px',
-                    borderBottom: '1px solid #e9ecef'
-                  }}>
-                    <div>
-                      <div style={{ fontSize: '12px', color: '#7f8c8d', marginBottom: '4px' }}>Type</div>
-                      <div style={{ fontSize: '14px', fontWeight: '500', color: '#2c3e50' }}>
-                        {document.type ? document.type.split('.').pop().toUpperCase() : 'N/A'}
+                    </td>
+                    <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', color: '#2c3e50' }}>
+                      <span style={{
+                        backgroundColor: '#e8f5e8',
+                        color: '#388e3c',
+                        padding: '3px 8px',
+                        borderRadius: '10px',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        textTransform: 'uppercase'
+                      }}>
+                        {document.type || 'N/A'}
+                      </span>
+                    </td>
+                    <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', color: '#2c3e50' }}>
+                      {document.submittedBy || 'N/A'}
+                    </td>
+                    <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '12px', color: '#7f8c8d', whiteSpace: 'nowrap' }}>
+                      {document.dateUploaded ? new Date(document.dateUploaded).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit'
+                      }) : 'N/A'}
+                    </td>
+                    <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px' }}>
+                      <span style={{
+                        padding: '4px 10px',
+                        borderRadius: '12px',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        backgroundColor: 
+                          document.status === 'Approved' ? '#d4edda' :
+                          document.status === 'Under Review' ? '#fff3cd' :
+                          document.status === 'Rejected' ? '#f8d7da' :
+                          document.status === 'On Hold' ? '#e2e3e5' :
+                          document.status === 'Processing' ? '#d1ecf1' :
+                          '#e9ecef',
+                        color: 
+                          document.status === 'Approved' ? '#155724' :
+                          document.status === 'Under Review' ? '#856404' :
+                          document.status === 'Rejected' ? '#721c24' :
+                          document.status === 'On Hold' ? '#383d41' :
+                          document.status === 'Processing' ? '#0c5460' :
+                          '#495057'
+                      }}>
+                        {document.status || 'Submitted'}
+                      </span>
+                    </td>
+                    <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', color: '#7f8c8d' }}>
+                      {document.reviewer || '-'}
+                    </td>
+                    <td style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', gap: '5px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => setViewingDocument(document)}
+                          style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#6c757d',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '11px',
+                            fontWeight: '500',
+                            transition: 'background-color 0.2s ease'
+                          }}
+                          onMouseEnter={(e) => e.target.style.backgroundColor = '#5a6268'}
+                          onMouseLeave={(e) => e.target.style.backgroundColor = '#6c757d'}
+                        >
+                          View
+                        </button>
+                        <button
+                          onClick={() => handleEdit(document)}
+                          style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#ffc107',
+                            color: 'black',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '11px',
+                            fontWeight: '500',
+                            transition: 'background-color 0.2s ease'
+                          }}
+                          onMouseEnter={(e) => e.target.style.backgroundColor = '#ffb300'}
+                          onMouseLeave={(e) => e.target.style.backgroundColor = '#ffc107'}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleRemove(document._id)}
+                          style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#dc3545',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '11px',
+                            fontWeight: '500',
+                            transition: 'background-color 0.2s ease'
+                          }}
+                          onMouseEnter={(e) => e.target.style.backgroundColor = '#c82333'}
+                          onMouseLeave={(e) => e.target.style.backgroundColor = '#dc3545'}
+                        >
+                          Delete
+                        </button>
                       </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '12px', color: '#7f8c8d', marginBottom: '4px' }}>Date Uploaded</div>
-                      <div style={{ fontSize: '14px', fontWeight: '500', color: '#2c3e50' }}>
-                        {document.dateUploaded ? new Date(document.dateUploaded).toLocaleDateString() : 'N/A'}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '12px', color: '#7f8c8d', marginBottom: '4px' }}>Submitted By</div>
-                      <div style={{ fontSize: '14px', fontWeight: '500', color: '#2c3e50' }}>
-                        {document.submittedBy || 'N/A'}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div style={{ 
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: '8px'
-                  }}>
-                <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setViewingDocument(document);
-                      }}
-                  style={{
-                        padding: '8px 16px',
-                        backgroundColor: '#6c757d',
-                    color: 'white',
-                    border: 'none',
-                        borderRadius: '6px',
-                    cursor: 'pointer',
-                        fontSize: '14px',
-                        fontWeight: '500',
-                        transition: 'all 0.2s ease'
-                  }}
-                      onMouseEnter={(e) => e.target.style.transform = 'translateY(-2px)'}
-                      onMouseLeave={(e) => e.target.style.transform = 'translateY(0)'}
-                >
-                      View
-                </button>
-                <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEdit(document);
-                      }}
-                  style={{
-                        padding: '8px 16px',
-                        backgroundColor: '#ffc107',
-                        color: 'black',
-                    border: 'none',
-                        borderRadius: '6px',
-                    cursor: 'pointer',
-                        fontSize: '14px',
-                        fontWeight: '500',
-                        transition: 'all 0.2s ease'
-                  }}
-                      onMouseEnter={(e) => e.target.style.transform = 'translateY(-2px)'}
-                      onMouseLeave={(e) => e.target.style.transform = 'translateY(0)'}
-                >
-                      Edit
-                </button>
-                {document.status !== 'Approved' && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleApprove(document);
-                    }}
-                    style={{
-                      padding: '8px 16px',
-                      backgroundColor: '#27ae60',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      fontSize: '14px',
-                      fontWeight: '500',
-                      transition: 'all 0.2s ease'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.transform = 'translateY(-2px)';
-                      e.target.style.backgroundColor = '#229954';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.transform = 'translateY(0)';
-                      e.target.style.backgroundColor = '#27ae60';
-                    }}
-                  >
-                    ✓ Approve
-                  </button>
-                )}
-                <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleRemove(document._id);
-                      }}
-                  style={{
-                        padding: '8px 16px',
-                    backgroundColor: '#dc3545',
-                    color: 'white',
-                    border: 'none',
-                        borderRadius: '6px',
-                    cursor: 'pointer',
-                        fontSize: '14px',
-                        fontWeight: '500',
-                        transition: 'all 0.2s ease'
-                  }}
-                      onMouseEnter={(e) => e.target.style.transform = 'translateY(-2px)'}
-                      onMouseLeave={(e) => e.target.style.transform = 'translateY(0)'}
-                >
-                      Delete
-                </button>
-                  </div>
-                </div>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="8" style={{ border: '1px solid #e0e0e0', padding: '40px', textAlign: 'center', color: '#999', fontSize: '14px' }}>
+                    No documents found matching your search.
+                  </td>
+                </tr>
               )}
-            </div>
-          );
-        })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Add Document Modal */}
@@ -1708,7 +1662,7 @@ function Document() {
               }}>
                 Document Review
               </h2>
-            </div>
+          </div>
 
             {/* Workflow Progress Bar */}
             {(() => {
@@ -1873,8 +1827,8 @@ function Document() {
                                 letterSpacing: '0.2px'
                               }}>
                                 Now
-                              </div>
-                            )}
+        </div>
+      )}
                             {isCompleted && (
                               <div style={{
                                 marginTop: '2px',

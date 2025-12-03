@@ -623,22 +623,17 @@ function Aboard({ onLogout }) {
             </div>
 
             {/* Users Table */}
-            <div style={{
-              backgroundColor: 'white',
-              borderRadius: '15px',
-              padding: '30px',
-              boxShadow: '0 10px 30px rgba(0,0,0,0.1)',
-              border: '1px solid #f1f3f4'
-            }}>
+            <div style={{ marginTop: '20px', backgroundColor: 'white', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
               <div style={{
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                marginBottom: '25px'
+                padding: '20px',
+                borderBottom: '1px solid #e0e0e0'
               }}>
                 <h2 style={{ 
                   margin: 0, 
-                  fontSize: '24px', 
+                  fontSize: '18px', 
                   fontWeight: '600',
                   color: '#2c3e50'
                 }}>
@@ -791,7 +786,7 @@ function Aboard({ onLogout }) {
                 <div style={{ 
                   textAlign: 'center', 
                   padding: '40px',
-                  fontSize: '18px',
+                  fontSize: '14px',
                   color: '#7f8c8d'
                 }}>
                   Loading users...
@@ -800,68 +795,62 @@ function Aboard({ onLogout }) {
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
-                      <tr>
+                      <tr style={{ backgroundColor: '#f8f9fa' }}>
                         <th style={{ 
-                          border: '1px solid #ddd', 
-                          padding: '15px 10px', 
+                          border: '1px solid #e0e0e0', 
+                          padding: '12px', 
                           textAlign: 'left', 
-                          backgroundColor: '#f8f9fa',
-                          fontSize: '14px',
+                          fontSize: '13px',
                           fontWeight: '600',
                           color: '#2c3e50'
                         }}>
                           Username
                         </th>
                         <th style={{ 
-                          border: '1px solid #ddd', 
-                          padding: '15px 10px', 
+                          border: '1px solid #e0e0e0', 
+                          padding: '12px', 
                           textAlign: 'left', 
-                          backgroundColor: '#f8f9fa',
-                          fontSize: '14px',
+                          fontSize: '13px',
                           fontWeight: '600',
                           color: '#2c3e50'
                         }}>
                           Email
                         </th>
                         <th style={{ 
-                          border: '1px solid #ddd', 
-                          padding: '15px 10px', 
+                          border: '1px solid #e0e0e0', 
+                          padding: '12px', 
                           textAlign: 'left', 
-                          backgroundColor: '#f8f9fa',
-                          fontSize: '14px',
+                          fontSize: '13px',
                           fontWeight: '600',
                           color: '#2c3e50'
                         }}>
                           Employee ID
                         </th>
                         <th style={{ 
-                          border: '1px solid #ddd', 
-                          padding: '15px 10px', 
+                          border: '1px solid #e0e0e0', 
+                          padding: '12px', 
                           textAlign: 'left', 
-                          backgroundColor: '#f8f9fa',
-                          fontSize: '14px',
+                          fontSize: '13px',
                           fontWeight: '600',
                           color: '#2c3e50'
                         }}>
                           Join Date
                         </th>
                         <th style={{ 
-                          border: '1px solid #ddd', 
-                          padding: '15px 10px', 
+                          border: '1px solid #e0e0e0', 
+                          padding: '12px', 
                           textAlign: 'left', 
-                          backgroundColor: '#f8f9fa',
-                          fontSize: '14px',
+                          fontSize: '13px',
                           fontWeight: '600',
                           color: '#2c3e50'
                         }}>
                           Role
                         </th>
                         <th style={{ 
-                          border: '1px solid #ddd', 
-                          padding: '15px 10px', 
+                          border: '1px solid #e0e0e0', 
+                          padding: '12px', 
                           textAlign: 'center', 
-                          backgroundColor: '#f8f9fa',
-                          fontSize: '14px',
+                          fontSize: '13px',
                           fontWeight: '600',
                           color: '#2c3e50'
                         }}>
@@ -872,42 +861,57 @@ function Aboard({ onLogout }) {
                     <tbody>
                       {filteredUsers.length > 0 ? (
                         filteredUsers.map((user) => (
-                          <tr key={user._id}>
+                          <tr key={user._id} style={{ backgroundColor: 'white' }}>
                             <td style={{ 
-                              border: '1px solid #ddd', 
-                              padding: '15px 10px',
-                              fontSize: '16px',
+                              border: '1px solid #e0e0e0', 
+                              padding: '12px',
+                              fontSize: '13px',
+                              fontWeight: '500',
                               color: '#2c3e50'
                             }}>
                               {user.username}
                             </td>
                             <td style={{ 
-                              border: '1px solid #ddd', 
-                              padding: '15px 10px',
-                              fontSize: '16px',
+                              border: '1px solid #e0e0e0', 
+                              padding: '12px',
+                              fontSize: '13px',
                               color: '#2c3e50'
                             }}>
                               {user.email}
                             </td>
                             <td style={{ 
-                              border: '1px solid #ddd', 
-                              padding: '15px 10px',
-                              fontSize: '16px',
+                              border: '1px solid #e0e0e0', 
+                              padding: '12px',
+                              fontSize: '13px',
                               color: '#2c3e50'
                             }}>
-                              {user.employeeId || 'Not Linked'}
+                              {user.employeeId ? (
+                                <code style={{
+                                  backgroundColor: '#f8f9fa',
+                                  padding: '2px 5px',
+                                  borderRadius: '3px',
+                                  fontSize: '11px',
+                                  fontWeight: '600',
+                                  color: '#6c757d'
+                                }}>
+                                  {user.employeeId}
+                                </code>
+                              ) : 'Not Linked'}
                             </td>
                             <td style={{ 
-                              border: '1px solid #ddd', 
-                              padding: '15px 10px',
-                              fontSize: '14px',
-                              color: '#7f8c8d'
+                              border: '1px solid #e0e0e0', 
+                              padding: '12px',
+                              fontSize: '12px',
+                              color: '#7f8c8d',
+                              whiteSpace: 'nowrap'
                             }}>
                               {user.date ? new Date(user.date).toLocaleDateString() : 'N/A'}
                             </td>
                             <td style={{ 
-                              border: '1px solid #ddd', 
-                              padding: '15px 10px'
+                              border: '1px solid #e0e0e0', 
+                              padding: '12px',
+                              fontSize: '13px',
+                              color: '#2c3e50'
                             }}>
                               {user.role || 'No Role'}
                               {user.email === 'sadmin@gmail.com' && (
@@ -922,22 +926,36 @@ function Aboard({ onLogout }) {
                               )}
                             </td>
                             <td style={{ 
-                              border: '1px solid #ddd', 
-                              padding: '8px'
+                              border: '1px solid #e0e0e0', 
+                              padding: '12px',
+                              textAlign: 'center'
                             }}>
+                              <div style={{ display: 'flex', gap: '5px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
                               <button
                                 onClick={() => openEditUserModal(user)}
                                 disabled={user.email === 'sadmin@gmail.com'}
                                 style={{
-                                  padding: '5px 10px',
+                                    padding: '6px 12px',
                                   backgroundColor: user.email === 'sadmin@gmail.com' ? '#95a5a6' : '#ffc107',
                                   color: 'black',
                                   border: 'none',
-                                  borderRadius: '3px',
+                                    borderRadius: '4px',
                                   cursor: user.email === 'sadmin@gmail.com' ? 'not-allowed' : 'pointer',
-                                  marginRight: '5px',
+                                    fontSize: '11px',
+                                    fontWeight: '500',
+                                    transition: 'background-color 0.2s ease',
                                   opacity: user.email === 'sadmin@gmail.com' ? 0.5 : 1
                                 }}
+                                  onMouseEnter={(e) => {
+                                    if (user.email !== 'sadmin@gmail.com') {
+                                      e.target.style.backgroundColor = '#ffb300';
+                                    }
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    if (user.email !== 'sadmin@gmail.com') {
+                                      e.target.style.backgroundColor = '#ffc107';
+                                    }
+                                  }}
                               >
                                 Edit
                               </button>
@@ -945,17 +963,31 @@ function Aboard({ onLogout }) {
                                 onClick={() => handleRemoveUser(user._id, user.username, user.email)}
                                 disabled={user.email === 'sadmin@gmail.com'}
                                 style={{
-                                  padding: '5px 10px',
+                                    padding: '6px 12px',
                                   backgroundColor: user.email === 'sadmin@gmail.com' ? '#95a5a6' : '#dc3545',
                                   color: 'white',
                                   border: 'none',
-                                  borderRadius: '3px',
+                                    borderRadius: '4px',
                                   cursor: user.email === 'sadmin@gmail.com' ? 'not-allowed' : 'pointer',
+                                    fontSize: '11px',
+                                    fontWeight: '500',
+                                    transition: 'background-color 0.2s ease',
                                   opacity: user.email === 'sadmin@gmail.com' ? 0.5 : 1
                                 }}
+                                  onMouseEnter={(e) => {
+                                    if (user.email !== 'sadmin@gmail.com') {
+                                      e.target.style.backgroundColor = '#c82333';
+                                    }
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    if (user.email !== 'sadmin@gmail.com') {
+                                      e.target.style.backgroundColor = '#dc3545';
+                                    }
+                                  }}
                               >
                                 Remove
                               </button>
+                              </div>
                             </td>
                           </tr>
                         ))
@@ -964,11 +996,11 @@ function Aboard({ onLogout }) {
                           <td 
                             colSpan="6" 
                             style={{ 
-                              border: '1px solid #ddd', 
+                              border: '1px solid #e0e0e0', 
                               padding: '40px',
                               textAlign: 'center',
-                              color: '#95a5a6',
-                              fontSize: '16px'
+                              color: '#999',
+                              fontSize: '14px'
                             }}
                           >
                             {searchTerm || roleFilter !== 'All' ? 
@@ -988,128 +1020,122 @@ function Aboard({ onLogout }) {
       case 'DocumentList':
         return (
           <div>
-            {/* Documents Section */}
-            <div style={{
-              backgroundColor: 'white',
-              borderRadius: '10px',
-              padding: '25px',
-              boxShadow: '0 4px 15px rgba(0,0,0,0.08)'
-            }}>
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: '20px'
-              }}>
-                <h2 style={{
-                  margin: '0',
-                  fontSize: '24px',
-                  fontWeight: '600',
-                  color: '#2c3e50',
-                  textAlign: 'left'
-                }}>
-                  Document Lists
-                </h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2>Document Lists</h2>
                 <button
                   onClick={() => fetchDocuments()}
                   style={{
-                    padding: '8px 16px',
-                    backgroundColor: '#3498db',
+                  padding: '10px 20px',
+                  backgroundColor: '#007bff',
                     color: 'white',
                     border: 'none',
-                    borderRadius: '6px',
-                    fontSize: '13px',
-                    fontWeight: '600',
-                    cursor: 'pointer',
-                    transition: 'all 0.3s ease',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.target.style.backgroundColor = '#2980b9';
-                    e.target.style.transform = 'translateY(-2px)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.target.style.backgroundColor = '#3498db';
-                    e.target.style.transform = 'translateY(0)';
+                  borderRadius: '4px',
+                  cursor: 'pointer'
                   }}
                 >
-                  🔄 Refresh
+                Refresh
                 </button>
               </div>
 
+            {/* Document List Table */}
+            <div style={{ marginTop: '20px', backgroundColor: 'white', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
+              <div style={{ overflowX: 'auto' }}>
               {loading ? (
-                <div style={{ padding: '40px', textAlign: 'center', color: '#95a5a6' }}>
+                  <div style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '14px' }}>
                   Loading documents...
                 </div>
               ) : documents.length > 0 ? (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ 
-                    width: '100%', 
-                    borderCollapse: 'collapse',
-                    backgroundColor: 'white',
-                    fontSize: '13px'
-                  }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
-                      <tr style={{ backgroundColor: '#3498db', color: 'white' }}>
-                        <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #2980b9' }}>Document ID</th>
-                        <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #2980b9' }}>Name</th>
-                        <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #2980b9' }}>Submitted By</th>
-                        <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #2980b9' }}>Type</th>
-                        <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid #2980b9' }}>Status</th>
+                      <tr style={{ backgroundColor: '#f8f9fa' }}>
+                        <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                          Document ID
+                        </th>
+                        <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                          Name
+                        </th>
+                        <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                          Submitted By
+                        </th>
+                        <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                          Type
+                        </th>
+                        <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                          Status
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
                       {documents.map((doc) => (
-                        <tr key={doc._id} style={{ borderBottom: '1px solid #ecf0f1' }}>
-                          <td style={{ padding: '12px', color: '#7f8c8d', textAlign: 'center' }}>{doc.documentId}</td>
-                          <td style={{ padding: '12px', fontWeight: '500', color: '#2c3e50', textAlign: 'center' }}>{doc.name}</td>
-                          <td style={{ padding: '12px', color: '#6c757d', textAlign: 'center', fontSize: '12px' }}>
+                        <tr key={doc._id} style={{ backgroundColor: 'white' }}>
+                          <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', color: '#2c3e50' }}>
+                            <code style={{
+                              backgroundColor: '#f8f9fa',
+                              padding: '2px 5px',
+                              borderRadius: '3px',
+                              fontSize: '11px',
+                              fontWeight: '600',
+                              color: '#6c757d'
+                            }}>
+                              {doc.documentId}
+                            </code>
+                          </td>
+                          <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', fontWeight: '500', color: '#2c3e50' }}>{doc.name}</td>
+                          <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', color: '#2c3e50' }}>
                             {doc.submittedBy || 'N/A'}
                           </td>
-                          <td style={{ padding: '12px', textAlign: 'center' }}>
+                          <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', color: '#2c3e50' }}>
                             <span style={{
-                              padding: '4px 8px',
-                              borderRadius: '4px',
+                              backgroundColor: '#e8f5e8',
+                              color: '#388e3c',
+                              padding: '3px 8px',
+                              borderRadius: '10px',
                               fontSize: '11px',
                               fontWeight: '600',
-                              backgroundColor: '#ecf0f1',
-                              color: '#2c3e50'
+                              textTransform: 'uppercase'
                             }}>
-                              {doc.type}
+                              {doc.type || 'N/A'}
                             </span>
                           </td>
-                          <td style={{ padding: '12px', textAlign: 'center' }}>
+                          <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px' }}>
                             <span style={{
-                              padding: '4px 8px',
-                              borderRadius: '4px',
+                              padding: '4px 10px',
+                              borderRadius: '12px',
                               fontSize: '11px',
                               fontWeight: '600',
-                              backgroundColor: doc.status === 'Approved' ? '#28a745' : 
-                                             doc.status === 'Rejected' ? '#dc3545' :
-                                             doc.status === 'Under Review' ? '#ffc107' :
-                                             doc.status === 'On Hold' ? '#f39c12' : '#17a2b8',
-                              color: 'white'
+                              backgroundColor: 
+                                doc.status === 'Approved' ? '#d4edda' :
+                                doc.status === 'Under Review' ? '#fff3cd' :
+                                doc.status === 'Rejected' ? '#f8d7da' :
+                                doc.status === 'On Hold' ? '#e2e3e5' :
+                                doc.status === 'Processing' ? '#d1ecf1' :
+                                '#e9ecef',
+                              color: 
+                                doc.status === 'Approved' ? '#155724' :
+                                doc.status === 'Under Review' ? '#856404' :
+                                doc.status === 'Rejected' ? '#721c24' :
+                                doc.status === 'On Hold' ? '#383d41' :
+                                doc.status === 'Processing' ? '#0c5460' :
+                                '#495057'
                             }}>
-                              {doc.status}
+                              {doc.status || 'Submitted'}
                             </span>
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                </div>
               ) : (
                 <div style={{ 
                   padding: '40px', 
                   textAlign: 'center', 
-                  color: '#95a5a6',
-                  fontSize: '16px'
+                    color: '#999',
+                    fontSize: '14px'
                 }}>
                   No documents found in the database
                 </div>
               )}
+              </div>
             </div>
           </div>
         );
@@ -1152,24 +1178,17 @@ function Aboard({ onLogout }) {
             </div>
 
             {/* Document Types Section */}
-            <div style={{
-              backgroundColor: 'white',
-              borderRadius: '15px',
-              padding: '25px',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-              border: '1px solid #e9ecef'
-            }}>
+            <div style={{ marginTop: '20px', backgroundColor: 'white', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
               <div style={{
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                marginBottom: '20px',
-                flexWrap: 'wrap',
-                gap: '15px'
+                padding: '20px',
+                borderBottom: '1px solid #e0e0e0'
               }}>
                 <h2 style={{
                   margin: 0,
-                  fontSize: '22px',
+                  fontSize: '18px',
                   fontWeight: '600',
                   color: '#2c3e50'
                 }}>
@@ -1217,7 +1236,7 @@ function Aboard({ onLogout }) {
               </div>
 
               {loading ? (
-                <div style={{ padding: '40px', textAlign: 'center', color: '#95a5a6' }}>
+                <div style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '14px' }}>
                   Loading document types...
                 </div>
               ) : displayTypes.length > 0 ? (
@@ -1226,36 +1245,36 @@ function Aboard({ onLogout }) {
                     <thead>
                       <tr style={{ backgroundColor: '#f8f9fa' }}>
                         <th style={{ 
-                          border: '1px solid #ddd', 
-                          padding: '15px', 
+                          border: '1px solid #e0e0e0', 
+                          padding: '12px', 
                           textAlign: 'left',
+                          fontSize: '13px',
                           fontWeight: '600',
-                          color: '#2c3e50',
-                          fontSize: '14px'
+                          color: '#2c3e50'
                         }}>Document Type</th>
                         <th style={{ 
-                          border: '1px solid #ddd', 
-                          padding: '15px', 
+                          border: '1px solid #e0e0e0', 
+                          padding: '12px', 
                           textAlign: 'left',
+                          fontSize: '13px',
                           fontWeight: '600',
-                          color: '#2c3e50',
-                          fontSize: '14px'
+                          color: '#2c3e50'
                         }}>Submitted By</th>
                         <th style={{ 
-                          border: '1px solid #ddd', 
-                          padding: '15px', 
+                          border: '1px solid #e0e0e0', 
+                          padding: '12px', 
                           textAlign: 'left',
+                          fontSize: '13px',
                           fontWeight: '600',
-                          color: '#2c3e50',
-                          fontSize: '14px'
+                          color: '#2c3e50'
                         }}>When its Submitted</th>
                         <th style={{ 
-                          border: '1px solid #ddd', 
-                          padding: '15px', 
+                          border: '1px solid #e0e0e0', 
+                          padding: '12px', 
                           textAlign: 'center',
+                          fontSize: '13px',
                           fontWeight: '600',
-                          color: '#2c3e50',
-                          fontSize: '14px'
+                          color: '#2c3e50'
                         }}>Actions</th>
                       </tr>
                     </thead>
@@ -1263,43 +1282,49 @@ function Aboard({ onLogout }) {
                       {displayTypes.map((typeData) => {
                         const fullTypeData = documentTypes.find(t => t._id === typeData._id);
                         return (
-                          <tr key={typeData._id}>
+                          <tr key={typeData._id} style={{ backgroundColor: 'white' }}>
                             <td style={{ 
-                              border: '1px solid #ddd', 
-                              padding: '15px 10px',
-                              fontWeight: '500'
+                              border: '1px solid #e0e0e0', 
+                              padding: '12px',
+                              fontSize: '13px',
+                              fontWeight: '500',
+                              color: '#2c3e50'
                             }}>
                               <span style={{
-                                padding: '6px 14px',
-                                borderRadius: '12px',
-                                fontSize: '13px',
+                                backgroundColor: '#e8f5e8',
+                                color: '#388e3c',
+                                padding: '3px 8px',
+                                borderRadius: '10px',
+                                fontSize: '11px',
                                 fontWeight: '600',
-                                backgroundColor: '#e3f2fd',
-                                color: '#1976d2'
+                                textTransform: 'uppercase'
                               }}>
                                 {typeData.type}
                               </span>
                             </td>
                             <td style={{ 
-                              border: '1px solid #ddd', 
-                              padding: '15px 10px',
+                              border: '1px solid #e0e0e0', 
+                              padding: '12px',
+                              fontSize: '13px',
                               color: '#2c3e50'
                             }}>
                               {typeData.uploadedBy}
                             </td>
                             <td style={{ 
-                              border: '1px solid #ddd', 
-                              padding: '15px 10px',
-                              color: '#7f8c8d'
+                              border: '1px solid #e0e0e0', 
+                              padding: '12px',
+                              fontSize: '12px',
+                              color: '#7f8c8d',
+                              whiteSpace: 'nowrap'
                             }}>
                               {typeData.dateUploaded ? new Date(typeData.dateUploaded).toLocaleDateString() : 'N/A'}
                             </td>
                             <td style={{ 
-                              border: '1px solid #ddd', 
-                              padding: '15px 10px',
+                              border: '1px solid #e0e0e0', 
+                              padding: '12px',
                               textAlign: 'center'
                             }}>
-                              <div style={{ display: 'flex', gap: '5px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                              <div style={{ display: 'flex', gap: '5px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
                                 <button
                                   onClick={() => {
                                     setEditingDocumentType(fullTypeData);
@@ -1307,17 +1332,17 @@ function Aboard({ onLogout }) {
                                   }}
                                   style={{
                                     padding: '6px 12px',
-                                    backgroundColor: '#f39c12',
-                                    color: 'white',
+                                    backgroundColor: '#ffc107',
+                                    color: 'black',
                                     border: 'none',
-                                    borderRadius: '6px',
-                                    fontSize: '12px',
-                                    fontWeight: '600',
+                                    borderRadius: '4px',
                                     cursor: 'pointer',
-                                    transition: 'background-color 0.3s ease'
+                                    fontSize: '11px',
+                                    fontWeight: '500',
+                                    transition: 'background-color 0.2s ease'
                                   }}
-                                  onMouseEnter={(e) => e.target.style.backgroundColor = '#e67e22'}
-                                  onMouseLeave={(e) => e.target.style.backgroundColor = '#f39c12'}
+                                  onMouseEnter={(e) => e.target.style.backgroundColor = '#ffb300'}
+                                  onMouseLeave={(e) => e.target.style.backgroundColor = '#ffc107'}
                                 >
                                   Edit
                                 </button>
@@ -1329,17 +1354,17 @@ function Aboard({ onLogout }) {
                                   }}
                                   style={{
                                     padding: '6px 12px',
-                                    backgroundColor: '#3498db',
+                                    backgroundColor: '#6c757d',
                                     color: 'white',
                                     border: 'none',
-                                    borderRadius: '6px',
-                                    fontSize: '12px',
-                                    fontWeight: '600',
+                                    borderRadius: '4px',
                                     cursor: 'pointer',
-                                    transition: 'background-color 0.3s ease'
+                                    fontSize: '11px',
+                                    fontWeight: '500',
+                                    transition: 'background-color 0.2s ease'
                                   }}
-                                  onMouseEnter={(e) => e.target.style.backgroundColor = '#2980b9'}
-                                  onMouseLeave={(e) => e.target.style.backgroundColor = '#3498db'}
+                                  onMouseEnter={(e) => e.target.style.backgroundColor = '#5a6268'}
+                                  onMouseLeave={(e) => e.target.style.backgroundColor = '#6c757d'}
                                 >
                                   View
                                 </button>
@@ -1347,17 +1372,17 @@ function Aboard({ onLogout }) {
                                   onClick={() => handleDeleteDocumentType(typeData._id, typeData.type)}
                                   style={{
                                     padding: '6px 12px',
-                                    backgroundColor: '#e74c3c',
+                                    backgroundColor: '#dc3545',
                                     color: 'white',
                                     border: 'none',
-                                    borderRadius: '6px',
-                                    fontSize: '12px',
-                                    fontWeight: '600',
+                                    borderRadius: '4px',
                                     cursor: 'pointer',
-                                    transition: 'background-color 0.3s ease'
+                                    fontSize: '11px',
+                                    fontWeight: '500',
+                                    transition: 'background-color 0.2s ease'
                                   }}
-                                  onMouseEnter={(e) => e.target.style.backgroundColor = '#c0392b'}
-                                  onMouseLeave={(e) => e.target.style.backgroundColor = '#e74c3c'}
+                                  onMouseEnter={(e) => e.target.style.backgroundColor = '#c82333'}
+                                  onMouseLeave={(e) => e.target.style.backgroundColor = '#dc3545'}
                                 >
                                   Remove
                                 </button>
@@ -1373,8 +1398,8 @@ function Aboard({ onLogout }) {
                 <div style={{ 
                   padding: '40px', 
                   textAlign: 'center', 
-                  color: '#95a5a6',
-                  fontSize: '16px'
+                  color: '#999',
+                  fontSize: '14px'
                 }}>
                   No document types found. Upload documents to see types.
                 </div>
