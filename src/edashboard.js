@@ -198,6 +198,14 @@ function Edashboard({ onLogout }) {
                 // For shared positions (OP), always return true
                 if (isSharedPosition) return true;
                 
+                // For OP position, be more lenient - show documents from same department or documents submitted by user
+                if (position === 'OP' || position === 'Office of the President' || position === 'President') {
+                  const isSubmittedByUser = doc.submittedBy && currentUser && 
+                    (doc.submittedBy.toLowerCase() === currentUser.username.toLowerCase() ||
+                     doc.submittedBy.toLowerCase() === currentEmployee.name.toLowerCase());
+                  if (isSubmittedByUser) return true;
+                }
+                
                 // For department-specific positions, verify document is from same department
                 return isFromSameDepartment(doc);
               };
@@ -333,9 +341,18 @@ function Edashboard({ onLogout }) {
                 });
                 console.log('Filtered for Vice President:', filteredDocuments.length);
               } else if (position === 'OP' || position === 'Office of the President' || position === 'President') {
-                // Show documents routed to Office of the President OR forwarded to this employee
+                // Show documents routed to Office of the President OR forwarded to this employee OR submitted by this user
                 // STRICT: OP is now department-specific - only show documents from SAME department
                 filteredDocuments = fetchedDocuments.filter(doc => {
+                  // Always show documents submitted by this user
+                  const isSubmitted = doc.submittedBy && currentUser && 
+                    (doc.submittedBy.toLowerCase() === currentUser.username.toLowerCase() ||
+                     doc.submittedBy.toLowerCase() === currentEmployee.name.toLowerCase());
+                  
+                  if (isSubmitted) {
+                    return true;
+                  }
+                  
                   // STRICT: Position must match AND department must match
                   if (!isDocumentRoutedToMyDepartment(doc)) {
                     return false;
