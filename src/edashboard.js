@@ -1648,42 +1648,69 @@ function Edashboard({ onLogout }) {
         }
       }
 
-      // Prepare document data matching backend schema
-      const documentData = {
-        documentId: generateDocumentId(),
-        name: documentForm.attachment ? documentForm.attachment.name : `Document_${new Date().toISOString().split('T')[0]}`,
-        type: documentForm.type || 'Report',
-        description: documentForm.notes || '',
-        submittedBy: user?.username || 'Unknown User',
-        status: selectedEmployee ? 'Under Review' : 'Submitted',
-        dateUploaded: new Date().toISOString(),
-        reviewer: '',
-        reviewDate: null,
-        comments: '',
-        filePath: documentForm.attachment ? documentForm.attachment.name : '',
-        // Use selected employee's position as nextOffice for proper routing
-        nextOffice: selectedEmployee ? selectedEmployee.position : '',
-        currentOffice: selectedEmployee ? selectedEmployee.position : '',
-        // Assign to employee if selected
-        assignedTo: selectedEmployee ? [selectedEmployee._id] : [],
-        currentHandler: selectedEmployee ? selectedEmployee._id : null,
-        forwardedBy: user?.username || 'Unknown User',
-        forwardedDate: selectedEmployee ? new Date().toISOString() : null,
-        // Travel Order specific fields
-        travelOrderDepartureDate: travelOrderDepartureDate || null,
-        travelOrderDepartureTime: documentForm.travelOrderDepartureTime || '',
-        travelOrderReturnDate: travelOrderReturnDate || null,
-        travelOrderReturnTime: documentForm.travelOrderReturnTime || ''
-      };
+      // Prepare FormData for file upload
+      const formData = new FormData();
+      
+      // Add file if attachment exists
+      if (documentForm.attachment) {
+        formData.append('attachment', documentForm.attachment);
+      }
+      
+      // Add all document fields
+      formData.append('documentId', generateDocumentId());
+      formData.append('name', documentForm.attachment ? documentForm.attachment.name : `Document_${new Date().toISOString().split('T')[0]}`);
+      formData.append('type', documentForm.type || 'Report');
+      formData.append('description', documentForm.notes || '');
+      formData.append('submittedBy', user?.username || 'Unknown User');
+      formData.append('status', selectedEmployee ? 'Under Review' : 'Submitted');
+      formData.append('dateUploaded', new Date().toISOString());
+      formData.append('reviewer', '');
+      formData.append('comments', '');
+      
+      // Determine nextOffice based on document type and routing workflow
+      let nextOffice = '';
+      if (selectedEmployee) {
+        // If employee is selected, use their position
+        nextOffice = selectedEmployee.position;
+      } else if (documentForm.type && documentForm.type.toUpperCase().includes('TRAVEL ORDER')) {
+        // For TRAVEL ORDER, always start with Program Head (PH) → Dean → AVP
+        nextOffice = 'Program Head';
+      }
+      
+      formData.append('nextOffice', nextOffice);
+      formData.append('currentOffice', nextOffice); // Set currentOffice to match nextOffice initially
+      formData.append('category', '');
+      
+      // Assign to employee if selected
+      if (selectedEmployee) {
+        formData.append('assignedTo', JSON.stringify([selectedEmployee._id]));
+        formData.append('currentHandler', selectedEmployee._id);
+      } else {
+        formData.append('assignedTo', JSON.stringify([]));
+        formData.append('currentHandler', '');
+      }
+      
+      formData.append('forwardedBy', user?.username || 'Unknown User');
+      if (selectedEmployee) {
+        formData.append('forwardedDate', new Date().toISOString());
+      }
+      
+      // Travel Order specific fields
+      if (travelOrderDepartureDate) {
+        formData.append('travelOrderDepartureDate', travelOrderDepartureDate);
+      }
+      formData.append('travelOrderDepartureTime', documentForm.travelOrderDepartureTime || '');
+      if (travelOrderReturnDate) {
+        formData.append('travelOrderReturnDate', travelOrderReturnDate);
+      }
+      formData.append('travelOrderReturnTime', documentForm.travelOrderReturnTime || '');
 
-      console.log('Submitting document with data:', documentData);
+      console.log('Submitting document with file:', documentForm.attachment ? documentForm.attachment.name : 'No file');
 
       const response = await fetch(`${API_URL}/documents`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(documentData),
+        // Don't set Content-Type header - browser will set it automatically with boundary for FormData
+        body: formData,
       });
 
       if (response.ok) {

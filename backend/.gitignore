@@ -50,3 +50,7 @@ coverage
 # Production build files
 build/
 dist/
+
+# Uploaded files (keep folder structure, ignore contents)
+uploads/*
+!uploads/.gitkeep

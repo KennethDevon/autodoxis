@@ -172,29 +172,28 @@ function Document() {
         ? `${formData.date}T${formData.time}:00`
         : new Date().toISOString();
 
-      // Prepare document data matching backend schema
-      const documentData = {
-        documentId: editingDocument ? editingDocument.documentId : generateDocumentId(),
-        name: formData.attachment ? formData.attachment.name : `Document_${new Date().toISOString().split('T')[0]}`,
-        type: formData.type || 'Report',
-        description: formData.notes || '',
-        submittedBy: formData.sender || 'Admin',
-        status: selectedEmployeeObj ? 'Under Review' : 'Submitted',
-        dateUploaded: dateTimeString,
-        reviewer: '',
-        reviewDate: null,
-        comments: '',
-        filePath: formData.attachment ? formData.attachment.name : '',
-        nextOffice: selectedEmployeeObj ? selectedEmployeeObj.position : '',
-        currentOffice: selectedEmployeeObj ? selectedEmployeeObj.position : '',
-        assignedTo: selectedEmployeeObj ? [selectedEmployeeObj._id] : [],
-        currentHandler: selectedEmployeeObj ? selectedEmployeeObj._id : null,
-        forwardedBy: formData.sender || 'Admin',
-        forwardedDate: selectedEmployeeObj ? new Date().toISOString() : null
-      };
-
       if (editingDocument) {
-        // Update existing document
+        // Update existing document - use JSON for updates (file updates can be handled separately if needed)
+        const documentData = {
+          documentId: editingDocument.documentId,
+          name: formData.attachment ? formData.attachment.name : editingDocument.name,
+          type: formData.type || 'Report',
+          description: formData.notes || '',
+          submittedBy: formData.sender || 'Admin',
+          status: selectedEmployeeObj ? 'Under Review' : editingDocument.status,
+          dateUploaded: dateTimeString,
+          reviewer: '',
+          reviewDate: null,
+          comments: '',
+          filePath: formData.attachment ? formData.attachment.name : editingDocument.filePath,
+          nextOffice: selectedEmployeeObj ? selectedEmployeeObj.position : editingDocument.nextOffice,
+          currentOffice: selectedEmployeeObj ? selectedEmployeeObj.position : editingDocument.currentOffice,
+          assignedTo: selectedEmployeeObj ? [selectedEmployeeObj._id] : editingDocument.assignedTo || [],
+          currentHandler: selectedEmployeeObj ? selectedEmployeeObj._id : editingDocument.currentHandler,
+          forwardedBy: formData.sender || 'Admin',
+          forwardedDate: selectedEmployeeObj ? new Date().toISOString() : editingDocument.forwardedDate
+        };
+        
         const response = await fetch(`${API_URL}/documents/${editingDocument._id}`, {
           method: 'PATCH',
           headers: {
@@ -210,20 +209,51 @@ function Document() {
           showNotification('error', 'Update Failed', 'Failed to update document');
         }
       } else {
-        // Add new document
+        // Add new document - use FormData for file upload
+        const formDataToSend = new FormData();
+        
+        // Add file if attachment exists
+        if (formData.attachment) {
+          formDataToSend.append('attachment', formData.attachment);
+        }
+        
+        // Add all document fields
+        formDataToSend.append('documentId', generateDocumentId());
+        formDataToSend.append('name', formData.attachment ? formData.attachment.name : `Document_${new Date().toISOString().split('T')[0]}`);
+        formDataToSend.append('type', formData.type || 'Report');
+        formDataToSend.append('description', formData.notes || '');
+        formDataToSend.append('submittedBy', formData.sender || 'Admin');
+        formDataToSend.append('status', selectedEmployeeObj ? 'Under Review' : 'Submitted');
+        formDataToSend.append('dateUploaded', dateTimeString);
+        formDataToSend.append('reviewer', '');
+        formDataToSend.append('comments', '');
+        formDataToSend.append('nextOffice', selectedEmployeeObj ? selectedEmployeeObj.position : '');
+        formDataToSend.append('category', '');
+        
+        if (selectedEmployeeObj) {
+          formDataToSend.append('assignedTo', JSON.stringify([selectedEmployeeObj._id]));
+          formDataToSend.append('currentHandler', selectedEmployeeObj._id);
+        } else {
+          formDataToSend.append('assignedTo', JSON.stringify([]));
+          formDataToSend.append('currentHandler', '');
+        }
+        
+        formDataToSend.append('forwardedBy', formData.sender || 'Admin');
+        if (selectedEmployeeObj) {
+          formDataToSend.append('forwardedDate', new Date().toISOString());
+        }
+        
         const response = await fetch(`${API_URL}/documents`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(documentData),
+          body: formDataToSend,
         });
         
         if (response.ok) {
           showNotification('success', 'Document Added', 'Document added successfully!');
           fetchDocuments();
         } else {
-          showNotification('error', 'Add Failed', 'Failed to add document');
+          const errorData = await response.json();
+          showNotification('error', 'Add Failed', errorData.message || 'Failed to add document');
         }
       }
       
@@ -631,7 +661,7 @@ function Document() {
                 <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
                   Status
                 </th>
-                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                    <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
                   Reviewer
                 </th>
                 <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'center', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
@@ -2399,6 +2429,90 @@ function Document() {
                     lineHeight: '1.6'
                   }}>
                     {viewingDocument.description}
+                  </div>
+                </div>
+              )}
+
+              {/* File Attachment */}
+              {viewingDocument.filePath && (
+                <div>
+                  <label style={{ 
+                    display: 'block',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#6c757d',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    marginBottom: '8px'
+                  }}>
+                    Attached File
+                  </label>
+                  <div style={{
+                    padding: '12px',
+                    backgroundColor: '#f8f9fa',
+                    borderRadius: '6px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '10px'
+                  }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{
+                        fontSize: '14px',
+                        color: '#2c3e50',
+                        fontWeight: '500',
+                        marginBottom: '4px'
+                      }}>
+                        {viewingDocument.filePath.split('/').pop() || viewingDocument.filePath}
+                      </div>
+                      <div style={{
+                        fontSize: '12px',
+                        color: '#6c757d'
+                      }}>
+                        Click to view or download
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <a
+                        href={`${API_URL}${viewingDocument.filePath.startsWith('/') ? '' : '/'}${viewingDocument.filePath}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: '#28a745',
+                          color: 'white',
+                          textDecoration: 'none',
+                          borderRadius: '6px',
+                          fontSize: '13px',
+                          fontWeight: '600',
+                          transition: 'all 0.2s ease',
+                          display: 'inline-block'
+                        }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = '#218838'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = '#28a745'}
+                      >
+                        View File
+                      </a>
+                      <a
+                        href={`${API_URL}/documents/${viewingDocument._id}/download`}
+                        download
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: '#007bff',
+                          color: 'white',
+                          textDecoration: 'none',
+                          borderRadius: '6px',
+                          fontSize: '13px',
+                          fontWeight: '600',
+                          transition: 'all 0.2s ease',
+                          display: 'inline-block'
+                        }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = '#0056b3'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = '#007bff'}
+                      >
+                        Download
+                      </a>
+                    </div>
                   </div>
                 </div>
               )}

@@ -5,6 +5,7 @@ const Employee = require('../models/Employee');
 const Office = require('../models/Office');
 const QRCode = require('qrcode');
 const JsBarcode = require('jsbarcode');
+const upload = require('../multerConfig');
 
 // Get all documents
 router.get('/', async (req, res) => {
@@ -39,41 +40,74 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Create one document
-router.post('/', async (req, res) => {
+// Create one document with file upload support
+router.post('/', upload.single('attachment'), async (req, res) => {
   try {
     console.log('Creating document with data:', req.body);
+    console.log('File uploaded:', req.file ? req.file.filename : 'No file');
+    
+    // Handle file path - use uploaded file path if file was uploaded, otherwise use provided path
+    let filePath = '';
+    let fileName = req.body.name || '';
+    
+    if (req.file) {
+      // File was uploaded - use the saved file path
+      filePath = `/uploads/${req.file.filename}`;
+      // If name wasn't provided, use the original filename
+      if (!fileName) {
+        fileName = req.file.originalname;
+      }
+    } else if (req.body.filePath) {
+      // No file uploaded but filePath provided (for backward compatibility)
+      filePath = req.body.filePath;
+    }
+    
+    // Parse JSON fields if they're strings (when sent as FormData)
+    let assignedTo = req.body.assignedTo;
+    let currentHandler = req.body.currentHandler;
+    
+    if (typeof assignedTo === 'string') {
+      try {
+        assignedTo = JSON.parse(assignedTo);
+      } catch (e) {
+        assignedTo = assignedTo ? [assignedTo] : [];
+      }
+    }
+    
+    if (currentHandler === 'null' || currentHandler === '') {
+      currentHandler = null;
+    }
     
     const document = new Document({
       documentId: req.body.documentId,
-      name: req.body.name,
+      name: fileName || `Document_${new Date().toISOString().split('T')[0]}`,
       type: req.body.type,
-      dateUploaded: req.body.dateUploaded,
+      dateUploaded: req.body.dateUploaded ? new Date(req.body.dateUploaded) : new Date(),
       status: req.body.status || 'Submitted',
       submittedBy: req.body.submittedBy,
       description: req.body.description || '',
       reviewer: req.body.reviewer || '',
-      reviewDate: req.body.reviewDate || null,
+      reviewDate: req.body.reviewDate ? new Date(req.body.reviewDate) : null,
       comments: req.body.comments || '',
-      filePath: req.body.filePath || '',
+      filePath: filePath,
       nextOffice: req.body.nextOffice || '',
       currentOffice: req.body.nextOffice || '', // Set currentOffice to match nextOffice initially
       category: req.body.category || '', // Save document category
       // Employee assignment fields
-      assignedTo: req.body.assignedTo || [],
-      currentHandler: req.body.currentHandler || null,
+      assignedTo: assignedTo || [],
+      currentHandler: currentHandler || null,
       forwardedBy: req.body.forwardedBy || '',
-      forwardedDate: req.body.forwardedDate || null,
+      forwardedDate: req.body.forwardedDate ? new Date(req.body.forwardedDate) : null,
       // Travel Order specific fields
-      travelOrderDepartureDate: req.body.travelOrderDepartureDate || null,
+      travelOrderDepartureDate: req.body.travelOrderDepartureDate ? new Date(req.body.travelOrderDepartureDate) : null,
       travelOrderDepartureTime: req.body.travelOrderDepartureTime || '',
-      travelOrderReturnDate: req.body.travelOrderReturnDate || null,
+      travelOrderReturnDate: req.body.travelOrderReturnDate ? new Date(req.body.travelOrderReturnDate) : null,
       travelOrderReturnTime: req.body.travelOrderReturnTime || ''
     });
 
     // If document is assigned to an employee, add routing history
-    if (req.body.currentHandler) {
-      const employee = await Employee.findById(req.body.currentHandler);
+    if (currentHandler) {
+      const employee = await Employee.findById(currentHandler);
       if (employee) {
         document.routingHistory.push({
           office: employee.office?.name || employee.department || 'Employee',
@@ -83,16 +117,66 @@ router.post('/', async (req, res) => {
           comments: `Document forwarded to ${employee.name} by ${req.body.forwardedBy || 'System'}`
         });
       }
+    } else if (req.body.nextOffice && req.body.nextOffice.trim() !== '') {
+      // If no employee assigned but nextOffice is set (e.g., TRAVEL ORDER routing to Program Head)
+      // Add initial routing history entry
+      const isTravelOrder = (req.body.type && req.body.type.toUpperCase().includes('TRAVEL ORDER')) ||
+                           (req.body.category && req.body.category.toUpperCase().includes('TRAVEL ORDER'));
+      
+      if (isTravelOrder && req.body.nextOffice === 'Program Head') {
+        document.routingHistory.push({
+          office: 'Program Head',
+          action: 'received',
+          handler: '',
+          timestamp: new Date(),
+          comments: `Travel Order submitted and routed to Program Head by ${req.body.submittedBy || 'System'}`
+        });
+      }
     }
 
     const newDocument = await document.save();
     console.log('Document created successfully:', newDocument._id);
+    console.log('File path:', newDocument.filePath);
     console.log('Assigned to employees:', newDocument.assignedTo);
     console.log('Current handler:', newDocument.currentHandler);
+    
+    // Generate QR code and barcode for the new document
+    try {
+      const qrData = {
+        documentId: newDocument.documentId,
+        name: newDocument.name,
+        type: newDocument.type,
+        status: newDocument.status,
+        url: `${req.protocol}://${req.get('host')}/documents/${newDocument._id}`,
+        timestamp: new Date().toISOString()
+      };
+
+      const qrCodeDataURL = await QRCode.toDataURL(JSON.stringify(qrData));
+      newDocument.qrCode = qrCodeDataURL;
+
+      // Generate barcode
+      const canvas = require('canvas').createCanvas(200, 50);
+      JsBarcode(canvas, newDocument.documentId, {
+        format: "CODE128",
+        width: 2,
+        height: 50,
+        displayValue: true,
+        fontSize: 14,
+        margin: 10
+      });
+      newDocument.barcode = canvas.toDataURL();
+
+      await newDocument.save();
+    } catch (qrError) {
+      console.error('Error generating QR/barcode for new document:', qrError);
+      // Don't fail the document creation if QR/barcode generation fails
+    }
     
     res.status(201).json(newDocument);
   } catch (err) {
     console.error('Error creating document:', err);
+    // If file was uploaded but document creation failed, we might want to delete the file
+    // For now, just return the error
     res.status(400).json({ message: err.message });
   }
 });
@@ -512,64 +596,6 @@ router.get('/:id/scan-history', async (req, res) => {
   }
 });
 
-// Auto-generate QR codes and barcodes for new documents
-router.post('/', async (req, res) => {
-  try {
-    const document = new Document({
-      documentId: req.body.documentId,
-      name: req.body.name,
-      type: req.body.type,
-      dateUploaded: req.body.dateUploaded,
-      status: req.body.status || 'Submitted',
-      submittedBy: req.body.submittedBy,
-      description: req.body.description || '',
-      reviewer: req.body.reviewer || '',
-      reviewDate: req.body.reviewDate || null,
-      comments: req.body.comments || '',
-      filePath: req.body.filePath || '',
-      nextOffice: req.body.nextOffice || ''
-    });
-
-    const newDocument = await document.save();
-
-    // Generate QR code and barcode for the new document
-    try {
-      const qrData = {
-        documentId: newDocument.documentId,
-        name: newDocument.name,
-        type: newDocument.type,
-        status: newDocument.status,
-        url: `${req.protocol}://${req.get('host')}/documents/${newDocument._id}`,
-        timestamp: new Date().toISOString()
-      };
-
-      const qrCodeDataURL = await QRCode.toDataURL(JSON.stringify(qrData));
-      newDocument.qrCode = qrCodeDataURL;
-
-      // Generate barcode
-      const canvas = require('canvas').createCanvas(200, 50);
-      JsBarcode(canvas, newDocument.documentId, {
-        format: "CODE128",
-        width: 2,
-        height: 50,
-        displayValue: true,
-        fontSize: 14,
-        margin: 10
-      });
-      newDocument.barcode = canvas.toDataURL();
-
-      await newDocument.save();
-    } catch (qrError) {
-      console.error('Error generating QR/barcode for new document:', qrError);
-      // Don't fail the document creation if QR/barcode generation fails
-    }
-
-    res.status(201).json(newDocument);
-  } catch (err) {
-    console.error('Error creating document:', err);
-    res.status(400).json({ message: err.message });
-  }
-});
 
 // Advanced Search Route
 router.post('/search/advanced', async (req, res) => {
@@ -1600,6 +1626,48 @@ router.post('/:id/remove-employee-access', async (req, res) => {
   } catch (err) {
     console.error('Error removing employee access:', err);
     res.status(400).json({ message: err.message });
+  }
+});
+
+// Download/view document file
+router.get('/:id/download', async (req, res) => {
+  try {
+    const document = await Document.findById(req.params.id);
+    if (!document) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+
+    if (!document.filePath) {
+      return res.status(404).json({ message: 'No file attached to this document' });
+    }
+
+    const path = require('path');
+    const fs = require('fs');
+    
+    // Remove leading slash if present
+    const filePath = document.filePath.startsWith('/') 
+      ? document.filePath.substring(1) 
+      : document.filePath;
+    
+    const fullPath = path.join(__dirname, '..', filePath);
+    
+    // Check if file exists
+    if (!fs.existsSync(fullPath)) {
+      return res.status(404).json({ message: 'File not found on server' });
+    }
+
+    // Send file
+    res.download(fullPath, (err) => {
+      if (err) {
+        console.error('Error downloading file:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ message: 'Error downloading file' });
+        }
+      }
+    });
+  } catch (err) {
+    console.error('Error in download route:', err);
+    res.status(500).json({ message: err.message });
   }
 });
 
