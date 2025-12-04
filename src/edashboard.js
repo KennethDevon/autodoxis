@@ -200,8 +200,10 @@ function Edashboard({ onLogout }) {
                 
                 // For OP position, be more lenient - show documents from same department or documents submitted by user
                 if (position === 'OP' || position === 'Office of the President' || position === 'President') {
-                  const isSubmittedByUser = doc.submittedBy && currentUser && 
-                    (doc.submittedBy.toLowerCase() === currentUser.username.toLowerCase() ||
+                  const userData = localStorage.getItem('userData');
+                  const parsedUser = userData ? JSON.parse(userData) : null;
+                  const isSubmittedByUser = doc.submittedBy && parsedUser && 
+                    (doc.submittedBy.toLowerCase() === parsedUser.username.toLowerCase() ||
                      doc.submittedBy.toLowerCase() === currentEmployee.name.toLowerCase());
                   if (isSubmittedByUser) return true;
                 }
@@ -345,8 +347,10 @@ function Edashboard({ onLogout }) {
                 // STRICT: OP is now department-specific - only show documents from SAME department
                 filteredDocuments = fetchedDocuments.filter(doc => {
                   // Always show documents submitted by this user
-                  const isSubmitted = doc.submittedBy && currentUser && 
-                    (doc.submittedBy.toLowerCase() === currentUser.username.toLowerCase() ||
+                  const userData = localStorage.getItem('userData');
+                  const parsedUser = userData ? JSON.parse(userData) : null;
+                  const isSubmitted = doc.submittedBy && parsedUser && 
+                    (doc.submittedBy.toLowerCase() === parsedUser.username.toLowerCase() ||
                      doc.submittedBy.toLowerCase() === currentEmployee.name.toLowerCase());
                   
                   if (isSubmitted) {
@@ -1678,7 +1682,9 @@ function Edashboard({ onLogout }) {
       formData.append('name', documentForm.attachment ? documentForm.attachment.name : `Document_${new Date().toISOString().split('T')[0]}`);
       formData.append('type', documentForm.type || 'Report');
       formData.append('description', documentForm.notes || '');
-      formData.append('submittedBy', user?.username || 'Unknown User');
+      // Use the sender from the form (which should be the logged-in user's name)
+      // Fallback to employee name, then username, then 'Unknown User'
+      formData.append('submittedBy', documentForm.sender || employee?.name || user?.username || 'Unknown User');
       formData.append('status', selectedEmployee ? 'Under Review' : 'Submitted');
       formData.append('dateUploaded', new Date().toISOString());
       formData.append('reviewer', '');
@@ -1782,8 +1788,20 @@ function Edashboard({ onLogout }) {
 
   const handleOpenDocumentModal = () => {
     setShowDocumentModal(true);
-    // Auto-populate sender with employee name
-    const senderName = employee ? employee.name : (user ? user.name : '');
+    // Auto-populate sender with logged-in user's name
+    // Priority: employee.name > user.username > user.name
+    const userData = localStorage.getItem('userData');
+    let senderName = '';
+    
+    if (employee && employee.name) {
+      senderName = employee.name;
+    } else if (userData) {
+      const parsedUser = JSON.parse(userData);
+      senderName = parsedUser.username || parsedUser.name || '';
+    } else if (user) {
+      senderName = user.username || user.name || '';
+    }
+    
     setDocumentForm(prev => ({
       ...prev,
       sender: senderName
