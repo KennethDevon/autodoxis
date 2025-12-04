@@ -908,7 +908,7 @@ function Edashboard({ onLogout }) {
     return nextPosition;
   };
 
-  // Quick action: Approve & Forward
+  // Quick action: Accept & Forward
   const handleApproveAndForward = async () => {
     if (!selectedDocument) return;
 
@@ -975,7 +975,7 @@ function Edashboard({ onLogout }) {
       });
 
       if (response.ok) {
-        showNotification('success', 'Document Approved & Forwarded', `Document approved and forwarded to ${nextOffice} successfully!`);
+        showNotification('success', 'Document Accepted & Forwarded', `Document accepted and forwarded to ${nextOffice} successfully!`);
         handleCloseReviewModal();
         // Refresh documents immediately to update History Logs
         await fetchDocuments();
@@ -996,24 +996,39 @@ function Edashboard({ onLogout }) {
     }
   };
 
-  // Quick action: Forward Only
+  // Quick action: Hold File - Assigns document to current user
   const handleForwardToNext = async () => {
     if (!selectedDocument) return;
 
-    const nextOffice = getNextOffice();
-    if (!nextOffice) {
-      alert('Cannot forward: No next office defined for your position');
+    if (!employee?._id) {
+      alert('Cannot hold file: Employee information not found');
       return;
     }
 
     try {
+      const holderName = employee?.name || user?.username || 'Unknown';
+      const currentPosition = employee?.position || 'Unknown Position';
+      const currentOffice = employee?.office?.name || employee?.department || currentPosition;
+      
       const updateData = {
-        status: 'Processing',
-        comments: reviewForm.comments || `Forwarded by ${employee?.name || user?.username}`,
-        reviewer: employee?.name || user?.username || 'Unknown',
+        status: 'On Hold',
+        comments: reviewForm.comments || `File held by ${holderName}`,
+        reviewer: holderName,
         reviewDate: new Date().toISOString(),
-        nextOffice: nextOffice,
-        currentOffice: nextOffice
+        // Keep existing nextOffice and currentOffice - don't change them
+        assignedTo: [employee._id], // Add current user to assignedTo array
+        currentHandler: employee._id, // Set current user as handler
+        $push: {
+          routingHistory: {
+            office: currentOffice,
+            toOffice: currentOffice,
+            action: 'on_hold',
+            performedBy: holderName,
+            handler: holderName,
+            date: new Date().toISOString(),
+            comments: reviewForm.comments || `File held by ${holderName} at ${currentOffice}`
+          }
+        }
       };
 
       const response = await fetch(`${API_URL}/documents/${selectedDocument._id}`, {
@@ -1025,7 +1040,7 @@ function Edashboard({ onLogout }) {
       });
 
       if (response.ok) {
-        alert(`Document forwarded to ${nextOffice} successfully!`);
+        showNotification('success', 'File Held', `File has been saved to ${holderName}'s account.`);
         handleCloseReviewModal();
         // Refresh documents immediately to update History Logs
         await fetchDocuments();
@@ -1036,11 +1051,13 @@ function Edashboard({ onLogout }) {
           }, 300);
         }
       } else {
-        alert('Failed to forward document');
+        const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
+        console.error('Error response:', errorData);
+        alert(`Failed to hold file: ${errorData.message || 'Unknown error'}`);
       }
     } catch (error) {
-      console.error('Error forwarding:', error);
-      alert('Error forwarding document');
+      console.error('Error holding file:', error);
+      alert('Error holding file');
     }
   };
 
@@ -5218,19 +5235,126 @@ function Edashboard({ onLogout }) {
               };
 
               const stages = getWorkflowStages();
-              const currentOffice = selectedDocument.currentOffice || selectedDocument.nextOffice || 'Program Head';
-              
               const isWorkflowComplete = isDocumentWorkflowComplete(selectedDocument);
+              
+              // Helper function to match office name to stage
+              const matchOfficeToStage = (officeName, stageName) => {
+                if (!officeName || !stageName) return false;
+                const officeLower = officeName.toLowerCase();
+                const stageLower = stageName.toLowerCase();
+                
+                // Exact match
+                if (officeLower === stageLower) return true;
+                
+                // Partial match
+                if (officeLower.includes(stageLower) || stageLower.includes(officeLower)) return true;
+                
+                // Handle abbreviations for Office of the President
+                if (stageLower.includes('office of the president')) {
+                  return officeLower.includes('op') || officeLower.includes('president') || officeLower.includes('office of the president');
+                }
+                
+                // Handle abbreviations for Vice President
+                if (stageLower.includes('vice president') && !stageLower.includes('academic')) {
+                  return officeLower.includes('vp') || officeLower.includes('vice president');
+                }
+                
+                // Handle Academic Vice President
+                if (stageLower.includes('academic vice president')) {
+                  return officeLower.includes('avp') || officeLower.includes('academic vice president') || 
+                         (officeLower.includes('academic') && officeLower.includes('vp'));
+                }
+                
+                // Handle Program Head
+                if (stageLower.includes('program head')) {
+                  return officeLower.includes('ph') || officeLower.includes('program head');
+                }
+                
+                // Handle Dean
+                if (stageLower.includes('dean')) {
+                  return officeLower.includes('dean');
+                }
+                
+                // Handle Communication
+                if (stageLower.includes('communication')) {
+                  return officeLower.includes('communication');
+                }
+                
+                return false;
+              };
 
-              // Find current stage index
-              let currentStageIndex = stages.indexOf(currentOffice);
-              if (currentStageIndex === -1) {
-                // Try to match partial strings
+              // Determine current stage index
+              let currentStageIndex = -1;
+              
+              // Priority 1: Check if currentOffice matches a stage
+              if (selectedDocument.currentOffice) {
                 currentStageIndex = stages.findIndex(stage => 
-                  currentOffice.includes(stage) || stage.includes(currentOffice)
+                  matchOfficeToStage(selectedDocument.currentOffice, stage)
                 );
               }
-              if (currentStageIndex === -1) currentStageIndex = 0;
+              
+              // Priority 2: If nextOffice is set, document is at the stage BEFORE nextOffice
+              if (currentStageIndex === -1 && selectedDocument.nextOffice) {
+                const nextOfficeIndex = stages.findIndex(stage => 
+                  matchOfficeToStage(selectedDocument.nextOffice, stage)
+                );
+                if (nextOfficeIndex !== -1 && nextOfficeIndex > 0) {
+                  // Document is at the stage before the nextOffice
+                  currentStageIndex = nextOfficeIndex - 1;
+                } else if (nextOfficeIndex === 0) {
+                  // If nextOffice is the first stage, document hasn't started yet
+                  currentStageIndex = 0;
+                }
+              }
+              
+              // Priority 3: Check routing history for the last office
+              if (currentStageIndex === -1 && selectedDocument.routingHistory && selectedDocument.routingHistory.length > 0) {
+                const lastEntry = selectedDocument.routingHistory[selectedDocument.routingHistory.length - 1];
+                const lastOffice = lastEntry.toOffice || lastEntry.office;
+                if (lastOffice) {
+                  const lastOfficeIndex = stages.findIndex(stage => 
+                    matchOfficeToStage(lastOffice, stage)
+                  );
+                  if (lastOfficeIndex !== -1) {
+                    currentStageIndex = lastOfficeIndex;
+                  }
+                }
+              }
+              
+              // If still no match, check if document is at the last stage
+              if (currentStageIndex === -1) {
+                // Check if status is Approved and no nextOffice - means it's at the last stage
+                if (isWorkflowComplete || (selectedDocument.status === 'Approved' && !selectedDocument.nextOffice)) {
+                  currentStageIndex = stages.length - 1;
+                } else {
+                  // Default to last stage if document seems to be at the end
+                  const lastHistoryEntry = selectedDocument.routingHistory?.[selectedDocument.routingHistory.length - 1];
+                  if (lastHistoryEntry) {
+                    const lastOffice = lastHistoryEntry.office || lastHistoryEntry.toOffice || '';
+                    const isAtLastStage = stages.some(stage => {
+                      const stageLower = stage.toLowerCase();
+                      const lastLower = lastOffice.toLowerCase();
+                      return lastLower.includes(stageLower) || stageLower.includes(lastLower) ||
+                             (stageLower.includes('office of the president') && (lastLower.includes('op') || lastLower.includes('president'))) ||
+                             (stageLower.includes('vice president') && (lastLower.includes('vp') || lastLower.includes('vice president'))) ||
+                             (stageLower.includes('academic vice president') && (lastLower.includes('avp') || lastLower.includes('academic')));
+                    });
+                    if (isAtLastStage) {
+                      currentStageIndex = stages.length - 1;
+                    } else {
+                      currentStageIndex = 0; // Default to first stage
+                    }
+                  } else {
+                    currentStageIndex = 0; // Default to first stage
+                  }
+                }
+              }
+              
+              // Ensure index is within bounds
+              if (currentStageIndex < 0) currentStageIndex = 0;
+              if (currentStageIndex >= stages.length) currentStageIndex = stages.length - 1;
+              
+              // If workflow is complete, show last stage
               if (isWorkflowComplete) {
                 currentStageIndex = stages.length - 1;
               }
@@ -5383,7 +5507,7 @@ function Edashboard({ onLogout }) {
                       fontWeight: '700',
                       marginLeft: '3px'
                     }}>
-                      {currentOffice}
+                      {currentStageIndex >= 0 && currentStageIndex < stages.length ? stages[currentStageIndex] : (selectedDocument.currentOffice || selectedDocument.nextOffice || 'Unknown')}
                     </span>
                   </div>
                 </div>
@@ -5769,7 +5893,7 @@ function Edashboard({ onLogout }) {
                         }}
                       >
                         <span style={{ fontSize: '16px' }}>✓</span>
-                        Approve & Forward to {getNextOffice()}
+                        Accept & Forward to {getNextOffice()}
                       </button>
                       <button
                         onClick={handleForwardToNext}
@@ -5800,7 +5924,7 @@ function Edashboard({ onLogout }) {
                         }}
                       >
                         <span style={{ fontSize: '16px' }}>→</span>
-                        Forward to {getNextOffice()}
+                        Hold File
                       </button>
                     </>
                   )}
@@ -5875,7 +5999,7 @@ function Edashboard({ onLogout }) {
                       }}
                     >
                       <span style={{ fontSize: '16px' }}>✗</span>
-                      Reject & Return
+                      Reject
                     </button>
                 </div>
                 <p style={{

@@ -231,6 +231,23 @@ router.patch('/:id', async (req, res) => {
       document.category = req.body.category;
     }
     
+    // Handle assignedTo array update
+    if (req.body.assignedTo != null) {
+      if (Array.isArray(req.body.assignedTo)) {
+        // Add employee IDs to assignedTo if not already present
+        req.body.assignedTo.forEach(empId => {
+          if (empId && !document.assignedTo.includes(empId)) {
+            document.assignedTo.push(empId);
+          }
+        });
+      }
+    }
+    
+    // Handle currentHandler update
+    if (req.body.currentHandler != null) {
+      document.currentHandler = req.body.currentHandler;
+    }
+    
     // Handle routing history update if provided
     if (req.body.$push && req.body.$push.routingHistory) {
       const historyEntry = req.body.$push.routingHistory;
