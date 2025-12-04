@@ -26,6 +26,7 @@ const officeRoutes = require('./routes/officeRoutes');
 const documentRoutes = require('./routes/documentRoutes');
 const documentTypeRoutes = require('./routes/documentTypeRoutes');
 const authRoutes = require('./routes/authRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 // Use routes
 app.use('/employees', employeeRoutes);
@@ -33,6 +34,7 @@ app.use('/offices', officeRoutes);
 app.use('/documents', documentRoutes);
 app.use('/document-types', documentTypeRoutes);
 app.use('/auth', authRoutes);
+app.use('/notifications', notificationRoutes);
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI, {

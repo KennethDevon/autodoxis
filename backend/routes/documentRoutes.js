@@ -6,6 +6,7 @@ const Office = require('../models/Office');
 const QRCode = require('qrcode');
 const JsBarcode = require('jsbarcode');
 const upload = require('../multerConfig');
+const { notifyDocumentEvent } = require('./notificationRoutes');
 
 // Get all documents
 router.get('/', async (req, res) => {
@@ -140,6 +141,17 @@ router.post('/', upload.single('attachment'), async (req, res) => {
     console.log('Assigned to employees:', newDocument.assignedTo);
     console.log('Current handler:', newDocument.currentHandler);
     
+    // Create notifications for document upload
+    try {
+      await notifyDocumentEvent(newDocument, 'document_uploaded', {
+        submittedBy: newDocument.submittedBy,
+        hasFile: !!newDocument.filePath
+      });
+    } catch (notifError) {
+      console.error('Error creating notifications:', notifError);
+      // Don't fail document creation if notification fails
+    }
+    
     // Generate QR code and barcode for the new document
     try {
       const qrData = {
@@ -272,6 +284,50 @@ router.patch('/:id', async (req, res) => {
     
     const updatedDocument = await document.save();
     console.log('✓ Document updated:', updatedDocument.documentId, '- Status:', updatedDocument.status, '- nextOffice:', updatedDocument.nextOffice, '- currentOffice:', updatedDocument.currentOffice);
+    
+    // Create notifications for document update
+    try {
+      const oldStatus = document.status;
+      const newStatus = updatedDocument.status;
+      
+      // Determine notification type based on what changed
+      let eventType = 'document_updated';
+      
+      // Check for status changes first (most important)
+      if (newStatus === 'Rejected' && oldStatus !== 'Rejected') {
+        eventType = 'document_rejected';
+      } else if (newStatus === 'Approved' && oldStatus !== 'Approved') {
+        eventType = 'document_approved';
+      } else if (req.body.filePath || req.file) {
+        eventType = 'file_updated';
+      } else if (req.body.assignedTo || req.body.currentHandler) {
+        eventType = 'document_assigned';
+      } else if (req.body.nextOffice && req.body.nextOffice !== document.nextOffice) {
+        eventType = 'document_forwarded';
+      }
+      
+      // Prepare notification options based on event type
+      const notificationOptions = {
+        oldStatus,
+        newStatus,
+        updatedBy: req.body.reviewer || req.body.forwardedBy || updatedDocument.reviewer || 'System',
+        nextOffice: req.body.nextOffice || updatedDocument.nextOffice,
+        comments: req.body.comments || updatedDocument.comments
+      };
+      
+      // Add specific fields for rejection/approval
+      if (eventType === 'document_rejected') {
+        notificationOptions.rejectedBy = req.body.reviewer || updatedDocument.reviewer || 'System';
+      } else if (eventType === 'document_approved') {
+        notificationOptions.approvedBy = req.body.reviewer || updatedDocument.reviewer || 'System';
+      }
+      
+      await notifyDocumentEvent(updatedDocument, eventType, notificationOptions);
+    } catch (notifError) {
+      console.error('Error creating update notifications:', notifError);
+      // Don't fail document update if notification fails
+    }
+    
     res.json(updatedDocument);
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -314,6 +370,17 @@ router.patch('/:id/approve', async (req, res) => {
     document.comments = req.body.comments || '';
     
     const updatedDocument = await document.save();
+    
+    // Create notification for approval
+    try {
+      await notifyDocumentEvent(updatedDocument, 'document_approved', {
+        approvedBy: req.body.reviewer || updatedDocument.reviewer || 'System',
+        comments: req.body.comments || updatedDocument.comments
+      });
+    } catch (notifError) {
+      console.error('Error creating approval notifications:', notifError);
+    }
+    
     res.json(updatedDocument);
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -334,6 +401,17 @@ router.patch('/:id/reject', async (req, res) => {
     document.comments = req.body.comments || '';
     
     const updatedDocument = await document.save();
+    
+    // Create notification for rejection
+    try {
+      await notifyDocumentEvent(updatedDocument, 'document_rejected', {
+        rejectedBy: req.body.reviewer || updatedDocument.reviewer || 'System',
+        comments: req.body.comments || updatedDocument.comments
+      });
+    } catch (notifError) {
+      console.error('Error creating rejection notifications:', notifError);
+    }
+    
     res.json(updatedDocument);
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -422,6 +500,18 @@ router.patch('/:id/forward', async (req, res) => {
     document.delayedHours = 0;
     
     const updatedDocument = await document.save();
+    
+    // Create notification for forwarding
+    try {
+      await notifyDocumentEvent(updatedDocument, 'document_forwarded', {
+        forwardedBy: req.body.reviewer || updatedDocument.reviewer || 'System',
+        nextOffice: req.body.nextOffice || updatedDocument.nextOffice,
+        comments: req.body.comments || updatedDocument.comments
+      });
+    } catch (notifError) {
+      console.error('Error creating forwarding notifications:', notifError);
+    }
+    
     res.json(updatedDocument);
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -1601,6 +1691,16 @@ router.post('/:id/forward-to-employee', async (req, res) => {
 
     await document.save();
     console.log('Document saved with assignedTo:', document.assignedTo, 'currentHandler:', document.currentHandler);
+
+    // Create notification for forwarding to employee
+    try {
+      await notifyDocumentEvent(document, 'document_forwarded', {
+        forwardedBy: req.body.forwardedBy || 'System',
+        employeeName: employee.name
+      });
+    } catch (notifError) {
+      console.error('Error creating forwarding notifications:', notifError);
+    }
 
     res.json({
       message: `Document forwarded to ${employee.name} successfully`,

@@ -1,34 +1,126 @@
 import React, { useState, useEffect } from 'react';
+import API_URL from '../config';
 
 function NotificationSystem({ variant = 'default' }) {
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  // Map backend notification types to frontend types
+  const mapNotificationType = (backendType) => {
+    const typeMap = {
+      'document_uploaded': 'info',
+      'document_updated': 'info',
+      'document_assigned': 'info',
+      'document_forwarded': 'info',
+      'document_approved': 'success',
+      'document_rejected': 'error',
+      'file_updated': 'info'
+    };
+    return typeMap[backendType] || 'info';
+  };
+
+  // Fetch notifications from backend
+  const fetchNotifications = async () => {
+    try {
+      const userData = localStorage.getItem('userData');
+      if (!userData) return;
+
+      const user = JSON.parse(userData);
+      const userId = user._id || user.id;
+      
+      if (!userId) return;
+
+      setLoading(true);
+      const response = await fetch(`${API_URL}/notifications/user/${userId}?limit=50`);
+      
+      if (response.ok) {
+        const backendNotifications = await response.json();
+        
+        // Transform backend notifications to frontend format
+        const transformedBackendNotifications = backendNotifications.map(notif => ({
+          id: notif._id || notif.id,
+          type: mapNotificationType(notif.type),
+          title: notif.title,
+          message: notif.message,
+          timestamp: new Date(notif.createdAt),
+          read: notif.read,
+          documentId: notif.documentId?._id || notif.documentId,
+          documentName: notif.documentName,
+          isBackendNotification: true
+        }));
+
+        // Merge with existing local notifications (keep local notifications that haven't expired)
+        setNotifications(prev => {
+          // Get backend notification IDs
+          const backendIds = new Set(transformedBackendNotifications.map(n => n.id));
+          
+          // Keep local notifications that are still valid (not expired)
+          const localNotifications = prev.filter(n => !n.isBackendNotification);
+          
+          // Combine: backend notifications + local notifications
+          const merged = [...transformedBackendNotifications, ...localNotifications];
+          
+          // Sort by timestamp (newest first)
+          return merged.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        });
+        
+        // Update unread count
+        setNotifications(current => {
+          const unread = current.filter(n => !n.read).length;
+          setUnreadCount(unread);
+          return current;
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching notifications:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch notifications on mount and set up polling
+  useEffect(() => {
+    fetchNotifications();
+    
+    // Poll for new notifications every 30 seconds
+    const pollInterval = setInterval(() => {
+      fetchNotifications();
+    }, 30000);
+
+    return () => clearInterval(pollInterval);
+  }, []);
 
   useEffect(() => {
-    // Listen for custom notification events
+    // Listen for custom notification events (for local toast notifications)
+    // These are temporary UI notifications, not persistent backend notifications
     const handleNotification = (event) => {
       const newNotification = {
-        id: Date.now(),
+        id: `local_${Date.now()}`,
         type: event.detail.type || 'info', // 'success', 'error', 'warning', 'info'
         title: event.detail.title || 'Notification',
         message: event.detail.message || '',
         timestamp: new Date(),
-        read: false
+        read: false,
+        isBackendNotification: false,
+        isTemporary: true // Mark as temporary for toast notifications
       };
       
       setNotifications(prev => [newNotification, ...prev]);
       setUnreadCount(prev => prev + 1);
       
-      // Auto-remove after 5 seconds for success/info, 10 seconds for warnings/errors
+      // Auto-remove temporary toast notifications after delay
+      // Backend notifications will NOT be auto-removed
       const autoRemoveDelay = ['success', 'info'].includes(newNotification.type) ? 5000 : 10000;
       setTimeout(() => {
         setNotifications(prev => {
           const notification = prev.find(n => n.id === newNotification.id);
-          if (notification && !notification.read) {
+          if (notification && !notification.read && notification.isTemporary) {
             setUnreadCount(prevCount => Math.max(0, prevCount - 1));
           }
-          return prev.filter(n => n.id !== newNotification.id);
+          // Only remove temporary notifications, keep backend notifications
+          return prev.filter(n => n.id !== newNotification.id || !n.isTemporary);
         });
       }, autoRemoveDelay);
     };
@@ -48,29 +140,98 @@ function NotificationSystem({ variant = 'default' }) {
     }
   }, [notifications, unreadCount]);
 
-  const markAsRead = (id) => {
+  const markAsRead = async (id) => {
+    const notification = notifications.find(n => n.id === id);
+    
+    // Update local state immediately - notification stays visible, just marked as read
     setNotifications(prev => 
       prev.map(n => n.id === id ? { ...n, read: true } : n)
     );
     setUnreadCount(prev => Math.max(0, prev - 1));
+
+    // If it's a backend notification, mark it as read in the backend
+    // The notification will remain visible in the list
+    if (notification?.isBackendNotification) {
+      try {
+        await fetch(`${API_URL}/notifications/${id}/read`, {
+          method: 'PATCH'
+        });
+        // Refresh to get updated read status from backend
+        fetchNotifications();
+      } catch (error) {
+        console.error('Error marking notification as read:', error);
+      }
+    }
   };
 
-  const markAllAsRead = () => {
+  const markAllAsRead = async () => {
+    const userData = localStorage.getItem('userData');
+    if (!userData) return;
+
+    const user = JSON.parse(userData);
+    const userId = user._id || user.id;
+    
+    if (!userId) return;
+
+    // Update local state immediately - all notifications stay visible, just marked as read
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
     setUnreadCount(0);
+
+    // Mark all as read in backend
+    // Notifications will remain visible in the list
+    try {
+      await fetch(`${API_URL}/notifications/user/${userId}/read-all`, {
+        method: 'PATCH'
+      });
+      // Refresh to get updated read status from backend
+      fetchNotifications();
+    } catch (error) {
+      console.error('Error marking all notifications as read:', error);
+    }
   };
 
-  const removeNotification = (id) => {
+  const removeNotification = async (id) => {
+    const notification = notifications.find(n => n.id === id);
+    
+    // Update local state immediately
     setNotifications(prev => {
-      const notification = prev.find(n => n.id === id);
-      if (notification && !notification.read) {
+      const notif = prev.find(n => n.id === id);
+      if (notif && !notif.read) {
         setUnreadCount(prev => Math.max(0, prev - 1));
       }
       return prev.filter(n => n.id !== id);
     });
+
+    // If it's a backend notification, delete it from the backend
+    if (notification?.isBackendNotification) {
+      try {
+        await fetch(`${API_URL}/notifications/${id}`, {
+          method: 'DELETE'
+        });
+      } catch (error) {
+        console.error('Error deleting notification:', error);
+      }
+    }
   };
 
-  const clearAll = () => {
+  const clearAll = async () => {
+    const userData = localStorage.getItem('userData');
+    if (userData) {
+      const user = JSON.parse(userData);
+      const userId = user._id || user.id;
+      
+      if (userId) {
+        try {
+          await fetch(`${API_URL}/notifications/user/${userId}/all`, {
+            method: 'DELETE'
+          });
+        } catch (error) {
+          console.error('Error clearing all notifications:', error);
+        }
+      }
+    }
+
+    // Update local state
     setNotifications([]);
     setUnreadCount(0);
   };
@@ -128,7 +289,12 @@ function NotificationSystem({ variant = 'default' }) {
     <div style={{ position: 'relative' }}>
       {/* Notification Bell Icon */}
       <button
-        onClick={() => setShowDropdown(!showDropdown)}
+        onClick={() => {
+          setShowDropdown(!showDropdown);
+          if (!showDropdown) {
+            fetchNotifications(); // Refresh when opening dropdown
+          }
+        }}
         style={{
           position: 'relative',
           background: variant === 'employee' ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
@@ -336,11 +502,12 @@ function NotificationSystem({ variant = 'default' }) {
                       style={{
                         padding: '16px 24px',
                         borderBottom: index < notifications.length - 1 ? '1px solid #f3f4f6' : 'none',
-                        backgroundColor: notification.read ? 'white' : '#fafafa',
+                        backgroundColor: notification.read ? '#f9fafb' : '#fafafa',
                         cursor: 'pointer',
                         transition: 'all 0.2s ease',
                         position: 'relative',
-                        borderLeft: `4px solid ${notification.read ? 'transparent' : colors.border}`
+                        borderLeft: `4px solid ${notification.read ? '#e5e7eb' : colors.border}`,
+                        opacity: notification.read ? 0.85 : 1
                       }}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.backgroundColor = '#f9fafb';
@@ -390,7 +557,9 @@ function NotificationSystem({ variant = 'default' }) {
                             color: '#9ca3af',
                             fontWeight: '500'
                           }}>
-                            {notification.timestamp.toLocaleTimeString('en-US', {
+                            {notification.timestamp.toLocaleString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
                               hour: '2-digit',
                               minute: '2-digit'
                             })}
