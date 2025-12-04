@@ -1786,19 +1786,46 @@ function Edashboard({ onLogout }) {
     });
   };
 
-  const handleOpenDocumentModal = () => {
+  const handleOpenDocumentModal = async () => {
     setShowDocumentModal(true);
     // Auto-populate sender with logged-in user's name
-    // Priority: employee.name > user.username > user.name
+    // Fetch current user data from localStorage
     const userData = localStorage.getItem('userData');
     let senderName = '';
     
-    if (employee && employee.name) {
-      senderName = employee.name;
-    } else if (userData) {
+    if (userData) {
       const parsedUser = JSON.parse(userData);
-      senderName = parsedUser.username || parsedUser.name || '';
+      
+      // First check if we already have the correct employee in state
+      if (employee && employee.employeeId === parsedUser.employeeId && employee.name) {
+        senderName = employee.name;
+      } else if (parsedUser.employeeId) {
+        // Fetch employee data if not in state or doesn't match
+        try {
+          const response = await fetch(`${API_URL}/employees`);
+          if (response.ok) {
+            const allEmployees = await response.json();
+            const currentEmployee = allEmployees.find(emp => emp.employeeId === parsedUser.employeeId);
+            if (currentEmployee && currentEmployee.name) {
+              senderName = currentEmployee.name;
+              // Update the employee state
+              setEmployee(currentEmployee);
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching employee data:', error);
+        }
+      }
+      
+      // Fallback to username if employee name not found
+      if (!senderName) {
+        senderName = parsedUser.username || parsedUser.name || '';
+      }
+    } else if (employee && employee.name) {
+      // Use existing employee state if available
+      senderName = employee.name;
     } else if (user) {
+      // Use existing user state as last resort
       senderName = user.username || user.name || '';
     }
     
