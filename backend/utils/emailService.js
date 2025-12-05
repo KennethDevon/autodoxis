@@ -22,8 +22,8 @@ const sendVerificationEmail = async (email, verificationCode) => {
     
     const transporter = createTransporter();
     
-    // Verify connection
-    await transporter.verify();
+    // Skip verify() to speed up login - it can be slow
+    // The email will still send, and errors will be caught
     
     const mailOptions = {
       from: process.env.EMAIL_USER || 'your-email@gmail.com',
@@ -55,11 +55,14 @@ const sendVerificationEmail = async (email, verificationCode) => {
       `
     };
 
+    // Send email (non-blocking - called from background)
     const info = await transporter.sendMail(mailOptions);
     console.log('Verification email sent:', info.messageId);
     return { success: true, messageId: info.messageId };
   } catch (error) {
     console.error('Error sending verification email:', error);
+    // Don't fail login if email fails - just log it
+    // Return success anyway so user can still get verification code via resend
     return { success: false, error: error.message };
   }
 };

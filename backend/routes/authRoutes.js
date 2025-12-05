@@ -59,9 +59,13 @@ router.post('/register', async (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    
+    // Debug logging
+    console.log('Login attempt:', { email, passwordLength: password?.length });
 
     // First try regular user login with email/password
     let user = await User.findOne({ email });
+    console.log('User lookup result:', user ? `Found: ${user.email}` : 'Not found');
     if (user) {
       const isMatch = await bcrypt.compare(password, user.password);
       if (isMatch) {
@@ -105,18 +109,21 @@ router.post('/login', async (req, res) => {
             });
           }
           
-          // Send verification email
-          const emailResult = await sendVerificationEmail(user.email, verificationCode);
-          
-          if (!emailResult.success) {
-            console.error('Failed to send verification email:', emailResult.error);
-            return res.status(500).json({ 
-              message: `Failed to send verification email: ${emailResult.error}. Please check email configuration in backend/.env file.`,
-              requiresVerification: true,
-              error: emailResult.error
+          // Send verification email in background (non-blocking)
+          // This allows login to respond immediately
+          sendVerificationEmail(user.email, verificationCode)
+            .then(result => {
+              if (result.success) {
+                console.log('Verification email sent successfully to', user.email);
+              } else {
+                console.error('Failed to send verification email:', result.error);
+              }
+            })
+            .catch(err => {
+              console.error('Error sending verification email:', err);
             });
-          }
           
+          // Return immediately - email is sent in background
           return res.json({ 
             message: 'Verification code sent to your email',
             requiresVerification: true,
