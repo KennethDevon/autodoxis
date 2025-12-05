@@ -206,30 +206,26 @@ function Aboard({ onLogout }) {
   };
 
   const handleUpdateUserRole = async () => {
-    if (!editingUser || !editingUser.role) {
+    if (!editingUser) {
       setShowNotificationPane(true);
-      setNotificationMessage('Please select a role');
+      setNotificationMessage('User information is missing');
       setNotificationType('error');
       setTimeout(() => setShowNotificationPane(false), 3000);
       return;
     }
 
-    await updateUserRole(editingUser._id, editingUser.role);
+    await updateUserRole(editingUser._id, editingUser.role || '', editingUser.email);
     closeEditUserModal();
   };
 
-  const updateUserRole = async (userId, newRole) => {
+  const updateUserRole = async (userId, newRole, newEmail) => {
     try {
       // Find the user being updated
       const user = users.find(u => u._id === userId);
       
-      // Protect sadmin@gmail.com from role changes
-      if (user?.email === 'sadmin@gmail.com') {
-        setShowNotificationPane(true);
-        setNotificationMessage('Cannot modify the Admin account role. This account is protected.');
-        setNotificationType('error');
-        setTimeout(() => setShowNotificationPane(false), 3000);
-        return;
+      const updateData = { role: newRole };
+      if (newEmail && newEmail !== user?.email) {
+        updateData.email = newEmail;
       }
 
       const response = await fetch(`${API_URL}/auth/users/${userId}`, {
@@ -237,33 +233,34 @@ function Aboard({ onLogout }) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ role: newRole }),
+        body: JSON.stringify(updateData),
       });
 
       if (response.ok) {
         // Update the local state
         setUsers(prevUsers =>
           prevUsers.map(user =>
-            user._id === userId ? { ...user, role: newRole } : user
+            user._id === userId ? { ...user, role: newRole, email: newEmail || user.email } : user
           )
         );
         
         // Show success message
         const roleText = newRole || 'No Role';
+        const emailText = newEmail && newEmail !== user?.email ? ` and email updated` : '';
         setShowNotificationPane(true);
-        setNotificationMessage(`${user?.username} is now assigned as: ${roleText}`);
+        setNotificationMessage(`${user?.username} is now assigned as: ${roleText}${emailText}`);
         setNotificationType('success');
         setTimeout(() => setShowNotificationPane(false), 3000);
       } else {
         setShowNotificationPane(true);
-        setNotificationMessage('Failed to update role. Please try again.');
+        setNotificationMessage('Failed to update user. Please try again.');
         setNotificationType('error');
         setTimeout(() => setShowNotificationPane(false), 3000);
       }
     } catch (error) {
-      console.error('Error updating role:', error);
+      console.error('Error updating user:', error);
       setShowNotificationPane(true);
-      setNotificationMessage('Error updating role. Please check your connection and try again.');
+      setNotificationMessage('Error updating user. Please check your connection and try again.');
       setNotificationType('error');
       setTimeout(() => setShowNotificationPane(false), 3000);
     }
@@ -422,6 +419,11 @@ function Aboard({ onLogout }) {
 
   // Filter users based on search term and role filter
   const filteredUsers = users.filter(user => {
+    // Hide admin user from the list (by username or original email)
+    if (user.email === 'sadmin@gmail.com' || user.username === 'Kenneth Devon A. Valeriano') {
+      return false;
+    }
+    
     const matchesSearch = searchTerm === '' || 
       user.username?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -581,6 +583,8 @@ function Aboard({ onLogout }) {
 
   const confirmLogout = () => {
     setShowLogoutModal(false);
+    // Clear user data from localStorage
+    localStorage.removeItem('userData');
     onLogout();
   };
 
@@ -914,16 +918,6 @@ function Aboard({ onLogout }) {
                               color: '#2c3e50'
                             }}>
                               {user.role || 'No Role'}
-                              {user.email === 'sadmin@gmail.com' && (
-                                <div style={{
-                                  fontSize: '10px',
-                                  color: '#e74c3c',
-                                  marginTop: '4px',
-                                  fontWeight: '600'
-                                }}>
-                                  Protected Account
-                                </div>
-                              )}
                             </td>
                             <td style={{ 
                               border: '1px solid #e0e0e0', 
@@ -933,28 +927,22 @@ function Aboard({ onLogout }) {
                               <div style={{ display: 'flex', gap: '5px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
                               <button
                                 onClick={() => openEditUserModal(user)}
-                                disabled={user.email === 'sadmin@gmail.com'}
                                 style={{
                                     padding: '6px 12px',
-                                  backgroundColor: user.email === 'sadmin@gmail.com' ? '#95a5a6' : '#ffc107',
+                                  backgroundColor: '#ffc107',
                                   color: 'black',
                                   border: 'none',
                                     borderRadius: '4px',
-                                  cursor: user.email === 'sadmin@gmail.com' ? 'not-allowed' : 'pointer',
+                                  cursor: 'pointer',
                                     fontSize: '11px',
                                     fontWeight: '500',
-                                    transition: 'background-color 0.2s ease',
-                                  opacity: user.email === 'sadmin@gmail.com' ? 0.5 : 1
+                                    transition: 'background-color 0.2s ease'
                                 }}
                                   onMouseEnter={(e) => {
-                                    if (user.email !== 'sadmin@gmail.com') {
                                       e.target.style.backgroundColor = '#ffb300';
-                                    }
                                   }}
                                   onMouseLeave={(e) => {
-                                    if (user.email !== 'sadmin@gmail.com') {
                                       e.target.style.backgroundColor = '#ffc107';
-                                    }
                                   }}
                               >
                                 Edit
@@ -2403,14 +2391,12 @@ function Aboard({ onLogout }) {
               <input
                 type="text"
                 value={editingUser.email}
-                disabled
+                onChange={(e) => setEditingUser({ ...editingUser, email: e.target.value })}
                 style={{
                   width: '100%',
                   padding: '8px',
                   border: '1px solid #ddd',
-                  borderRadius: '4px',
-                  backgroundColor: '#f8f9fa',
-                  color: '#6c757d'
+                  borderRadius: '4px'
                 }}
               />
             </div>

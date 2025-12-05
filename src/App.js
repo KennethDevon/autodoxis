@@ -25,6 +25,8 @@ function App() {
   };
 
   const handleLogout = () => {
+    // Clear user data from localStorage on logout
+    localStorage.removeItem('userData');
     setIsLoggedIn(false);
     setDashboardType('Dashboard'); // Reset to default dashboard
     setUserRole('');
