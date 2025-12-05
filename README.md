@@ -1,4 +1,16 @@
-# Getting Started with Create React App
+# AutoDoxis - Document Management System
+
+AutoDoxis is a comprehensive document routing and management system built with React and Node.js.
+
+## Features
+
+- Document upload and tracking
+- Notification system for document events
+- User role-based access control
+- Document routing workflow
+- Real-time status updates
+
+## Getting Started
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
