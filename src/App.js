@@ -11,16 +11,18 @@ function App() {
   const [dashboardType, setDashboardType] = useState('Dashboard');
   const [userRole, setUserRole] = useState('');
 
-  // Ensure we never auto-login from localStorage on page load
+  // CRITICAL: Ensure we never auto-login from localStorage on page load
   // Authentication must always be done through the login flow
+  // This prevents security issues where users bypass authentication
   useEffect(() => {
-    // Clear any stale localStorage data on app initialization
-    // This ensures users must authenticate on every page load
+    // Explicitly do NOT restore login state from localStorage
+    // Users must authenticate on every page load/refresh
+    // localStorage is only used to store user info AFTER successful login
+    // but we NEVER restore login state from it for security
     const userData = localStorage.getItem('userData');
     if (userData) {
-      // Don't auto-login - require authentication
-      // localStorage is only used to store user info AFTER successful login
-      // but we don't restore login state from it
+      // Intentionally do nothing - require fresh authentication
+      // This ensures security: no auto-login on page refresh
     }
   }, []);
 
