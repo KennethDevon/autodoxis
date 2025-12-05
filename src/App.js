@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import './App.css';
 import Aboard from './aboard';
 import Edashboard from './edashboard';
@@ -10,6 +10,19 @@ function App() {
   const [showSignup, setShowSignup] = useState(false);
   const [dashboardType, setDashboardType] = useState('Dashboard');
   const [userRole, setUserRole] = useState('');
+
+  // Ensure we never auto-login from localStorage on page load
+  // Authentication must always be done through the login flow
+  useEffect(() => {
+    // Clear any stale localStorage data on app initialization
+    // This ensures users must authenticate on every page load
+    const userData = localStorage.getItem('userData');
+    if (userData) {
+      // Don't auto-login - require authentication
+      // localStorage is only used to store user info AFTER successful login
+      // but we don't restore login state from it
+    }
+  }, []);
 
   const handleLogin = (status, dashboard = 'Dashboard', role = '') => {
     setIsLoggedIn(status);
