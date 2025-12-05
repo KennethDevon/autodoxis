@@ -1,0 +1,158 @@
+warning: in the working copy of 'src/App.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/aboard.js', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/src/App.js b/src/App.js[m
+[1mindex 49c3d57..8a24062 100644[m
+[1m--- a/src/App.js[m
+[1m+++ b/src/App.js[m
+[36m@@ -25,6 +25,8 @@[m [mfunction App() {[m
+   };[m
+ [m
+   const handleLogout = () => {[m
+[32m+[m[32m    // Clear user data from localStorage on logout[m
+[32m+[m[32m    localStorage.removeItem('userData');[m
+     setIsLoggedIn(false);[m
+     setDashboardType('Dashboard'); // Reset to default dashboard[m
+     setUserRole('');[m
+[1mdiff --git a/src/aboard.js b/src/aboard.js[m
+[1mindex 667add5..efb6a9f 100644[m
+[1m--- a/src/aboard.js[m
+[1m+++ b/src/aboard.js[m
+[36m@@ -206,30 +206,26 @@[m [mfunction Aboard({ onLogout }) {[m
+   };[m
+ [m
+   const handleUpdateUserRole = async () => {[m
+[31m-    if (!editingUser || !editingUser.role) {[m
+[32m+[m[32m    if (!editingUser) {[m
+       setShowNotificationPane(true);[m
+[31m-      setNotificationMessage('Please select a role');[m
+[32m+[m[32m      setNotificationMessage('User information is missing');[m
+       setNotificationType('error');[m
+       setTimeout(() => setShowNotificationPane(false), 3000);[m
+       return;[m
+     }[m
+ [m
+[31m-    await updateUserRole(editingUser._id, editingUser.role);[m
+[32m+[m[32m    await updateUserRole(editingUser._id, editingUser.role || '', editingUser.email);[m
+     closeEditUserModal();[m
+   };[m
+ [m
+[31m-  const updateUserRole = async (userId, newRole) => {[m
+[32m+[m[32m  const updateUserRole = async (userId, newRole, newEmail) => {[m
+     try {[m
+       // Find the user being updated[m
+       const user = users.find(u => u._id === userId);[m
+       [m
+[31m-      // Protect sadmin@gmail.com from role changes[m
+[31m-      if (user?.email === 'sadmin@gmail.com') {[m
+[31m-        setShowNotificationPane(true);[m
+[31m-        setNotificationMessage('Cannot modify the Admin account role. This account is protected.');[m
+[31m-        setNotificationType('error');[m
+[31m-        setTimeout(() => setShowNotificationPane(false), 3000);[m
+[31m-        return;[m
+[32m+[m[32m      const updateData = { role: newRole };[m
+[32m+[m[32m      if (newEmail && newEmail !== user?.email) {[m
+[32m+[m[32m        updateData.email = newEmail;[m
+       }[m
+ [m
+       const response = await fetch(`${API_URL}/auth/users/${userId}`, {[m
+[36m@@ -237,33 +233,34 @@[m [mfunction Aboard({ onLogout }) {[m
+         headers: {[m
+           'Content-Type': 'application/json',[m
+         },[m
+[31m-        body: JSON.stringify({ role: newRole }),[m
+[32m+[m[32m        body: JSON.stringify(updateData),[m
+       });[m
+ [m
+       if (response.ok) {[m
+         // Update the local state[m
+         setUsers(prevUsers =>[m
+           prevUsers.map(user =>[m
+[31m-            user._id === userId ? { ...user, role: newRole } : user[m
+[32m+[m[32m            user._id === userId ? { ...user, role: newRole, email: newEmail || user.email } : user[m
+           )[m
+         );[m
+         [m
+         // Show success message[m
+         const roleText = newRole || 'No Role';[m
+[32m+[m[32m        const emailText = newEmail && newEmail !== user?.email ? ` and email updated` : '';[m
+         setShowNotificationPane(true);[m
+[31m-        setNotificationMessage(`${user?.username} is now assigned as: ${roleText}`);[m
+[32m+[m[32m        setNotificationMessage(`${user?.username} is now assigned as: ${roleText}${emailText}`);[m
+         setNotificationType('success');[m
+         setTimeout(() => setShowNotificationPane(false), 3000);[m
+       } else {[m
+         setShowNotificationPane(true);[m
+[31m-        setNotificationMessage('Failed to update role. Please try again.');[m
+[32m+[m[32m        setNotificationMessage('Failed to update user. Please try again.');[m
+         setNotificationType('error');[m
+         setTimeout(() => setShowNotificationPane(false), 3000);[m
+       }[m
+     } catch (error) {[m
+[31m-      console.error('Error updating role:', error);[m
+[32m+[m[32m      console.error('Error updating user:', error);[m
+       setShowNotificationPane(true);[m
+[31m-      setNotificationMessage('Error updating role. Please check your connection and try again.');[m
+[32m+[m[32m      setNotificationMessage('Error updating user. Please check your connection and try again.');[m
+       setNotificationType('error');[m
+       setTimeout(() => setShowNotificationPane(false), 3000);[m
+     }[m
+[36m@@ -422,6 +419,11 @@[m [mfunction Aboard({ onLogout }) {[m
+ [m
+   // Filter users based on search term and role filter[m
+   const filteredUsers = users.filter(user => {[m
+[32m+[m[32m    // Hide admin user from the list (by username or original email)[m
+[32m+[m[32m    if (user.email === 'sadmin@gmail.com' || user.username === 'Kenneth Devon A. Valeriano') {[m
+[32m+[m[32m      return false;[m
+[32m+[m[32m    }[m
+[32m+[m[41m    [m
+     const matchesSearch = searchTerm === '' || [m
+       user.username?.toLowerCase().includes(searchTerm.toLowerCase()) ||[m
+       user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||[m
+[36m@@ -581,6 +583,8 @@[m [mfunction Aboard({ onLogout }) {[m
+ [m
+   const confirmLogout = () => {[m
+     setShowLogoutModal(false);[m
+[32m+[m[32m    // Clear user data from localStorage[m
+[32m+[m[32m    localStorage.removeItem('userData');[m
+     onLogout();[m
+   };[m
+ [m
+[36m@@ -914,16 +918,6 @@[m [mfunction Aboard({ onLogout }) {[m
+                               color: '#2c3e50'[m
+                             }}>[m
+                               {user.role || 'No Role'}[m
+[31m-                              {user.email === 'sadmin@gmail.com' && ([m
+[31m-                                <div style={{[m
+[31m-                                  fontSize: '10px',[m
+[31m-                                  color: '#e74c3c',[m
+[31m-                                  marginTop: '4px',[m
+[31m-                                  fontWeight: '600'[m
+[31m-                                }}>[m
+[31m-                                  Protected Account[m
+[31m-                                </div>[m
+[31m-                              )}[m
+                             </td>[m
+                             <td style={{ [m
+                               border: '1px solid #e0e0e0', [m
+[36m@@ -933,28 +927,22 @@[m [mfunction Aboard({ onLogout }) {[m
+                               <div style={{ display: 'flex', gap: '5px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>[m
+                               <button[m
+                                 onClick={() => openEditUserModal(user)}[m
+[31m-                                disabled={user.email === 'sadmin@gmail.com'}[m
+                                 style={{[m
+                                     padding: '6px 12px',[m
+[31m-                                  backgroundColor: user.email === 'sadmin@gmail.com' ? '#95a5a6' : '#ffc107',[m
+[32m+[m[32m                                  backgroundColor: '#ffc107',[m
+                                   color: 'black',[m
+                                   border: 'none',[m
+                                     borderRadius: '4px',[m
+[31m-                                  cursor: user.email === 'sadmin@gmail.com' ? 'not-allowed' : 'pointer',[m
+[32m+[m[32m                                  cursor: 'pointer',[m
+                                     fontSize: '11px',[m
+                                     fontWeight: '500',[m
+[31m-                                    transition: 'background-color 0.2s ease',[m
+[31m-                                  opacity: user.email === 'sadmin@gmail.com' ? 0.5 : 1[m
+[32m+[m[32m                                    transition: 'background-color 0.2s ease'[m
+                                 }}[m
+                                   onMouseEnter={(e) => {[m
+[31m-                                    if (user.emai

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import Modal from './Modal';
+import EmailVerification from './EmailVerification';
 import API_URL from './config';
 
 function Login({ onLogin, onShowSignup }) {
@@ -7,6 +8,8 @@ function Login({ onLogin, onShowSignup }) {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [modal, setModal] = useState({ isOpen: false, title: '', message: '', type: 'info' });
+  const [showVerification, setShowVerification] = useState(false);
+  const [verificationData, setVerificationData] = useState(null);
 
   // Helper function to show modal
   const showModal = (title, message, type = 'info') => {
@@ -15,6 +18,44 @@ function Login({ onLogin, onShowSignup }) {
 
   const closeModal = () => {
     setModal({ isOpen: false, title: '', message: '', type: 'info' });
+  };
+
+  const handleVerificationSuccess = (user) => {
+    // Store user data in localStorage
+    localStorage.setItem('userData', JSON.stringify(user));
+    
+    // Handle role-based routing
+    const userRole = user?.role || '';
+    const userEmail = user?.email || email;
+    
+    // sadmin@gmail.com always gets Admin access
+    if (userEmail === 'sadmin@gmail.com') {
+      const adminUser = { ...user, role: 'Admin' };
+      localStorage.setItem('userData', JSON.stringify(adminUser));
+      onLogin(true, 'Admin', 'Admin');
+    } else {
+      switch (userRole) {
+        case 'Admin':
+          onLogin(true, 'Admin', userRole);
+          break;
+        case 'Staff':
+          onLogin(true, 'Staff', userRole);
+          break;
+        case 'User':
+          onLogin(true, 'User', userRole);
+          break;
+        default:
+          onLogin(true, 'User', 'User');
+          break;
+      }
+    }
+  };
+
+  const handleVerificationCancel = () => {
+    setShowVerification(false);
+    setVerificationData(null);
+    setEmail('');
+    setPassword('');
   };
 
 
@@ -32,6 +73,16 @@ function Login({ onLogin, onShowSignup }) {
         });
         const data = await response.json();
         if (response.ok) {
+          // Check if email verification is required (for admin users)
+          if (data.requiresVerification) {
+            setVerificationData({
+              userId: data.userId,
+              email: data.email
+            });
+            setShowVerification(true);
+            return;
+          }
+
           // Store user data in localStorage
           localStorage.setItem('userData', JSON.stringify(data.user));
           
@@ -82,6 +133,18 @@ function Login({ onLogin, onShowSignup }) {
       showModal('Missing Information', 'Please enter email and password', 'warning');
     }
   };
+
+  // Show verification screen if needed
+  if (showVerification && verificationData) {
+    return (
+      <EmailVerification
+        userId={verificationData.userId}
+        email={verificationData.email}
+        onVerificationSuccess={handleVerificationSuccess}
+        onCancel={handleVerificationCancel}
+      />
+    );
+  }
 
   return (
     <div style={{ 

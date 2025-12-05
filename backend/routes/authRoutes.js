@@ -2,7 +2,9 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const Employee = require('../models/Employee');
+const VerificationCode = require('../models/VerificationCode');
 const bcrypt = require('bcryptjs');
+const { sendVerificationEmail } = require('../utils/emailService');
 
 // Register User
 router.post('/register', async (req, res) => {
@@ -73,8 +75,54 @@ router.post('/login', async (req, res) => {
         }
 
         // Force Admin role for sadmin@gmail.com regardless of database role
-        if (user.email === 'sadmin@gmail.com') {
+        const isAdmin = user.email === 'sadmin@gmail.com' || role === 'Admin';
+        if (isAdmin) {
           role = 'Admin';
+          
+          // For admin users, require email verification
+          // Generate 6-digit verification code
+          const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+          
+          // Save verification code to database
+          await VerificationCode.deleteMany({ email: user.email, used: false });
+          const verification = new VerificationCode({
+            email: user.email,
+            code: verificationCode,
+            userId: user._id,
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
+          });
+          await verification.save();
+          
+          // Check if email is configured
+          if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS || 
+              process.env.EMAIL_USER === 'your-email@gmail.com' || 
+              process.env.EMAIL_PASS === 'your-app-password') {
+            console.error('Email service not configured. Please set EMAIL_USER and EMAIL_PASS in .env file');
+            return res.status(500).json({ 
+              message: 'Email service is not configured. Please contact the administrator or check backend/.env file for EMAIL_USER and EMAIL_PASS settings.',
+              requiresVerification: true,
+              error: 'EMAIL_NOT_CONFIGURED'
+            });
+          }
+          
+          // Send verification email
+          const emailResult = await sendVerificationEmail(user.email, verificationCode);
+          
+          if (!emailResult.success) {
+            console.error('Failed to send verification email:', emailResult.error);
+            return res.status(500).json({ 
+              message: `Failed to send verification email: ${emailResult.error}. Please check email configuration in backend/.env file.`,
+              requiresVerification: true,
+              error: emailResult.error
+            });
+          }
+          
+          return res.json({ 
+            message: 'Verification code sent to your email',
+            requiresVerification: true,
+            userId: user._id.toString(),
+            email: user.email
+          });
         }
 
         return res.json({ 
@@ -222,7 +270,7 @@ router.put('/users/:id', async (req, res) => {
   }
 });
 
-// Update user role
+// Update user role and email
 router.patch('/users/:id', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
@@ -230,11 +278,13 @@ router.patch('/users/:id', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Protect sadmin@gmail.com from role changes
-    if (user.email === 'sadmin@gmail.com') {
-      return res.status(403).json({ 
-        message: 'Access denied: Cannot modify the Admin account role. This account is protected.' 
-      });
+    // Check if email is being changed and if it's unique
+    if (req.body.email && req.body.email !== user.email) {
+      const existingUser = await User.findOne({ email: req.body.email });
+      if (existingUser) {
+        return res.status(400).json({ message: 'Email already exists' });
+      }
+      user.email = req.body.email;
     }
 
     if (req.body.role !== undefined) {
@@ -242,7 +292,9 @@ router.patch('/users/:id', async (req, res) => {
     }
 
     const updatedUser = await user.save();
-    res.json(updatedUser);
+    // Remove password from response
+    const { password, ...userWithoutPassword } = updatedUser.toObject();
+    res.json(userWithoutPassword);
   } catch (err) {
     console.error('Login error:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -269,6 +321,122 @@ router.delete('/users/:id', async (req, res) => {
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ message: 'Server error while deleting user' });
+  }
+});
+
+// Verify email code for admin login
+router.post('/verify-code', async (req, res) => {
+  try {
+    const { userId, code } = req.body;
+
+    if (!userId || !code) {
+      return res.status(400).json({ message: 'User ID and verification code are required' });
+    }
+
+    // Find the user
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Find valid verification code
+    const verification = await VerificationCode.findOne({
+      userId: userId,
+      email: user.email,
+      code: code,
+      used: false,
+      expiresAt: { $gt: new Date() }
+    });
+
+    if (!verification) {
+      return res.status(400).json({ message: 'Invalid or expired verification code' });
+    }
+
+    // Mark code as used
+    verification.used = true;
+    await verification.save();
+
+    // Get role
+    let role = user.role || '';
+    if (user.email === 'sadmin@gmail.com') {
+      role = 'Admin';
+    }
+
+    // Return user data for login
+    return res.json({ 
+      message: 'Verification successful',
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        employeeId: user.employeeId,
+        role: role
+      }
+    });
+  } catch (err) {
+    console.error('Verification error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+// Resend verification code
+router.post('/resend-code', async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ message: 'User ID is required' });
+    }
+
+    // Find the user
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check if email is configured
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS || 
+        process.env.EMAIL_USER === 'your-email@gmail.com' || 
+        process.env.EMAIL_PASS === 'your-app-password') {
+      console.error('Email service not configured. Please set EMAIL_USER and EMAIL_PASS in .env file');
+      return res.status(500).json({ 
+        message: 'Email service is not configured. Please contact the administrator or check backend/.env file for EMAIL_USER and EMAIL_PASS settings.',
+        error: 'EMAIL_NOT_CONFIGURED'
+      });
+    }
+
+    // Generate new 6-digit verification code
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // Delete old unused codes
+    await VerificationCode.deleteMany({ email: user.email, used: false });
+    
+    // Save new verification code
+    const verification = new VerificationCode({
+      email: user.email,
+      code: verificationCode,
+      userId: user._id,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
+    });
+    await verification.save();
+    
+    // Send verification email
+    const emailResult = await sendVerificationEmail(user.email, verificationCode);
+    
+    if (!emailResult.success) {
+      console.error('Failed to send verification email:', emailResult.error);
+      return res.status(500).json({ 
+        message: `Failed to send verification email: ${emailResult.error}. Please check email configuration in backend/.env file.`,
+        error: emailResult.error
+      });
+    }
+    
+    return res.json({ 
+      message: 'Verification code resent to your email'
+    });
+  } catch (err) {
+    console.error('Resend code error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
