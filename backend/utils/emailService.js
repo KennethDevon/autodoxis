@@ -26,7 +26,9 @@ const sendVerificationEmail = async (email, verificationCode) => {
     // Get Resend client (initialized lazily)
     const resendClient = getResendClient();
 
-    const fromEmail = process.env.RESEND_FROM_EMAIL || process.env.EMAIL_USER || 'onboarding@resend.dev';
+    // Use Resend's test domain for sending (no verification needed)
+    // Can be overridden with RESEND_FROM_EMAIL if you verify your own domain
+    const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
     
     console.log('Attempting to send verification email via Resend to:', email);
     
