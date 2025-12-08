@@ -16,17 +16,19 @@ const createTransporter = () => {
   return nodemailer.createTransport({
     service: 'gmail',
     host: 'smtp.gmail.com',
-    port: 465,
-    secure: true, // true for 465, false for other ports
+    port: 587,
+    secure: false, // false for 587, true for 465
+    requireTLS: true, // Force TLS
     auth: {
       user: emailUser,
       pass: appPassword // Use App Password, not regular password
     },
-    connectionTimeout: 10000, // 10 seconds
+    connectionTimeout: 15000, // 15 seconds
     greetingTimeout: 10000,
-    socketTimeout: 10000,
+    socketTimeout: 15000,
     tls: {
-      rejectUnauthorized: false
+      rejectUnauthorized: false,
+      ciphers: 'SSLv3'
     }
   });
 };
@@ -41,8 +43,20 @@ const sendVerificationEmail = async (email, verificationCode) => {
     
     const transporter = createTransporter();
     
-    // Skip verify() to speed up login - it can be slow
-    // The email will still send, and errors will be caught
+    // Verify connection before sending (with timeout)
+    console.log('Verifying email connection...');
+    try {
+      await Promise.race([
+        transporter.verify(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Connection verification timeout')), 10000)
+        )
+      ]);
+      console.log('✅ Email connection verified successfully');
+    } catch (verifyError) {
+      console.error('⚠️ Connection verification failed (will still attempt to send):', verifyError.message);
+      // Continue anyway - sometimes verify fails but send works
+    }
     
     const mailOptions = {
       from: process.env.EMAIL_USER || 'your-email@gmail.com',
