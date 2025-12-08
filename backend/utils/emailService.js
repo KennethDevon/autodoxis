@@ -1,9 +1,11 @@
 // Try Resend first (recommended for cloud), fallback to Gmail SMTP
+// Note: Railway blocks SMTP on Free/Trial/Hobby plans, so Resend is required
 let Resend;
 try {
-  Resend = require('resend');
+  const resendModule = require('resend');
+  Resend = resendModule.Resend || resendModule;
 } catch (e) {
-  console.log('Resend not installed, will use Gmail SMTP');
+  console.log('Resend not installed, will use Gmail SMTP (may not work on Railway Free/Trial plans)');
 }
 
 const nodemailer = require('nodemailer');
