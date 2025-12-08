@@ -97,13 +97,11 @@ router.post('/login', async (req, res) => {
           });
           await verification.save();
           
-          // Check if email is configured
-          if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS || 
-              process.env.EMAIL_USER === 'your-email@gmail.com' || 
-              process.env.EMAIL_PASS === 'your-app-password') {
-            console.error('Email service not configured. Please set EMAIL_USER and EMAIL_PASS in .env file');
+          // Check if email is configured (Resend API key required for Railway)
+          if (!process.env.RESEND_API_KEY) {
+            console.error('Email service not configured. Please set RESEND_API_KEY in Railway variables');
             return res.status(500).json({ 
-              message: 'Email service is not configured. Please contact the administrator or check backend/.env file for EMAIL_USER and EMAIL_PASS settings.',
+              message: 'Email service is not configured. Please set RESEND_API_KEY in Railway variables. Railway blocks SMTP, so Resend API is required.',
               requiresVerification: true,
               error: 'EMAIL_NOT_CONFIGURED'
             });
@@ -401,13 +399,11 @@ router.post('/resend-code', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Check if email is configured
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS || 
-        process.env.EMAIL_USER === 'your-email@gmail.com' || 
-        process.env.EMAIL_PASS === 'your-app-password') {
-      console.error('Email service not configured. Please set EMAIL_USER and EMAIL_PASS in .env file');
+    // Check if email is configured (Resend API key required for Railway)
+    if (!process.env.RESEND_API_KEY) {
+      console.error('Email service not configured. Please set RESEND_API_KEY in Railway variables');
       return res.status(500).json({ 
-        message: 'Email service is not configured. Please contact the administrator or check backend/.env file for EMAIL_USER and EMAIL_PASS settings.',
+        message: 'Email service is not configured. Please set RESEND_API_KEY in Railway variables. Railway blocks SMTP, so Resend API is required.',
         error: 'EMAIL_NOT_CONFIGURED'
       });
     }

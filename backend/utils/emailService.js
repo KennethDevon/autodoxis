@@ -1,53 +1,21 @@
-// Try Resend first (recommended for cloud), fallback to Gmail SMTP
-// Note: Railway blocks SMTP on Free/Trial/Hobby plans, so Resend is required
-let Resend;
-try {
-  const resendModule = require('resend');
-  Resend = resendModule.Resend || resendModule;
-} catch (e) {
-  console.log('Resend not installed, will use Gmail SMTP (may not work on Railway Free/Trial plans)');
-}
+// Use Resend API for email (works on Railway - SMTP is blocked)
+const { Resend } = require('resend');
 
-const nodemailer = require('nodemailer');
+// Initialize Resend client
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-// Use Resend if API key is available (better for cloud environments)
-const useResend = () => {
-  return Resend && process.env.RESEND_API_KEY;
-};
-
-// Create Gmail transporter (fallback)
-const createGmailTransporter = () => {
-  const appPassword = (process.env.EMAIL_PASS || 'your-app-password').replace(/\s/g, '');
-  const emailUser = process.env.EMAIL_USER || 'your-email@gmail.com';
-  
-  console.log('Creating Gmail transporter with:', {
-    user: emailUser,
-    passwordLength: appPassword.length,
-    passwordPreview: appPassword.substring(0, 4) + '...' + appPassword.substring(appPassword.length - 4)
-  });
-  
-  return nodemailer.createTransport({
-    service: 'gmail',
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false,
-    requireTLS: true,
-    auth: {
-      user: emailUser,
-      pass: appPassword
-    },
-    connectionTimeout: 20000,
-    greetingTimeout: 15000,
-    socketTimeout: 20000,
-    tls: {
-      rejectUnauthorized: false
-    }
-  });
-};
-
-// Send verification email
+// Send verification email using Resend API
 const sendVerificationEmail = async (email, verificationCode) => {
   try {
+    // Validate Resend API key
+    if (!process.env.RESEND_API_KEY) {
+      throw new Error('RESEND_API_KEY must be set in environment variables. Railway blocks SMTP, so Resend API is required.');
+    }
+
+    const fromEmail = process.env.RESEND_FROM_EMAIL || process.env.EMAIL_USER || 'onboarding@resend.dev';
+    
+    console.log('Attempting to send verification email via Resend to:', email);
+    
     const htmlContent = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
         <div style="background: linear-gradient(135deg, #3498db 0%, #2980b9 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
@@ -73,65 +41,28 @@ const sendVerificationEmail = async (email, verificationCode) => {
       </div>
     `;
 
-    // Try Resend first (recommended for cloud)
-    if (useResend()) {
-      console.log('Using Resend to send verification email to:', email);
-      const resend = new Resend(process.env.RESEND_API_KEY);
-      
-      const { data, error } = await resend.emails.send({
-        from: process.env.RESEND_FROM_EMAIL || 'Autodoxis <onboarding@resend.dev>',
-        to: email,
-        subject: 'Admin Login Verification Code - Autodoxis',
-        html: htmlContent
-      });
-
-      if (error) {
-        console.error('❌ Resend error:', error);
-        throw new Error(`Resend error: ${error.message}`);
-      }
-
-      console.log('✅ Verification email sent via Resend!', {
-        id: data?.id,
-        to: email
-      });
-      return { success: true, messageId: data?.id };
-    }
-
-    // Fallback to Gmail SMTP
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-      throw new Error('EMAIL_USER and EMAIL_PASS must be set, or use RESEND_API_KEY for Resend');
-    }
-
-    console.log('Using Gmail SMTP to send verification email to:', email);
-    const transporter = createGmailTransporter();
-    
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
+    // Send email via Resend API
+    const { data, error } = await resend.emails.send({
+      from: `Autodoxis <${fromEmail}>`,
       to: email,
       subject: 'Admin Login Verification Code - Autodoxis',
       html: htmlContent
-    };
-
-    const sendWithTimeout = (transporter, mailOptions, timeoutMs = 30000) => {
-      return Promise.race([
-        transporter.sendMail(mailOptions),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Email send timeout after 30 seconds')), timeoutMs)
-        )
-      ]);
-    };
-    
-    const info = await sendWithTimeout(transporter, mailOptions);
-    console.log('✅ Verification email sent via Gmail!', {
-      messageId: info.messageId,
-      to: email,
-      response: info.response
     });
-    return { success: true, messageId: info.messageId };
+
+    if (error) {
+      console.error('❌ Resend API error:', error);
+      throw new Error(`Resend API error: ${error.message}`);
+    }
+
+    console.log('✅ Verification email sent successfully via Resend!', {
+      id: data?.id,
+      to: email
+    });
+
+    return { success: true, messageId: data?.id };
   } catch (error) {
     console.error('❌ Error sending verification email:', {
       error: error.message,
-      code: error.code,
       to: email
     });
     if (error.stack) {
@@ -144,4 +75,3 @@ const sendVerificationEmail = async (email, verificationCode) => {
 module.exports = {
   sendVerificationEmail
 };
-
