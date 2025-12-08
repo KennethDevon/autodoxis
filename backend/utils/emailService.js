@@ -5,12 +5,25 @@ const nodemailer = require('nodemailer');
 const createTransporter = () => {
   // Remove spaces from app password if present (Gmail app passwords can have spaces)
   const appPassword = (process.env.EMAIL_PASS || 'your-app-password').replace(/\s/g, '');
+  const emailUser = process.env.EMAIL_USER || 'your-email@gmail.com';
+  
+  console.log('Creating email transporter with:', {
+    user: emailUser,
+    passwordLength: appPassword.length,
+    passwordPreview: appPassword.substring(0, 4) + '...' + appPassword.substring(appPassword.length - 4)
+  });
   
   return nodemailer.createTransport({
     service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false, // true for 465, false for other ports
     auth: {
-      user: process.env.EMAIL_USER || 'your-email@gmail.com',
+      user: emailUser,
       pass: appPassword // Use App Password, not regular password
+    },
+    tls: {
+      rejectUnauthorized: false
     }
   });
 };
@@ -59,11 +72,26 @@ const sendVerificationEmail = async (email, verificationCode) => {
     };
 
     // Send email (non-blocking - called from background)
+    console.log('Attempting to send verification email to:', email);
     const info = await transporter.sendMail(mailOptions);
-    console.log('Verification email sent:', info.messageId);
+    console.log('✅ Verification email sent successfully!', {
+      messageId: info.messageId,
+      to: email,
+      response: info.response
+    });
     return { success: true, messageId: info.messageId };
   } catch (error) {
-    console.error('Error sending verification email:', error);
+    console.error('❌ Error sending verification email:', {
+      error: error.message,
+      code: error.code,
+      command: error.command,
+      response: error.response,
+      to: email
+    });
+    // Log full error for debugging
+    if (error.stack) {
+      console.error('Error stack:', error.stack);
+    }
     // Don't fail login if email fails - just log it
     // Return success anyway so user can still get verification code via resend
     return { success: false, error: error.message };
