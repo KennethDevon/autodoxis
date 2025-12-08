@@ -3,11 +3,14 @@ const nodemailer = require('nodemailer');
 // Create transporter - using Gmail as default
 // For production, you should use environment variables
 const createTransporter = () => {
+  // Remove spaces from app password if present (Gmail app passwords can have spaces)
+  const appPassword = (process.env.EMAIL_PASS || 'your-app-password').replace(/\s/g, '');
+  
   return nodemailer.createTransport({
     service: 'gmail',
     auth: {
       user: process.env.EMAIL_USER || 'your-email@gmail.com',
-      pass: process.env.EMAIL_PASS || 'your-app-password' // Use App Password, not regular password
+      pass: appPassword // Use App Password, not regular password
     }
   });
 };
