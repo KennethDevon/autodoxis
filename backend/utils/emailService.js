@@ -1,8 +1,19 @@
 // Use Resend API for email (works on Railway - SMTP is blocked)
 const { Resend } = require('resend');
 
-// Initialize Resend client
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Initialize Resend client lazily (only when needed)
+let resend = null;
+
+const getResendClient = () => {
+  if (!resend) {
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      throw new Error('RESEND_API_KEY must be set in environment variables. Railway blocks SMTP, so Resend API is required.');
+    }
+    resend = new Resend(apiKey);
+  }
+  return resend;
+};
 
 // Send verification email using Resend API
 const sendVerificationEmail = async (email, verificationCode) => {
@@ -11,6 +22,9 @@ const sendVerificationEmail = async (email, verificationCode) => {
     if (!process.env.RESEND_API_KEY) {
       throw new Error('RESEND_API_KEY must be set in environment variables. Railway blocks SMTP, so Resend API is required.');
     }
+
+    // Get Resend client (initialized lazily)
+    const resendClient = getResendClient();
 
     const fromEmail = process.env.RESEND_FROM_EMAIL || process.env.EMAIL_USER || 'onboarding@resend.dev';
     
@@ -42,7 +56,7 @@ const sendVerificationEmail = async (email, verificationCode) => {
     `;
 
     // Send email via Resend API
-    const { data, error } = await resend.emails.send({
+    const { data, error } = await resendClient.emails.send({
       from: `Autodoxis <${fromEmail}>`,
       to: email,
       subject: 'Admin Login Verification Code - Autodoxis',
