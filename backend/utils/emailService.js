@@ -23,13 +23,14 @@ const createTransporter = () => {
       user: emailUser,
       pass: appPassword // Use App Password, not regular password
     },
-    connectionTimeout: 15000, // 15 seconds
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
+    connectionTimeout: 20000, // 20 seconds
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
     tls: {
-      rejectUnauthorized: false,
-      ciphers: 'SSLv3'
-    }
+      rejectUnauthorized: false
+    },
+    debug: true, // Enable debug logging
+    logger: true // Log to console
   });
 };
 
