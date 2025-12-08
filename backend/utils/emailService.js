@@ -16,12 +16,15 @@ const createTransporter = () => {
   return nodemailer.createTransport({
     service: 'gmail',
     host: 'smtp.gmail.com',
-    port: 587,
-    secure: false, // true for 465, false for other ports
+    port: 465,
+    secure: true, // true for 465, false for other ports
     auth: {
       user: emailUser,
       pass: appPassword // Use App Password, not regular password
     },
+    connectionTimeout: 10000, // 10 seconds
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
     tls: {
       rejectUnauthorized: false
     }
@@ -71,9 +74,20 @@ const sendVerificationEmail = async (email, verificationCode) => {
       `
     };
 
-    // Send email (non-blocking - called from background)
+    // Send email with timeout
     console.log('Attempting to send verification email to:', email);
-    const info = await transporter.sendMail(mailOptions);
+    
+    // Add timeout wrapper to prevent hanging
+    const sendWithTimeout = (transporter, mailOptions, timeoutMs = 30000) => {
+      return Promise.race([
+        transporter.sendMail(mailOptions),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Email send timeout after 30 seconds')), timeoutMs)
+        )
+      ]);
+    };
+    
+    const info = await sendWithTimeout(transporter, mailOptions);
     console.log('✅ Verification email sent successfully!', {
       messageId: info.messageId,
       to: email,
