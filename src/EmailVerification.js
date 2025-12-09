@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Modal from './Modal';
 import API_URL from './config';
+import FRONT from './FRONT.png';
 
 function EmailVerification({ userId, email, onVerificationSuccess, onCancel }) {
   const [code, setCode] = useState('');
@@ -123,25 +124,16 @@ function EmailVerification({ userId, email, onVerificationSuccess, onCancel }) {
         textAlign: 'center'
       }}>
         {/* Logo/Header */}
-        <div style={{ marginBottom: '40px' }}>
-          <h1 style={{ 
-            fontSize: '32px',
-            fontWeight: '700',
-            color: '#2c3e50',
-            margin: '0 0 10px 0'
-          }}>
-            Autodoxis
-          </h1>
-          <p style={{
-            color: '#7f8c8d',
-            fontSize: '16px',
-            margin: 0,
-            textTransform: 'uppercase',
-            letterSpacing: '1px',
-            fontWeight: '500'
-          }}>
-            Email Verification
-          </p>
+        <div style={{ marginBottom: '25px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <img 
+            src={FRONT} 
+            alt="Autodoxis" 
+            style={{ 
+              maxWidth: '100%',
+              height: 'auto',
+              maxHeight: '100px'
+            }} 
+          />
         </div>
 
         {/* Info Message */}

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import Modal from './Modal';
 import EmailVerification from './EmailVerification';
 import API_URL from './config';
+import FRONT from './FRONT.png';
 
 function Login({ onLogin, onShowSignup }) {
   const [email, setEmail] = useState('');
@@ -165,25 +166,16 @@ function Login({ onLogin, onShowSignup }) {
         textAlign: 'center'
       }}>
         {/* Logo/Header */}
-        <div style={{ marginBottom: '40px' }}>
-          <h1 style={{ 
-            fontSize: '32px',
-            fontWeight: '700',
-            color: '#2c3e50',
-            margin: '0 0 10px 0'
-          }}>
-            Autodoxis
-          </h1>
-          <p style={{
-            color: '#7f8c8d',
-            fontSize: '16px',
-            margin: 0,
-            textTransform: 'uppercase',
-            letterSpacing: '1px',
-            fontWeight: '500'
-          }}>
-            Routing System
-          </p>
+        <div style={{ marginBottom: '40px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <img 
+            src={FRONT} 
+            alt="Autodoxis" 
+            style={{ 
+              maxWidth: '100%',
+              height: 'auto',
+              maxHeight: '150px'
+            }} 
+          />
         </div>
 
 
