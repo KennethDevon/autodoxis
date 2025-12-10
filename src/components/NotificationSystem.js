@@ -6,6 +6,7 @@ function NotificationSystem({ variant = 'default' }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [showDropdown, setShowDropdown] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [toastShownTimes, setToastShownTimes] = useState(new Map()); // Track when notifications were shown as toasts
 
   // Map backend notification types to frontend types
   const mapNotificationType = (backendType) => {
@@ -140,6 +141,32 @@ function NotificationSystem({ variant = 'default' }) {
     }
   }, [notifications, unreadCount]);
 
+  // Auto-remove backend notifications from toast after 7 seconds
+  useEffect(() => {
+    const unreadBackendNotifications = notifications.filter(
+      n => n.isBackendNotification && !n.read && !n.isTemporary
+    );
+
+    // Track when backend notifications are first shown
+    unreadBackendNotifications.forEach(notification => {
+      if (!toastShownTimes.has(notification.id)) {
+        setToastShownTimes(prev => new Map(prev).set(notification.id, Date.now()));
+      }
+    });
+
+    // Clean up old entries (keep for 10 seconds to allow for cleanup)
+    const now = Date.now();
+    setToastShownTimes(prev => {
+      const cleaned = new Map();
+      prev.forEach((time, id) => {
+        if (now - time < 10000) {
+          cleaned.set(id, time);
+        }
+      });
+      return cleaned;
+    });
+  }, [notifications, toastShownTimes]);
+
   const markAsRead = async (id) => {
     const notification = notifications.find(n => n.id === id);
     
@@ -193,7 +220,14 @@ function NotificationSystem({ variant = 'default' }) {
   const removeNotification = async (id) => {
     const notification = notifications.find(n => n.id === id);
     
-    // Update local state immediately
+    // Don't allow deletion of persistent document status notifications
+    // Only allow deletion of temporary toast notifications
+    if (notification?.isBackendNotification) {
+      console.log('Cannot delete persistent document status notifications');
+      return;
+    }
+    
+    // Update local state immediately (only for temporary notifications)
     setNotifications(prev => {
       const notif = prev.find(n => n.id === id);
       if (notif && !notif.read) {
@@ -201,39 +235,19 @@ function NotificationSystem({ variant = 'default' }) {
       }
       return prev.filter(n => n.id !== id);
     });
-
-    // If it's a backend notification, delete it from the backend
-    if (notification?.isBackendNotification) {
-      try {
-        await fetch(`${API_URL}/notifications/${id}`, {
-          method: 'DELETE'
-        });
-      } catch (error) {
-        console.error('Error deleting notification:', error);
-      }
-    }
   };
 
   const clearAll = async () => {
-    const userData = localStorage.getItem('userData');
-    if (userData) {
-      const user = JSON.parse(userData);
-      const userId = user._id || user.id;
-      
-      if (userId) {
-        try {
-          await fetch(`${API_URL}/notifications/user/${userId}/all`, {
-            method: 'DELETE'
-          });
-        } catch (error) {
-          console.error('Error clearing all notifications:', error);
-        }
-      }
-    }
-
-    // Update local state
-    setNotifications([]);
-    setUnreadCount(0);
+    // Only clear temporary notifications, keep persistent document status notifications
+    setNotifications(prev => {
+      const persistentNotifications = prev.filter(n => n.isBackendNotification);
+      const unreadPersistent = persistentNotifications.filter(n => !n.read).length;
+      setUnreadCount(unreadPersistent);
+      return persistentNotifications;
+    });
+    
+    // Don't delete backend notifications - they should persist
+    console.log('Cleared temporary notifications. Document status notifications are preserved.');
   };
 
   const getNotificationIcon = (type) => {
@@ -565,38 +579,41 @@ function NotificationSystem({ variant = 'default' }) {
                             })}
                           </div>
                         </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeNotification(notification.id);
-                          }}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: '#9ca3af',
-                            cursor: 'pointer',
-                            fontSize: '20px',
-                            padding: '4px',
-                            flexShrink: 0,
-                            width: '28px',
-                            height: '28px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            borderRadius: '6px',
-                            transition: 'all 0.2s ease'
-                          }}
-                          onMouseEnter={(e) => {
-                            e.target.style.color = '#ef4444';
-                            e.target.style.backgroundColor = '#fef2f2';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.target.style.color = '#9ca3af';
-                            e.target.style.backgroundColor = 'transparent';
-                          }}
-                        >
-                          ×
-                        </button>
+                        {/* Only show delete button for temporary notifications, not persistent document status notifications */}
+                        {notification.isTemporary && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeNotification(notification.id);
+                            }}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#9ca3af',
+                              cursor: 'pointer',
+                              fontSize: '20px',
+                              padding: '4px',
+                              flexShrink: 0,
+                              width: '28px',
+                              height: '28px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              borderRadius: '6px',
+                              transition: 'all 0.2s ease'
+                            }}
+                            onMouseEnter={(e) => {
+                              e.target.style.color = '#ef4444';
+                              e.target.style.backgroundColor = '#fef2f2';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.target.style.color = '#9ca3af';
+                              e.target.style.backgroundColor = 'transparent';
+                            }}
+                          >
+                            ×
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -618,7 +635,28 @@ function NotificationSystem({ variant = 'default' }) {
         gap: '12px',
         maxWidth: '400px'
       }}>
-        {notifications.slice(0, 3).map((notification) => {
+        {notifications
+          .filter(notification => {
+            // Always show temporary notifications
+            if (notification.isTemporary) return true;
+            
+            // For backend notifications, only show if:
+            // 1. Unread
+            // 2. Either not tracked yet, or shown less than 7 seconds ago
+            if (notification.isBackendNotification) {
+              if (notification.read) return false; // Don't show read notifications
+              
+              const shownTime = toastShownTimes.get(notification.id);
+              if (!shownTime) return true; // Show if not tracked yet
+              
+              const age = Date.now() - shownTime;
+              return age < 7000; // Show only if less than 7 seconds old
+            }
+            
+            return true;
+          })
+          .slice(0, 3)
+          .map((notification) => {
           const colors = getNotificationColor(notification.type);
           return (
             <div
@@ -669,36 +707,39 @@ function NotificationSystem({ variant = 'default' }) {
                   {notification.message}
                 </div>
               </div>
-              <button
-                onClick={() => removeNotification(notification.id)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#9ca3af',
-                  cursor: 'pointer',
-                  fontSize: '20px',
-                  padding: '4px',
-                  lineHeight: '1',
-                  width: '24px',
-                  height: '24px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: '6px',
-                  transition: 'all 0.2s ease',
-                  flexShrink: 0
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.color = '#ef4444';
-                  e.target.style.backgroundColor = '#fef2f2';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.color = '#9ca3af';
-                  e.target.style.backgroundColor = 'transparent';
-                }}
-              >
-                ×
-              </button>
+              {/* Only show delete button for temporary toast notifications */}
+              {notification.isTemporary && (
+                <button
+                  onClick={() => removeNotification(notification.id)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#9ca3af',
+                    cursor: 'pointer',
+                    fontSize: '20px',
+                    padding: '4px',
+                    lineHeight: '1',
+                    width: '24px',
+                    height: '24px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: '6px',
+                    transition: 'all 0.2s ease',
+                    flexShrink: 0
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.color = '#ef4444';
+                    e.target.style.backgroundColor = '#fef2f2';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.color = '#9ca3af';
+                    e.target.style.backgroundColor = 'transparent';
+                  }}
+                >
+                  ×
+                </button>
+              )}
             </div>
           );
         })}

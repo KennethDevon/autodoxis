@@ -290,39 +290,57 @@ router.patch('/:id', async (req, res) => {
       const oldStatus = document.status;
       const newStatus = updatedDocument.status;
       
-      // Determine notification type based on what changed
-      let eventType = 'document_updated';
+      // Only send notification if status actually changed or there's a meaningful update
+      const statusChanged = oldStatus !== newStatus;
+      const hasFileUpdate = req.body.filePath || req.file;
+      const hasAssignmentChange = req.body.assignedTo || req.body.currentHandler;
+      const hasForwardChange = req.body.nextOffice && req.body.nextOffice !== document.nextOffice;
       
-      // Check for status changes first (most important)
-      if (newStatus === 'Rejected' && oldStatus !== 'Rejected') {
-        eventType = 'document_rejected';
-      } else if (newStatus === 'Approved' && oldStatus !== 'Approved') {
-        eventType = 'document_approved';
-      } else if (req.body.filePath || req.file) {
-        eventType = 'file_updated';
-      } else if (req.body.assignedTo || req.body.currentHandler) {
-        eventType = 'document_assigned';
-      } else if (req.body.nextOffice && req.body.nextOffice !== document.nextOffice) {
-        eventType = 'document_forwarded';
+      // ALWAYS notify owner when status changes, even if nothing else changed
+      // Skip notification only if nothing changed at all
+      if (!statusChanged && !hasFileUpdate && !hasAssignmentChange && !hasForwardChange) {
+        console.log('No meaningful changes detected, skipping notification');
+      } else {
+        // Determine notification type based on what changed
+        let eventType = 'document_updated';
+      
+        // Check for status changes first (most important)
+        if (statusChanged && newStatus === 'Rejected') {
+          eventType = 'document_rejected';
+        } else if (statusChanged && newStatus === 'Approved') {
+          // Always notify when document is approved (regardless of previous status)
+          eventType = 'document_approved';
+          console.log(`📢 Document approved: ${updatedDocument.documentId} by ${req.body.reviewer || updatedDocument.reviewer || 'System'}, submittedBy: ${updatedDocument.submittedBy}`);
+        } else if (hasFileUpdate) {
+          eventType = 'file_updated';
+        } else if (hasAssignmentChange) {
+          eventType = 'document_assigned';
+        } else if (hasForwardChange) {
+          eventType = 'document_forwarded';
+        } else if (statusChanged) {
+          // Any status change (Processing, Under Review, etc.) should notify owner
+          eventType = 'document_updated';
+          console.log(`📢 Status changed: ${updatedDocument.documentId} from "${oldStatus}" to "${newStatus}", submittedBy: ${updatedDocument.submittedBy}`);
+        }
+      
+        // Prepare notification options based on event type
+        const notificationOptions = {
+          oldStatus: statusChanged ? oldStatus : undefined,
+          newStatus: statusChanged ? newStatus : undefined,
+          updatedBy: req.body.reviewer || req.body.forwardedBy || updatedDocument.reviewer || 'System',
+          nextOffice: req.body.nextOffice || updatedDocument.nextOffice,
+          comments: req.body.comments || updatedDocument.comments
+        };
+        
+        // Add specific fields for rejection/approval
+        if (eventType === 'document_rejected') {
+          notificationOptions.rejectedBy = req.body.reviewer || updatedDocument.reviewer || 'System';
+        } else if (eventType === 'document_approved') {
+          notificationOptions.approvedBy = req.body.reviewer || updatedDocument.reviewer || 'System';
+        }
+        
+        await notifyDocumentEvent(updatedDocument, eventType, notificationOptions);
       }
-      
-      // Prepare notification options based on event type
-      const notificationOptions = {
-        oldStatus,
-        newStatus,
-        updatedBy: req.body.reviewer || req.body.forwardedBy || updatedDocument.reviewer || 'System',
-        nextOffice: req.body.nextOffice || updatedDocument.nextOffice,
-        comments: req.body.comments || updatedDocument.comments
-      };
-      
-      // Add specific fields for rejection/approval
-      if (eventType === 'document_rejected') {
-        notificationOptions.rejectedBy = req.body.reviewer || updatedDocument.reviewer || 'System';
-      } else if (eventType === 'document_approved') {
-        notificationOptions.approvedBy = req.body.reviewer || updatedDocument.reviewer || 'System';
-      }
-      
-      await notifyDocumentEvent(updatedDocument, eventType, notificationOptions);
     } catch (notifError) {
       console.error('Error creating update notifications:', notifError);
       // Don't fail document update if notification fails
@@ -565,6 +583,204 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// Public document viewer page (for QR code scanning)
+router.get('/:id/view', async (req, res) => {
+  try {
+    const document = await Document.findById(req.params.id);
+    if (document == null) {
+      return res.status(404).send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Document Not Found</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; text-align: center; }
+          </style>
+        </head>
+        <body>
+          <h1>Document Not Found</h1>
+          <p>The requested document could not be found.</p>
+        </body>
+        </html>
+      `);
+    }
+
+    // Format dates
+    const formatDate = (date) => {
+      if (!date) return 'N/A';
+      return new Date(date).toLocaleString();
+    };
+
+    // Generate HTML page
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Document: ${document.name || document.documentId}</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+          }
+          .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+          }
+          .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+          }
+          .header h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+          }
+          .content {
+            padding: 30px 20px;
+          }
+          .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 15px 0;
+            border-bottom: 1px solid #eee;
+          }
+          .info-row:last-child {
+            border-bottom: none;
+          }
+          .info-label {
+            font-weight: 600;
+            color: #666;
+            flex: 1;
+          }
+          .info-value {
+            color: #333;
+            flex: 1;
+            text-align: right;
+          }
+          .status {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+          }
+          .status-submitted { background: #e3f2fd; color: #1976d2; }
+          .status-review { background: #fff3e0; color: #f57c00; }
+          .status-approved { background: #e8f5e9; color: #388e3c; }
+          .status-rejected { background: #ffebee; color: #d32f2f; }
+          .status-processing { background: #f3e5f5; color: #7b1fa2; }
+          .current-location {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+          }
+          .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            margin-top: 20px;
+            font-weight: 600;
+          }
+          .btn:hover {
+            background: #5568d3;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>📄 Document Information</h1>
+            <p>AutoDoxis Document Tracking</p>
+          </div>
+          <div class="content">
+            <div class="info-row">
+              <span class="info-label">Document ID:</span>
+              <span class="info-value">${document.documentId || 'N/A'}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Document Name:</span>
+              <span class="info-value">${document.name || 'N/A'}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Type:</span>
+              <span class="info-value">${document.type || 'N/A'}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Status:</span>
+              <span class="info-value">
+                <span class="status status-${(document.status || '').toLowerCase().replace(' ', '-')}">
+                  ${document.status || 'N/A'}
+                </span>
+              </span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Priority:</span>
+              <span class="info-value">${document.priority || 'Normal'}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Submitted By:</span>
+              <span class="info-value">${document.submittedBy || 'N/A'}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Date Submitted:</span>
+              <span class="info-value">${formatDate(document.createdAt)}</span>
+            </div>
+            ${document.currentOffice ? `
+            <div class="current-location">
+              <div style="font-weight: 600; margin-bottom: 8px; color: #667eea;">📍 Current Location</div>
+              <div>Office: ${document.currentOffice}</div>
+              ${document.currentHandler ? `<div>Handler: ${document.currentHandler}</div>` : ''}
+            </div>
+            ` : ''}
+            ${document.filePath ? `
+            <div style="text-align: center; margin-top: 20px;">
+              <a href="${req.protocol}://${req.get('host')}/documents/${document._id}/download" class="btn" target="_blank">
+                📥 Download Document
+              </a>
+            </div>
+            ` : ''}
+            <div style="text-align: center; margin-top: 15px; font-size: 12px; color: #999;">
+              <p>Scanned via AutoDoxis QR Code</p>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    res.send(html);
+  } catch (err) {
+    console.error('Error generating document view:', err);
+    res.status(500).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Error</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+      </head>
+      <body>
+        <h1>Error Loading Document</h1>
+        <p>An error occurred while loading the document information.</p>
+      </body>
+      </html>
+    `);
+  }
+});
+
 // Generate QR code for document
 router.get('/:id/qrcode', async (req, res) => {
   try {
@@ -573,18 +789,63 @@ router.get('/:id/qrcode', async (req, res) => {
       return res.status(404).json({ message: 'Cannot find document' });
     }
 
+    // Get the server URL for QR codes
+    // Priority: 1. SERVER_URL env var, 2. RAILWAY_PUBLIC_DOMAIN, 3. Request host, 4. Network IP for local dev
+    const host = req.get('host');
+    let serverHost = host;
+    let serverProtocol = req.protocol;
+    
+    // Check if we're in production (Railway deployment)
+    if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+      // Use Railway's public domain in production
+      serverHost = process.env.RAILWAY_PUBLIC_DOMAIN;
+      serverProtocol = 'https';
+    } else if (process.env.SERVER_URL) {
+      // Use explicit SERVER_URL if set (for production/other deployments)
+      const serverUrl = new URL(process.env.SERVER_URL);
+      serverHost = serverUrl.hostname + (serverUrl.port ? ':' + serverUrl.port : '');
+      serverProtocol = serverUrl.protocol.replace(':', '');
+    } else if (host && (host.includes('localhost') || host.includes('127.0.0.1'))) {
+      // Development: If localhost, use network IP for mobile device access
+      const os = require('os');
+      const networkInterfaces = os.networkInterfaces();
+      
+      // Find a non-internal IPv4 address
+      for (const interfaceName in networkInterfaces) {
+        const addresses = networkInterfaces[interfaceName];
+        for (const address of addresses) {
+          if (address.family === 'IPv4' && !address.internal) {
+            serverHost = `${address.address}:${req.app.locals.PORT || 5000}`;
+            break;
+          }
+        }
+        if (serverHost !== host) break;
+      }
+    }
+    
+    // Ensure protocol is correct (https for production, http for local)
+    if (serverHost.includes('railway.app') || serverHost.includes('vercel.app') || 
+        serverHost.includes('herokuapp.com') || serverHost.includes('.app') ||
+        process.env.NODE_ENV === 'production') {
+      serverProtocol = 'https';
+    }
+    
+    // Use public view URL that works when scanned from mobile devices
+    const publicViewUrl = `${serverProtocol}://${serverHost}/documents/${document._id}/view`;
+
     // Create QR code data with document information
     const qrData = {
       documentId: document.documentId,
       name: document.name,
       type: document.type,
       status: document.status,
-      url: `${req.protocol}://${req.get('host')}/documents/${document._id}`,
+      url: publicViewUrl, // This URL will show a nice HTML page when scanned
       timestamp: new Date().toISOString()
     };
 
-    // Generate QR code as data URL
-    const qrCodeDataURL = await QRCode.toDataURL(JSON.stringify(qrData), {
+    // Generate QR code with direct URL (for easy phone scanning)
+    // This way, when scanned, it opens the URL directly instead of showing JSON
+    const qrCodeDataURL = await QRCode.toDataURL(publicViewUrl, {
       errorCorrectionLevel: 'M',
       type: 'image/png',
       quality: 0.92,

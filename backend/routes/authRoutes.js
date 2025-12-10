@@ -97,11 +97,18 @@ router.post('/login', async (req, res) => {
           });
           await verification.save();
           
-          // Check if email is configured (Resend API key required for Railway)
-          if (!process.env.RESEND_API_KEY) {
-            console.error('Email service not configured. Please set RESEND_API_KEY in Railway variables');
+          // Check if email is configured (Resend for production, Gmail SMTP for local)
+          const hasResend = process.env.RESEND_API_KEY;
+          const hasGmail = process.env.EMAIL_USER && process.env.EMAIL_PASS;
+          
+          if (!hasResend && !hasGmail) {
+            const errorMsg = process.env.NODE_ENV === 'production' 
+              ? 'Email service not configured. Please set RESEND_API_KEY in Railway variables. Railway blocks SMTP, so Resend API is required.'
+              : 'Email service not configured. For local development: set EMAIL_USER and EMAIL_PASS in .env file. For production: set RESEND_API_KEY in Railway variables.';
+            
+            console.error('Email service not configured:', errorMsg);
             return res.status(500).json({ 
-              message: 'Email service is not configured. Please set RESEND_API_KEY in Railway variables. Railway blocks SMTP, so Resend API is required.',
+              message: errorMsg,
               requiresVerification: true,
               error: 'EMAIL_NOT_CONFIGURED'
             });
@@ -399,11 +406,18 @@ router.post('/resend-code', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Check if email is configured (Resend API key required for Railway)
-    if (!process.env.RESEND_API_KEY) {
-      console.error('Email service not configured. Please set RESEND_API_KEY in Railway variables');
+    // Check if email is configured (Resend for production, Gmail SMTP for local)
+    const hasResend = process.env.RESEND_API_KEY;
+    const hasGmail = process.env.EMAIL_USER && process.env.EMAIL_PASS;
+    
+    if (!hasResend && !hasGmail) {
+      const errorMsg = process.env.NODE_ENV === 'production' 
+        ? 'Email service not configured. Please set RESEND_API_KEY in Railway variables. Railway blocks SMTP, so Resend API is required.'
+        : 'Email service not configured. For local development: set EMAIL_USER and EMAIL_PASS in .env file. For production: set RESEND_API_KEY in Railway variables.';
+      
+      console.error('Email service not configured:', errorMsg);
       return res.status(500).json({ 
-        message: 'Email service is not configured. Please set RESEND_API_KEY in Railway variables. Railway blocks SMTP, so Resend API is required.',
+        message: errorMsg,
         error: 'EMAIL_NOT_CONFIGURED'
       });
     }
