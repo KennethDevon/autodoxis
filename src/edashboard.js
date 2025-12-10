@@ -923,6 +923,7 @@ function Edashboard({ onLogout }) {
     }
 
     try {
+      // eslint-disable-next-line no-unused-vars
       const currentPosition = employee?.position || user?.username;
       const approverName = employee?.name || user?.username || 'Unknown';
       
