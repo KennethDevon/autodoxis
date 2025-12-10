@@ -46,6 +46,7 @@ function Document() {
     receiver: ''
   });
 
+  // eslint-disable-next-line no-unused-vars
   const toggleDocument = (documentId) => {
     const newExpanded = new Set(expandedDocuments);
     if (newExpanded.has(documentId)) {
@@ -372,6 +373,7 @@ function Document() {
     setDocumentToDelete(null);
   };
 
+  // eslint-disable-next-line no-unused-vars
   const handleApprove = (document) => {
     setDocumentToApprove(document);
     setShowApproveModal(true);

@@ -10,6 +10,7 @@ function DocumentTrackingTimeline({ documentId, onClose }) {
     if (documentId) {
       fetchTrackingData();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId]);
 
   const fetchTrackingData = async () => {

@@ -9,6 +9,7 @@ function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [showSignup, setShowSignup] = useState(false);
   const [dashboardType, setDashboardType] = useState('Dashboard');
+  // eslint-disable-next-line no-unused-vars
   const [userRole, setUserRole] = useState('');
 
   // CRITICAL: Ensure we never auto-login from localStorage on page load

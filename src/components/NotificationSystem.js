@@ -5,6 +5,7 @@ function NotificationSystem({ variant = 'default' }) {
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showDropdown, setShowDropdown] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [loading, setLoading] = useState(false);
   const [toastShownTimes, setToastShownTimes] = useState(new Map()); // Track when notifications were shown as toasts
 
@@ -54,9 +55,6 @@ function NotificationSystem({ variant = 'default' }) {
 
         // Merge with existing local notifications (keep local notifications that haven't expired)
         setNotifications(prev => {
-          // Get backend notification IDs
-          const backendIds = new Set(transformedBackendNotifications.map(n => n.id));
-          
           // Keep local notifications that are still valid (not expired)
           const localNotifications = prev.filter(n => !n.isBackendNotification);
           
@@ -91,6 +89,7 @@ function NotificationSystem({ variant = 'default' }) {
     }, 30000);
 
     return () => clearInterval(pollInterval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

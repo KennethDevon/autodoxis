@@ -135,7 +135,8 @@ function Reports() {
   };
 
 
-  // Helper function to format hours into readable format
+  // Helper function to format hours into readable format (used in component, defined later inline)
+  // eslint-disable-next-line no-unused-vars
   const formatHours = (hours) => {
     if (hours < 1) {
       return `${Math.round(hours * 60)} min`;

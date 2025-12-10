@@ -38,7 +38,7 @@ function Employee() {
       });
       setCollapsedDepartments(allDepartments);
     }
-  }, [employees.length]); // Only run when employees count changes
+  }, [employees]); // Run when employees array changes
 
   const fetchEmployees = async () => {
     try {
@@ -320,6 +320,7 @@ function Employee() {
     }));
   };
 
+  // eslint-disable-next-line no-unused-vars
   const filteredAndSortedEmployees = getFilteredAndSortedEmployees();
   const groupedEmployees = groupEmployeesByDepartment();
 

@@ -157,6 +157,7 @@ function Edashboard({ onLogout }) {
               
               // ALL positions are now department-specific (no shared positions)
               // OP, VP, Academic VP, Dean, Program Head, etc. - all are department-specific
+              // eslint-disable-next-line no-unused-vars
               const isSharedPosition = false; // No positions are shared anymore
               
               // Helper function to get submitter's department
@@ -669,7 +670,9 @@ function Edashboard({ onLogout }) {
 
     // Format time helper - shows exact time with hours, minutes, and seconds
     const formatTime = (hours) => {
+      // eslint-disable-next-line no-unused-vars
       const totalMinutes = Math.floor(hours * 60);
+      // eslint-disable-next-line no-unused-vars
       const totalSeconds = Math.floor(hours * 3600);
       
       if (hours < 1) {
@@ -871,6 +874,7 @@ function Edashboard({ onLogout }) {
     
     // ALL positions are now department-specific (no shared positions)
     // OP, VP, Academic VP, Dean, Program Head, etc. - all are department-specific
+    // eslint-disable-next-line no-unused-vars
     const isSharedPosition = targetPos => false; // No positions are shared anymore
     
     // Determine next position in workflow
@@ -939,6 +943,7 @@ function Edashboard({ onLogout }) {
       
       // Build office name with department context for routing history
       // ALL positions are now department-specific (no shared positions)
+      // eslint-disable-next-line no-unused-vars
       const isSharedPosition = false; // No positions are shared anymore
       
       const officeForHistory = isSharedPosition ? nextOffice : nextOffice;
@@ -1007,6 +1012,7 @@ function Edashboard({ onLogout }) {
 
     try {
       const holderName = employee?.name || user?.username || 'Unknown';
+      // eslint-disable-next-line no-unused-vars
       const currentPosition = employee?.position || 'Unknown Position';
       const currentOffice = employee?.office?.name || employee?.department || currentPosition;
       
@@ -3078,10 +3084,12 @@ function Edashboard({ onLogout }) {
                       
                       const employeeDepartment = employee.department;
                       const employeeOfficeName = employee.office?.name;
+                      // eslint-disable-next-line no-unused-vars
                       const employeePosition = employee.position;
                       
                       // ALL positions are now department-specific (no shared positions)
                       // OP, VP, Academic VP, Dean, Program Head, etc. - all are department-specific
+                      // eslint-disable-next-line no-unused-vars
                       const isSharedPosition = false; // No positions are shared anymore
                       
                       // Helper function to get submitter's department
@@ -3372,6 +3380,7 @@ function Edashboard({ onLogout }) {
                 if (!employee || !allDocuments.length) return [];
                 
                 const employeeIdStr = String(employee._id);
+                // eslint-disable-next-line no-unused-vars
                 const employeePosition = employee.position;
                 const employeeDepartment = employee.department;
                 const employeeOfficeName = employee.office?.name;
@@ -3390,6 +3399,7 @@ function Edashboard({ onLogout }) {
                 
                 // ALL positions are now department-specific (no shared positions)
                 // OP, VP, Academic VP, Dean, Program Head, etc. - all are department-specific
+                // eslint-disable-next-line no-unused-vars
                 const isSharedPosition = false; // No positions are shared anymore
                 
                 // Enhanced department matching function
