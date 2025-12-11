@@ -234,6 +234,36 @@ router.patch('/:id', async (req, res) => {
       document.filePath = req.body.filePath;
     }
     if (req.body.nextOffice != null) {
+      // Check if this is a forwarding action (nextOffice changed)
+      const isForwarding = req.body.nextOffice !== document.nextOffice && req.body.nextOffice.trim() !== '';
+      
+      if (isForwarding) {
+        // Add routing history entry for forwarding
+        // Calculate processing time for previous stage
+        if (document.routingHistory.length > 0) {
+          const lastEntry = document.routingHistory[document.routingHistory.length - 1];
+          const processingTime = (new Date() - new Date(lastEntry.timestamp || lastEntry.date || new Date())) / (1000 * 60 * 60);
+          lastEntry.processingTime = Math.round(processingTime * 10) / 10;
+        }
+        
+        // Add new routing history entry
+        document.routingHistory.push({
+          office: req.body.nextOffice,
+          action: 'forwarded',
+          handler: req.body.forwardedBy || req.body.reviewer || document.reviewer || 'Unknown',
+          timestamp: new Date(),
+          comments: req.body.comments || `Document forwarded to ${req.body.nextOffice}${req.body.forwardedBy ? ` by ${req.body.forwardedBy}` : req.body.reviewer ? ` by ${req.body.reviewer}` : ''}`,
+          processingTime: 0
+        });
+        
+        // Also update document.forwardedBy for notification purposes
+        if (req.body.forwardedBy) {
+          document.forwardedBy = req.body.forwardedBy;
+        } else if (req.body.reviewer) {
+          document.forwardedBy = req.body.reviewer;
+        }
+      }
+      
       document.nextOffice = req.body.nextOffice;
     }
     if (req.body.currentOffice != null) {
@@ -272,14 +302,21 @@ router.patch('/:id', async (req, res) => {
       }
       
       // Add routing history entry
-      document.routingHistory.push({
+      const newHistoryEntry = {
         office: historyEntry.toOffice || historyEntry.office || document.nextOffice || document.currentOffice,
         action: historyEntry.action || 'forwarded',
         handler: historyEntry.performedBy || historyEntry.handler || document.reviewer || 'Unknown',
         timestamp: new Date(historyEntry.date || Date.now()),
         comments: historyEntry.comments || '',
         processingTime: 0
-      });
+      };
+      document.routingHistory.push(newHistoryEntry);
+      
+      // Store approval action for notification detection
+      if (historyEntry.action === 'approved' || historyEntry.action === 'approved and forwarded') {
+        // Mark that this is an approval action (will be used below for notification)
+        req.body._hasApprovalAction = true;
+      }
     }
     
     const updatedDocument = await document.save();
@@ -295,15 +332,34 @@ router.patch('/:id', async (req, res) => {
       const hasFileUpdate = req.body.filePath || req.file;
       const hasAssignmentChange = req.body.assignedTo || req.body.currentHandler;
       const hasForwardChange = req.body.nextOffice && req.body.nextOffice !== document.nextOffice;
+      const hasRoutingHistoryUpdate = req.body.$push && req.body.$push.routingHistory;
+      const hasCommentsUpdate = req.body.comments && req.body.comments !== document.comments;
+      const hasReviewerUpdate = req.body.reviewer && req.body.reviewer !== document.reviewer;
       
-      // ALWAYS notify owner when status changes, even if nothing else changed
-      // Skip notification only if nothing changed at all
-      if (!statusChanged && !hasFileUpdate && !hasAssignmentChange && !hasForwardChange) {
-        console.log('No meaningful changes detected, skipping notification');
+      // ALWAYS notify owner when ANY action happens on their document
+      // This includes: status changes, forwarding, approvals, comments, reviewer changes, routing history updates
+      const hasAnyChange = statusChanged || hasFileUpdate || hasAssignmentChange || hasForwardChange || 
+                           hasRoutingHistoryUpdate || hasCommentsUpdate || hasReviewerUpdate;
+      
+      console.log(`📋 Document update check - Status changed: ${statusChanged}, Forward: ${hasForwardChange}, Routing: ${hasRoutingHistoryUpdate}, Comments: ${hasCommentsUpdate}, Reviewer: ${hasReviewerUpdate}`);
+      
+      if (!hasAnyChange) {
+        console.log('⚠️ No changes detected, skipping notification');
       } else {
+        console.log(`✅ Changes detected - WILL NOTIFY OWNER (${document.submittedBy})`);
         // Determine notification type based on what changed
         let eventType = 'document_updated';
       
+        // Check for approval actions in comments, routing history, or the flag we set above
+        // Also check if reviewer field indicates an approval action
+        const hasApprovalAction = req.body._hasApprovalAction ||
+                                  (req.body.$push?.routingHistory?.action === 'approved') ||
+                                  (req.body.$push?.routingHistory?.action === 'approved and forwarded') ||
+                                  (req.body.comments && (req.body.comments.toLowerCase().includes('approved') || req.body.comments.toLowerCase().includes('approve'))) ||
+                                  (updatedDocument.routingHistory && updatedDocument.routingHistory.length > 0 && 
+                                   (updatedDocument.routingHistory[updatedDocument.routingHistory.length - 1].action === 'approved' ||
+                                    updatedDocument.routingHistory[updatedDocument.routingHistory.length - 1].action === 'approved and forwarded'));
+        
         // Check for status changes first (most important)
         if (statusChanged && newStatus === 'Rejected') {
           eventType = 'document_rejected';
@@ -311,12 +367,54 @@ router.patch('/:id', async (req, res) => {
           // Always notify when document is approved (regardless of previous status)
           eventType = 'document_approved';
           console.log(`📢 Document approved: ${updatedDocument.documentId} by ${req.body.reviewer || updatedDocument.reviewer || 'System'}, submittedBy: ${updatedDocument.submittedBy}`);
+        } else if (hasApprovalAction) {
+          // Document was approved (even if status is still "Processing" because it's being forwarded)
+          eventType = 'document_approved';
+          if (hasForwardChange) {
+            console.log(`📢 Document approved AND forwarded: ${updatedDocument.documentId} by ${req.body.reviewer || updatedDocument.reviewer || 'System'}, submittedBy: ${updatedDocument.submittedBy}`);
+          } else {
+            console.log(`📢 Document approved: ${updatedDocument.documentId} by ${req.body.reviewer || updatedDocument.reviewer || 'System'}, submittedBy: ${updatedDocument.submittedBy}`);
+          }
+        } else if (hasRoutingHistoryUpdate) {
+          // Routing history was updated (someone took an action)
+          // Check what action was taken from the last routing history entry
+          const lastHistoryEntry = updatedDocument.routingHistory && updatedDocument.routingHistory.length > 0 
+            ? updatedDocument.routingHistory[updatedDocument.routingHistory.length - 1]
+            : null;
+          
+          if (lastHistoryEntry) {
+            if (lastHistoryEntry.action === 'approved' || lastHistoryEntry.action === 'approved and forwarded') {
+              eventType = 'document_approved';
+              console.log(`📢 Document approved (via routing history): ${updatedDocument.documentId} by ${lastHistoryEntry.handler || 'System'}, submittedBy: ${updatedDocument.submittedBy}`);
+            } else if (lastHistoryEntry.action === 'forwarded') {
+              eventType = 'document_forwarded';
+              console.log(`📢 Document forwarded (via routing history): ${updatedDocument.documentId} by ${lastHistoryEntry.handler || 'System'}, submittedBy: ${updatedDocument.submittedBy}`);
+            } else {
+              eventType = 'document_updated';
+              console.log(`📢 Document action (via routing history): ${updatedDocument.documentId} - Action: ${lastHistoryEntry.action}, by ${lastHistoryEntry.handler || 'System'}, submittedBy: ${updatedDocument.submittedBy}`);
+            }
+          } else {
+            eventType = 'document_updated';
+            console.log(`📢 Document updated (routing history added): ${updatedDocument.documentId}, submittedBy: ${updatedDocument.submittedBy}`);
+          }
         } else if (hasFileUpdate) {
           eventType = 'file_updated';
         } else if (hasAssignmentChange) {
           eventType = 'document_assigned';
         } else if (hasForwardChange) {
           eventType = 'document_forwarded';
+        } else if (hasCommentsUpdate || hasReviewerUpdate) {
+          // Comments or reviewer changed - check if this indicates an approval/action
+          const commentsText = (req.body.comments || updatedDocument.comments || '').toLowerCase();
+          if (commentsText.includes('approved') || commentsText.includes('approve')) {
+            // Comments mention approval - treat as approval notification
+            eventType = 'document_approved';
+            console.log(`📢 Document approved (detected from comments/reviewer): ${updatedDocument.documentId} by ${req.body.reviewer || updatedDocument.reviewer || 'System'}, submittedBy: ${updatedDocument.submittedBy}`);
+          } else {
+            // Just a regular update
+            eventType = 'document_updated';
+            console.log(`📢 Document updated (comments/reviewer changed): ${updatedDocument.documentId}, submittedBy: ${updatedDocument.submittedBy}`);
+          }
         } else if (statusChanged) {
           // Any status change (Processing, Under Review, etc.) should notify owner
           eventType = 'document_updated';
@@ -332,11 +430,19 @@ router.patch('/:id', async (req, res) => {
           comments: req.body.comments || updatedDocument.comments
         };
         
-        // Add specific fields for rejection/approval
+        // Add specific fields for rejection/approval/forwarding
         if (eventType === 'document_rejected') {
           notificationOptions.rejectedBy = req.body.reviewer || updatedDocument.reviewer || 'System';
         } else if (eventType === 'document_approved') {
           notificationOptions.approvedBy = req.body.reviewer || updatedDocument.reviewer || 'System';
+          // If also forwarded in the same action, include forwarding info in notification
+          if (hasForwardChange || (req.body.nextOffice && req.body.nextOffice !== document.nextOffice)) {
+            notificationOptions.nextOffice = req.body.nextOffice || updatedDocument.nextOffice;
+            notificationOptions.forwardedBy = req.body.forwardedBy || req.body.reviewer || updatedDocument.reviewer || 'System';
+          }
+        } else if (eventType === 'document_forwarded') {
+          // For forwarding, use forwardedBy from request, or fall back to reviewer, or current user
+          notificationOptions.forwardedBy = req.body.forwardedBy || req.body.reviewer || updatedDocument.reviewer || updatedDocument.forwardedBy || 'System';
         }
         
         await notifyDocumentEvent(updatedDocument, eventType, notificationOptions);
@@ -1167,11 +1273,45 @@ router.post('/:id/routing-history', async (req, res) => {
     document.isDelayed = false;
     document.delayedHours = 0;
 
-    await document.save();
+    const updatedDocument = await document.save();
+
+    // Create notifications when routing history is added (especially for approvals)
+    try {
+      let eventType = 'document_updated';
+      const notificationOptions = {
+        comments: comments || '',
+        nextOffice: office || updatedDocument.nextOffice
+      };
+
+      // Determine notification type based on action
+      if (action === 'approved' || action === 'approved and forwarded' || action === 'final approved') {
+        eventType = 'document_approved';
+        notificationOptions.approvedBy = handler || updatedDocument.reviewer || 'System';
+        console.log(`📢 Approval action via routing history POST: ${updatedDocument.documentId} by ${handler || 'System'}, submittedBy: ${updatedDocument.submittedBy}, action: "${action}"`);
+      } else if (action === 'forwarded') {
+        eventType = 'document_forwarded';
+        notificationOptions.forwardedBy = handler || updatedDocument.reviewer || 'System';
+        console.log(`📢 Forwarding via routing history: ${updatedDocument.documentId} by ${handler || 'System'}, submittedBy: ${updatedDocument.submittedBy}`);
+      } else if (action === 'rejected') {
+        eventType = 'document_rejected';
+        notificationOptions.rejectedBy = handler || updatedDocument.reviewer || 'System';
+        console.log(`📢 Rejection via routing history: ${updatedDocument.documentId} by ${handler || 'System'}, submittedBy: ${updatedDocument.submittedBy}`);
+      } else {
+        // For other actions, just notify owner of update
+        eventType = 'document_updated';
+        console.log(`📢 Action via routing history: ${updatedDocument.documentId} - Action: ${action}, by ${handler || 'System'}, submittedBy: ${updatedDocument.submittedBy}`);
+      }
+
+      // Notify document owner about this action
+      await notifyDocumentEvent(updatedDocument, eventType, notificationOptions);
+    } catch (notifError) {
+      console.error('Error creating routing history notifications:', notifError);
+      // Don't fail the routing history update if notification fails
+    }
 
     res.json({
       message: 'Routing history updated successfully',
-      document
+      document: updatedDocument
     });
   } catch (err) {
     console.error('Error adding routing history:', err);

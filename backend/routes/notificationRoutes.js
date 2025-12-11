@@ -4,6 +4,7 @@ const Notification = require('../models/Notification');
 const Document = require('../models/Document');
 const Employee = require('../models/Employee');
 const User = require('../models/User');
+const Office = require('../models/Office');
 
 // Get all notifications for a user
 router.get('/user/:userId', async (req, res) => {
@@ -175,6 +176,71 @@ const createNotification = async (notificationData) => {
   }
 };
 
+// Helper function to find users who should receive the document (next recipients)
+// Returns array of user IDs that should be notified
+const findNextRecipients = async (document) => {
+  const recipientUserIds = new Set();
+  
+  try {
+    // 1. Check if document is assigned to a specific employee (currentHandler)
+    if (document.currentHandler) {
+      console.log(`🔍 Finding user for currentHandler: ${document.currentHandler}`);
+      const employee = await Employee.findById(document.currentHandler);
+      if (employee && employee.employeeId) {
+        const user = await User.findOne({ employeeId: employee.employeeId });
+        if (user) {
+          recipientUserIds.add(user._id.toString());
+          console.log(`  ✓ Found user for employee ${employee.name}: ${user.username || user.email}`);
+        } else {
+          console.log(`  ⚠️ No user found for employee ${employee.name} (employeeId: ${employee.employeeId})`);
+        }
+      }
+    }
+    
+    // 2. Check if document is assigned to an office (nextOffice)
+    if (document.nextOffice && document.nextOffice.trim() !== '') {
+      console.log(`🔍 Finding users for nextOffice: ${document.nextOffice}`);
+      
+      // Try to find office by name
+      const office = await Office.findOne({ name: document.nextOffice });
+      if (office && office.employees && office.employees.length > 0) {
+        // Find all employees in this office
+        const employees = await Employee.find({ _id: { $in: office.employees } });
+        console.log(`  Found ${employees.length} employees in office ${document.nextOffice}`);
+        
+        // Find users for each employee
+        for (const emp of employees) {
+          if (emp.employeeId) {
+            const user = await User.findOne({ employeeId: emp.employeeId });
+            if (user) {
+              recipientUserIds.add(user._id.toString());
+              console.log(`    ✓ Found user for employee ${emp.name}: ${user.username || user.email}`);
+            }
+          }
+        }
+      } else {
+        // If office not found by name, try to find employees by department (fallback)
+        console.log(`  Office "${document.nextOffice}" not found, trying department match...`);
+        const employees = await Employee.find({ department: document.nextOffice });
+        for (const emp of employees) {
+          if (emp.employeeId) {
+            const user = await User.findOne({ employeeId: emp.employeeId });
+            if (user) {
+              recipientUserIds.add(user._id.toString());
+              console.log(`    ✓ Found user for employee ${emp.name} (department match): ${user.username || user.email}`);
+            }
+          }
+        }
+      }
+    }
+    
+    return Array.from(recipientUserIds);
+  } catch (err) {
+    console.error('Error finding next recipients:', err);
+    return Array.from(recipientUserIds); // Return what we found so far
+  }
+};
+
 // Helper function to notify users about document events
 // Notifies: 1) Document owner (with personalized messages), 2) All other users (with different messages)
 const notifyDocumentEvent = async (document, eventType, options = {}) => {
@@ -187,22 +253,60 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
     if (document.submittedBy) {
       console.log(`🔍 Looking for submitter: "${document.submittedBy}" for event: ${eventType}`);
       
-      // Try to find user by username first
+      // Try multiple methods to find the submitter user
+      // Method 1: Try to find user by username
       submitterUser = await User.findOne({ username: document.submittedBy });
+      if (submitterUser) {
+        console.log(`  ✓ Found by username: ${submitterUser.username} (ID: ${submitterUser._id})`);
+      }
       
-      // If not found by username, try to find by employee name (submittedBy might be employee name)
+      // Method 2: Try to find by employee name (submittedBy might be employee name)
       if (!submitterUser) {
         const Employee = require('../models/Employee');
-        const employee = await Employee.findOne({ name: document.submittedBy });
+        // Try exact match first
+        let employee = await Employee.findOne({ name: document.submittedBy });
+        
+        // If not found, try partial match (in case of variations)
+        if (!employee) {
+          // Try matching with name that contains the submittedBy value
+          const allEmployees = await Employee.find({});
+          employee = allEmployees.find(emp => 
+            emp.name.toLowerCase().includes(document.submittedBy.toLowerCase()) ||
+            document.submittedBy.toLowerCase().includes(emp.name.toLowerCase())
+          );
+        }
+        
         if (employee && employee.employeeId) {
-          console.log(`  Found employee: ${employee.name}, employeeId: ${employee.employeeId}`);
+          console.log(`  ✓ Found employee: ${employee.name}, employeeId: ${employee.employeeId}`);
           submitterUser = await User.findOne({ employeeId: employee.employeeId });
+          if (submitterUser) {
+            console.log(`  ✓ Found user linked to employee: ${submitterUser.username || submitterUser.email}`);
+          } else {
+            console.log(`  ⚠️ Employee found but no user linked (employeeId: ${employee.employeeId})`);
+          }
+        } else {
+          console.log(`  ⚠️ No employee found with name: "${document.submittedBy}"`);
         }
       }
       
-      // Also try finding by email if submittedBy might be an email
+      // Method 3: Try finding by email if submittedBy might be an email
       if (!submitterUser) {
         submitterUser = await User.findOne({ email: document.submittedBy });
+        if (submitterUser) {
+          console.log(`  ✓ Found by email: ${submitterUser.email}`);
+        }
+      }
+      
+      // Method 4: Try finding by partial username match (case-insensitive)
+      if (!submitterUser) {
+        const allUsers = await User.find({});
+        submitterUser = allUsers.find(user => 
+          user.username && user.username.toLowerCase().includes(document.submittedBy.toLowerCase()) ||
+          user.email && user.email.toLowerCase().includes(document.submittedBy.toLowerCase())
+        );
+        if (submitterUser) {
+          console.log(`  ✓ Found by partial match: ${submitterUser.username || submitterUser.email}`);
+        }
       }
       
       if (submitterUser) {
@@ -227,49 +331,161 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
         console.log(`✅ Notification sent to document owner: ${submitterUser.username || submitterUser.email} (ID: ${submitterUser._id}) - "${title}"`);
         console.log(`   Message: "${message}"`);
       } else {
-        console.log(`❌ User not found for document owner: "${document.submittedBy}". Tried username, employee name, and email lookup.`);
+        console.log(`❌ User not found for document owner: "${document.submittedBy}". Tried username, employee name, email, and partial match.`);
         console.log(`   Document ID: ${document.documentId}, Event: ${eventType}`);
         console.log(`   ⚠️ OWNER WILL NOT BE NOTIFIED - This is a problem!`);
+        
+        // Log all users for debugging
+        const allUsers = await User.find({}).select('username email employeeId');
+        console.log(`   Available users: ${JSON.stringify(allUsers.map(u => ({ username: u.username, email: u.email, employeeId: u.employeeId })), null, 2)}`);
       }
     } else {
       console.log(`⚠️ Document has no submittedBy field. Document ID: ${document.documentId}, Event: ${eventType}`);
       console.log(`   ⚠️ OWNER CANNOT BE NOTIFIED - Document missing submitter information!`);
     }
     
-    // 2. Notify other users (ONLY for document uploads, NOT for status changes)
-    // IMPORTANT: Status changes should ONLY notify the document owner, not admins
-    if (eventType === 'document_uploaded') {
-      // For uploads, notify ALL users (except the owner) so everyone knows a new document was uploaded
-      const usersToNotify = await User.find({});
-      console.log(`📢 Document uploaded - notifying all users (except owner)`);
+    // 2. Notify next recipients (users who should receive the document)
+    // This applies to both uploads and forwarding events
+    const nextRecipientIds = await findNextRecipients(document);
+    const ownerUserId = submitterUser ? submitterUser._id.toString() : null;
+    
+    if (nextRecipientIds.length > 0) {
+      console.log(`📬 Notifying ${nextRecipientIds.length} next recipient(s) for event: ${eventType}`);
       
-      // Get the owner's user ID to exclude them
-      const ownerUserId = submitterUser ? submitterUser._id.toString() : null;
-      
-      for (const user of usersToNotify) {
-        // Skip if this user is the document owner (already notified above with personalized message)
-        let isOwner = false;
-        
-        if (ownerUserId) {
-          isOwner = user._id.toString() === ownerUserId;
+      for (const recipientId of nextRecipientIds) {
+        // Skip if recipient is the document owner (already notified above with personalized message)
+        if (ownerUserId && recipientId === ownerUserId) {
+          continue;
         }
         
+        // Determine the notification message based on event type
+        let title, message;
+        if (eventType === 'document_uploaded') {
+          // Check if document has been forwarded (has routing history with forward actions)
+          const hasForwardingHistory = document.routingHistory && document.routingHistory.some(
+            entry => entry.action && entry.action.toLowerCase().includes('forward')
+          );
+          
+          if (hasForwardingHistory) {
+            // Document has been forwarded, find the most recent forwarder
+            const forwardEntries = document.routingHistory
+              .filter(entry => entry.action && entry.action.toLowerCase().includes('forward'))
+              .sort((a, b) => {
+                const aTime = new Date(a.timestamp || a.date || 0);
+                const bTime = new Date(b.timestamp || b.date || 0);
+                return bTime - aTime;
+              });
+            
+            if (forwardEntries.length > 0) {
+              // Get the person who forwarded it (from comments or handler)
+              const lastForward = forwardEntries[0];
+              let forwardedBy = lastForward.handler || document.forwardedBy;
+              
+              // Try to extract forwarder name from comments if handler is not available
+              if (!forwardedBy && lastForward.comments) {
+                const commentMatch = lastForward.comments.match(/by\s+([^"]+)/i);
+                if (commentMatch) {
+                  forwardedBy = commentMatch[1].trim();
+                }
+              }
+              
+              title = 'New Document Forwarded';
+              message = `Document "${document.name || document.documentId || 'Document'}" forwarded to you${forwardedBy ? ` by ${forwardedBy}` : ''}`;
+            } else {
+              // Fallback to original submitter if we can't find forwarder
+              title = 'New Document Received';
+              message = `New document "${document.name || document.documentId || 'Document'}" sent to you by ${document.submittedBy || 'a user'}`;
+            }
+          } else {
+            // Fresh upload with no forwarding history, show original submitter
+            title = 'New Document Received';
+            message = `New document "${document.name || document.documentId || 'Document'}" sent to you by ${document.submittedBy || 'a user'}`;
+          }
+        } else if (eventType === 'document_forwarded') {
+          title = 'New Document Forwarded';
+          // Use forwardedBy from options, or try to get from document/routing history
+          let forwardedBy = options.forwardedBy || options.employeeName || options.reviewer;
+          if (!forwardedBy && document.routingHistory && document.routingHistory.length > 0) {
+            // Get the most recent forward entry
+            const forwardEntries = document.routingHistory
+              .filter(entry => entry.action && entry.action.toLowerCase().includes('forward'))
+              .sort((a, b) => {
+                const aTime = new Date(a.timestamp || a.date || 0);
+                const bTime = new Date(b.timestamp || b.date || 0);
+                return bTime - aTime;
+              });
+            if (forwardEntries.length > 0) {
+              forwardedBy = forwardEntries[0].handler;
+            }
+            if (!forwardedBy) {
+              forwardedBy = document.forwardedBy;
+            }
+          }
+          console.log(`  📬 Forwarding notification - forwardedBy: "${forwardedBy}", options:`, options);
+          message = `Document "${document.name || document.documentId || 'Document'}" forwarded to you${forwardedBy ? ` by ${forwardedBy}` : ''}`;
+        } else {
+          // For other events (approved, rejected, etc.), use standard messages
+          title = getNotificationTitle(eventType, document, false);
+          message = getNotificationMessage(eventType, document, options, false);
+        }
+        
+        notifications.push({
+          userId: recipientId,
+          type: eventType,
+          title,
+          message,
+          documentId: document._id,
+          documentName: document.name,
+          metadata: {
+            documentId: document.documentId,
+            status: document.status,
+            isSubmitter: false,
+            isRecipient: true,
+            ...options
+          }
+        });
+        
+        const recipientUser = await User.findById(recipientId);
+        console.log(`  ✓ Notification sent to recipient: ${recipientUser?.username || recipientUser?.email || recipientId} - "${title}"`);
+      }
+    } else {
+      console.log(`  ⚠️ No next recipients found (no currentHandler or nextOffice specified)`);
+    }
+    
+    // 3. Notify other users (for document uploads AND forwarding events)
+    // IMPORTANT: Uploads notify everyone, forwarding notifies admins, status changes only notify owner
+    if (eventType === 'document_uploaded') {
+      // For uploads, notify ALL users (except the owner and next recipients) so everyone knows a new document was uploaded
+      const usersToNotify = await User.find({});
+      console.log(`📢 Document uploaded - notifying all other users (except owner and recipients)`);
+      
+      for (const user of usersToNotify) {
+        const userIdStr = user._id.toString();
+        
+        // Skip if this user is the document owner (already notified above with personalized message)
+        let isOwner = false;
+        if (ownerUserId) {
+          isOwner = userIdStr === ownerUserId;
+        }
         if (!isOwner && document.submittedBy) {
           isOwner = 
             user.username === document.submittedBy || 
             user.email === document.submittedBy;
         }
         
-        if (isOwner) {
-          continue; // Skip - owner already got personalized notification
+        // Skip if this user is a next recipient (already notified above)
+        const isRecipient = nextRecipientIds.includes(userIdStr);
+        
+        if (isOwner || isRecipient) {
+          continue; // Skip - already notified
         }
         
-        // Get non-personalized message (for everyone except the owner)
+        // Get non-personalized message (for everyone else)
         const title = getNotificationTitle(eventType, document, false); // false = not submitter
         const message = getNotificationMessage(eventType, document, options, false); // false = not submitter
         
         notifications.push({
-          userId: user._id.toString(),
+          userId: userIdStr,
           type: eventType,
           title,
           message,
@@ -284,10 +500,92 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
         });
         console.log(`✓ Notification sent to user: ${user.username || user.email} - "${title}"`);
       }
+    } else if (eventType === 'document_forwarded') {
+      // For forwarding events, notify ALL ADMIN users so they can track document flow
+      const adminUsers = await User.find({ role: 'Admin' });
+      console.log(`📢 Document forwarded - notifying all admins (${adminUsers.length} admins)`);
+      
+      for (const admin of adminUsers) {
+        const adminIdStr = admin._id.toString();
+        
+        // Skip if admin is the document owner (already notified above with personalized message)
+        let isOwner = false;
+        if (ownerUserId) {
+          isOwner = adminIdStr === ownerUserId;
+        }
+        if (!isOwner && document.submittedBy) {
+          isOwner = 
+            admin.username === document.submittedBy || 
+            admin.email === document.submittedBy;
+        }
+        
+        // Skip if admin is a next recipient (already notified above)
+        const isRecipient = nextRecipientIds.includes(adminIdStr);
+        
+        if (isOwner || isRecipient) {
+          continue; // Skip - already notified
+        }
+        
+        // Get non-personalized message for admins
+        const title = getNotificationTitle(eventType, document, false); // false = not submitter
+        const message = getNotificationMessage(eventType, document, options, false); // false = not submitter
+        
+        notifications.push({
+          userId: adminIdStr,
+          type: eventType,
+          title,
+          message,
+          documentId: document._id,
+          documentName: document.name,
+          metadata: {
+            documentId: document.documentId,
+            status: document.status,
+            isSubmitter: false,
+            isAdmin: true,
+            ...options
+          }
+        });
+        console.log(`✓ Notification sent to admin: ${admin.username || admin.email} - "${title}"`);
+      }
+    } else if (eventType === 'document_approved' || eventType === 'document_rejected') {
+      // For approval/rejection events, also notify next recipients (if any) about the action
+      // This way they know the document status changed before it reaches them
+      if (nextRecipientIds.length > 0) {
+        console.log(`📬 Notifying ${nextRecipientIds.length} next recipient(s) about ${eventType}`);
+        
+        for (const recipientId of nextRecipientIds) {
+          // Skip if recipient is the document owner (already notified above)
+          if (ownerUserId && recipientId === ownerUserId) {
+            continue;
+          }
+          
+          const title = getNotificationTitle(eventType, document, false);
+          const message = getNotificationMessage(eventType, document, options, false);
+          
+          notifications.push({
+            userId: recipientId,
+            type: eventType,
+            title,
+            message,
+            documentId: document._id,
+            documentName: document.name,
+            metadata: {
+              documentId: document.documentId,
+              status: document.status,
+              isSubmitter: false,
+              isRecipient: true,
+              ...options
+            }
+          });
+          
+          const recipientUser = await User.findById(recipientId);
+          console.log(`  ✓ Notification sent to recipient: ${recipientUser?.username || recipientUser?.email || recipientId} - "${title}"`);
+        }
+      }
     } else {
-      // For status changes and other events: ONLY notify the document owner (already done above)
-      // Admins should NOT see status change notifications - only the owner should be notified
-      console.log(`📢 Status change event - only owner notified (admins will not receive notification)`);
+      // For other status changes (approved, rejected, updated): ONLY notify the document owner
+      // Admins should NOT see these notifications - only the owner should be notified
+      console.log(`📢 Status change event (${eventType}) - only owner notified (admins will not receive notification)`);
     }
     
     // Create all notifications
@@ -317,12 +615,12 @@ const getNotificationTitle = (eventType, document, isSubmitter = false) => {
     };
     return ownerTitles[eventType] || 'Update';
   } else {
-    // Professional titles for other users
+    // Professional titles for other users (admins and other users)
     const adminTitles = {
       'document_uploaded': 'New Document',
       'document_updated': 'Status Changed',
       'document_assigned': 'Document Assigned',
-      'document_forwarded': 'Document Forwarded',
+      'document_forwarded': 'New Document Forwarded', // Changed to "New Document Forwarded"
       'document_approved': 'Document Approved',
       'document_rejected': 'Document Rejected',
       'file_updated': 'File Updated'
@@ -337,26 +635,28 @@ const getNotificationMessage = (eventType, document, options = {}, isSubmitter =
   const submittedBy = document.submittedBy || options.submittedBy || 'a user';
   
   if (isSubmitter) {
-    // Professional, concise messages for document owner
+    // Professional, concise messages for document owner (sender)
     const ownerMessages = {
       'document_uploaded': `Uploaded successfully. Status: ${currentStatus}`,
       'document_updated': options.oldStatus && options.oldStatus !== currentStatus 
         ? `${options.oldStatus} → ${currentStatus}`
         : `Status: ${currentStatus}`,
       'document_assigned': `Status: ${currentStatus}`,
-      'document_forwarded': `Forwarded to ${options.nextOffice || 'next office'}`,
-      'document_approved': `Approved${options.approvedBy ? ` by ${options.approvedBy}` : ''}`,
+      'document_forwarded': `Forwarded to ${options.nextOffice || options.employeeName || 'next office'}${options.forwardedBy ? ` by ${options.forwardedBy}` : ''}`,
+      'document_approved': options.nextOffice && options.forwardedBy
+        ? `Approved${options.approvedBy ? ` by ${options.approvedBy}` : ''} and forwarded to ${options.nextOffice}`
+        : `Approved${options.approvedBy ? ` by ${options.approvedBy}` : ''}`,
       'document_rejected': `Rejected${options.rejectedBy ? ` by ${options.rejectedBy}` : ''}${options.comments ? `. ${options.comments}` : ''}`,
       'file_updated': `File updated`
     };
     return ownerMessages[eventType] || `Status: ${currentStatus}`;
   } else {
-    // Professional messages for other users
+    // Professional messages for other users (admins, recipients, etc.)
     const adminMessages = {
       'document_uploaded': `Uploaded by ${submittedBy}`,
       'document_updated': `Status: ${currentStatus}`,
       'document_assigned': `Status: ${currentStatus}`,
-      'document_forwarded': `Forwarded to ${options.nextOffice || 'next office'}`,
+      'document_forwarded': `Document "${documentName}" forwarded to ${options.nextOffice || options.employeeName || 'next office'}${options.forwardedBy ? ` by ${options.forwardedBy}` : options.updatedBy ? ` by ${options.updatedBy}` : ''}`,
       'document_approved': `Approved${options.approvedBy ? ` by ${options.approvedBy}` : ''}`,
       'document_rejected': `Rejected${options.rejectedBy ? ` by ${options.rejectedBy}` : ''}`,
       'file_updated': `File updated`

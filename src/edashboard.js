@@ -1214,6 +1214,10 @@ function Edashboard({ onLogout }) {
     if (!selectedDocument) return;
 
     try {
+      // Get current user name for forwardedBy
+      const userData = localStorage.getItem('userData');
+      const currentUserName = reviewForm.reviewer || (userData ? JSON.parse(userData).username : null) || employee?.name || 'Unknown User';
+      
       // Prepare update data
       const updateData = {
         status: reviewForm.status,
@@ -1227,6 +1231,7 @@ function Edashboard({ onLogout }) {
         updateData.nextOffice = reviewForm.nextOffice;
         updateData.currentOffice = reviewForm.nextOffice;
         updateData.status = 'Processing'; // Update status when forwarding
+        updateData.forwardedBy = currentUserName; // Add forwardedBy when forwarding
       }
 
       const response = await fetch(`${API_URL}/documents/${selectedDocument._id}`, {
@@ -4126,6 +4131,31 @@ function Edashboard({ onLogout }) {
                                     onMouseLeave={(e) => e.target.style.backgroundColor = '#f39c12'}
                                   >
                                     Track
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteDocument(doc._id);
+                                    }}
+                                    style={{
+                                      padding: '6px 12px',
+                                      backgroundColor: '#e74c3c',
+                                      color: 'white',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      fontSize: '11px',
+                                      fontWeight: '600',
+                                      cursor: 'pointer',
+                                      transition: 'background-color 0.3s ease'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      e.target.style.backgroundColor = '#c0392b';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      e.target.style.backgroundColor = '#e74c3c';
+                                    }}
+                                  >
+                                    Delete
                                   </button>
                                 </div>
                         </td>

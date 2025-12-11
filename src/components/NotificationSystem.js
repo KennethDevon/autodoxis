@@ -7,7 +7,19 @@ function NotificationSystem({ variant = 'default' }) {
   const [showDropdown, setShowDropdown] = useState(false);
   // eslint-disable-next-line no-unused-vars
   const [loading, setLoading] = useState(false);
+  
+  // Load shown notification IDs from localStorage (persists across page navigation)
+  const getShownNotificationIds = () => {
+    try {
+      const stored = localStorage.getItem('notification_shown_ids');
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch (e) {
+      return new Set();
+    }
+  };
+  
   const [toastShownTimes, setToastShownTimes] = useState(new Map()); // Track when notifications were shown as toasts
+  const [shownNotificationIds, setShownNotificationIds] = useState(getShownNotificationIds()); // Track which notifications have been shown (persisted)
 
   // Map backend notification types to frontend types
   const mapNotificationType = (backendType) => {
@@ -141,19 +153,38 @@ function NotificationSystem({ variant = 'default' }) {
   }, [notifications, unreadCount]);
 
   // Auto-remove backend notifications from toast after 7 seconds
+  // Mark notifications as "shown" so they don't reappear after navigation
   useEffect(() => {
     const unreadBackendNotifications = notifications.filter(
       n => n.isBackendNotification && !n.read && !n.isTemporary
     );
 
-    // Track when backend notifications are first shown
+    // Track when backend notifications are first shown (both in memory and localStorage)
     unreadBackendNotifications.forEach(notification => {
-      if (!toastShownTimes.has(notification.id)) {
+      if (!toastShownTimes.has(notification.id) && !shownNotificationIds.has(notification.id)) {
+        // Mark as shown in memory
         setToastShownTimes(prev => new Map(prev).set(notification.id, Date.now()));
+        
+        // Mark as shown in localStorage (persists across navigation)
+        setShownNotificationIds(prev => {
+          const updated = new Set(prev);
+          updated.add(notification.id);
+          
+          // Save to localStorage (keep last 100 notification IDs to prevent storage bloat)
+          try {
+            const idsArray = Array.from(updated);
+            const recentIds = idsArray.slice(-100); // Keep only last 100
+            localStorage.setItem('notification_shown_ids', JSON.stringify(recentIds));
+          } catch (e) {
+            console.error('Error saving shown notification IDs:', e);
+          }
+          
+          return updated;
+        });
       }
     });
 
-    // Clean up old entries (keep for 10 seconds to allow for cleanup)
+    // Clean up old entries from toastShownTimes (keep for 10 seconds to allow for cleanup)
     const now = Date.now();
     setToastShownTimes(prev => {
       const cleaned = new Map();
@@ -164,7 +195,7 @@ function NotificationSystem({ variant = 'default' }) {
       });
       return cleaned;
     });
-  }, [notifications, toastShownTimes]);
+  }, [notifications, toastShownTimes, shownNotificationIds]);
 
   const markAsRead = async (id) => {
     const notification = notifications.find(n => n.id === id);
@@ -623,7 +654,7 @@ function NotificationSystem({ variant = 'default' }) {
         </>
       )}
 
-      {/* Toast Notifications (Bottom Right) */}
+      {/* Toast Notifications (Bottom Right - Floating) */}
       <div style={{
         position: 'fixed',
         bottom: '24px',
@@ -632,7 +663,8 @@ function NotificationSystem({ variant = 'default' }) {
         display: 'flex',
         flexDirection: 'column',
         gap: '12px',
-        maxWidth: '400px'
+        maxWidth: '400px',
+        pointerEvents: 'none'
       }}>
         {notifications
           .filter(notification => {
@@ -641,15 +673,23 @@ function NotificationSystem({ variant = 'default' }) {
             
             // For backend notifications, only show if:
             // 1. Unread
-            // 2. Either not tracked yet, or shown less than 7 seconds ago
+            // 2. Has NOT been shown before (checked in localStorage)
+            // 3. If being shown now, only show for 7 seconds
             if (notification.isBackendNotification) {
               if (notification.read) return false; // Don't show read notifications
               
-              const shownTime = toastShownTimes.get(notification.id);
-              if (!shownTime) return true; // Show if not tracked yet
+              // Check if this notification was already shown (persists across navigation)
+              if (shownNotificationIds.has(notification.id)) {
+                // Only show again if it was shown very recently (within last 7 seconds)
+                const shownTime = toastShownTimes.get(notification.id);
+                if (!shownTime) return false; // Already shown before, don't show again
+                
+                const age = Date.now() - shownTime;
+                return age < 7000; // Only show if currently being displayed (< 7 seconds old)
+              }
               
-              const age = Date.now() - shownTime;
-              return age < 7000; // Show only if less than 7 seconds old
+              // Never shown before, show it
+              return true;
             }
             
             return true;
@@ -664,14 +704,28 @@ function NotificationSystem({ variant = 'default' }) {
                 backgroundColor: 'white',
                 padding: '18px 20px',
                 borderRadius: '12px',
-                boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+                boxShadow: '0 20px 40px -10px rgba(0, 0, 0, 0.15), 0 10px 20px -5px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.05)',
                 borderLeft: `4px solid ${colors.border}`,
                 display: 'flex',
                 gap: '14px',
                 alignItems: 'flex-start',
-                animation: 'slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                animation: 'slideInRight 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), float 3s ease-in-out infinite',
                 minWidth: '320px',
-                border: '1px solid #e5e7eb'
+                border: '1px solid rgba(0, 0, 0, 0.08)',
+                transform: 'translateY(0)',
+                transition: 'all 0.3s ease',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                pointerEvents: 'auto',
+                cursor: 'pointer'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-4px) scale(1.02)';
+                e.currentTarget.style.boxShadow = '0 25px 50px -10px rgba(0, 0, 0, 0.2), 0 15px 25px -5px rgba(0, 0, 0, 0.15)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0) scale(1)';
+                e.currentTarget.style.boxShadow = '0 20px 40px -10px rgba(0, 0, 0, 0.15), 0 10px 20px -5px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.05)';
               }}
             >
               <div style={{
