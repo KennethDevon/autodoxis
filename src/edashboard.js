@@ -1724,9 +1724,80 @@ function Edashboard({ onLogout }) {
       if (selectedEmployee) {
         // If employee is selected, use their position
         nextOffice = selectedEmployee.position;
-      } else if (documentForm.type && documentForm.type.toUpperCase().includes('TRAVEL ORDER')) {
-        // For TRAVEL ORDER, always start with Program Head (PH) → Dean → AVP
-        nextOffice = 'Program Head';
+      } else {
+        // Check document types and get submitter's position
+        const docType = documentForm.type?.toUpperCase() || '';
+        const docCategory = documentForm.category || '';
+        const submitterPosition = employee?.position;
+        
+        // Check for Faculty Loading
+        const isFacultyLoading = docType.includes('FACULTY LOADING') || docCategory === 'Faculty Loading';
+        
+        // Check for Travel Order
+        const isTravelOrder = docType.includes('TRAVEL ORDER') || docCategory === 'Travel Order';
+        
+        // Check for Endorsement Form
+        const isEndorsementForm = docType.includes('ENDORSEMENT') || docCategory === 'Endorsement Form';
+        
+        // Check for Requested Subject
+        const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory === 'Requested Subject';
+        
+        // Faculty Loading routing
+        if (isFacultyLoading && submitterPosition === 'Program Head') {
+          // If Faculty Loading is submitted by Program Head, go directly to Dean → ACP
+          nextOffice = 'Dean';
+        } else if (isFacultyLoading && submitterPosition === 'Dean') {
+          // If Faculty Loading is submitted by Dean, go directly to ACP (Academic VP)
+          nextOffice = 'Academic Vice President';
+        } else if (isFacultyLoading) {
+          // For Faculty Loading from other positions, start with Program Head → Dean → ACP
+          nextOffice = 'Program Head';
+        } 
+        // Travel Order routing
+        else if (isTravelOrder && submitterPosition === 'Program Head') {
+          // If Travel Order is submitted by Program Head (PH), go directly to Dean → AVP
+          nextOffice = 'Dean';
+        } else if (isTravelOrder && submitterPosition === 'Dean') {
+          // If Travel Order is submitted by Dean, go directly to AVP (Academic VP)
+          nextOffice = 'Academic Vice President';
+        } else if (isTravelOrder) {
+          // For Travel Order from other positions, start with Program Head → Dean → AVP
+          nextOffice = 'Program Head';
+        }
+        // Endorsement Form routing
+        else if (isEndorsementForm) {
+          // Endorsement Form: Communication → Program Head → Vice President → Office of the President
+          // If submitter is Vice President (VP), go directly to OP
+          if (submitterPosition === 'Vice President' || submitterPosition === 'VP') {
+            nextOffice = 'Office of the President';
+          }
+          // If submitter is Program Head (PH), go directly to Vice President → OP
+          else if (submitterPosition === 'Program Head') {
+            nextOffice = 'Vice President';
+          } 
+          // If submitter is Communication/Secretary, go to Program Head
+          else if (submitterPosition === 'Communication' || submitterPosition === 'Communications' || submitterPosition === 'Secretary') {
+            nextOffice = 'Program Head';
+          } else {
+            // Default: start with Communication if coming from elsewhere
+            nextOffice = 'Communication';
+          }
+        }
+        // Requested Subject routing
+        else if (isRequestedSubject) {
+          // Requested Subject: Program Head → Dean → Vice President
+          // If submitter is Dean, go directly to Vice President
+          if (submitterPosition === 'Dean') {
+            nextOffice = 'Vice President';
+          }
+          // If submitter is Program Head, go directly to Dean
+          else if (submitterPosition === 'Program Head') {
+            nextOffice = 'Dean';
+          } else {
+            // Default: start with Program Head
+            nextOffice = 'Program Head';
+          }
+        }
       }
       
       formData.append('nextOffice', nextOffice);
