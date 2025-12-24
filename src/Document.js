@@ -79,9 +79,10 @@ function Document() {
     try {
       const response = await fetch(`${API_URL}/documents`);
       const data = await response.json();
-      setDocuments(data);
+      setDocuments(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching documents:', error);
+      setDocuments([]);
     }
   };
 
@@ -89,9 +90,10 @@ function Document() {
     try {
       const response = await fetch(`${API_URL}/employees`);
       const data = await response.json();
-      setEmployees(data);
+      setEmployees(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching employees:', error);
+      setEmployees([]);
     }
   };
 
@@ -99,9 +101,10 @@ function Document() {
     try {
       const response = await fetch(`${API_URL}/offices`);
       const data = await response.json();
-      setOffices(data);
+      setOffices(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching offices:', error);
+      setOffices([]);
     }
   };
 
@@ -109,7 +112,7 @@ function Document() {
     try {
       const response = await fetch(`${API_URL}/document-types`);
       const data = await response.json();
-      setDocumentTypes(data);
+      setDocumentTypes(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching document types:', error);
       // Fallback to default types if API fails
@@ -326,8 +329,29 @@ function Document() {
   };
 
   const handleRemove = (documentId) => {
-    const document = documents.find(doc => doc._id === documentId);
-    setDocumentToDelete({ id: documentId, name: document?.name || 'this document' });
+    if (!documentId) {
+      console.error('Document ID is undefined');
+      alert('Error: Document ID is missing. Cannot delete this document.');
+      return;
+    }
+    
+    // Try to find document by _id, id, or documentId
+    const document = documents.find(doc => 
+      doc._id === documentId || 
+      doc.id === documentId || 
+      doc.documentId === documentId
+    );
+    
+    // Use documentId (string) if available, otherwise use _id or id
+    const idToUse = document?.documentId || document?._id || document?.id || documentId;
+    
+    console.log('Deleting document:', { 
+      documentId, 
+      found: !!document, 
+      idToUse 
+    });
+    
+    setDocumentToDelete({ id: idToUse, name: document?.name || 'this document' });
     setShowDeleteModal(true);
   };
 
@@ -570,10 +594,14 @@ function Document() {
 
   // Filter and sort documents automatically
   const getFilteredAndSortedDocuments = () => {
+    if (!Array.isArray(documents)) {
+      return [];
+    }
+    
     let filtered = documents.filter(document =>
-      document.documentId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      document.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      document.type.toLowerCase().includes(searchTerm.toLowerCase())
+      document.documentId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      document.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      document.type?.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     // Automatically sort by document name (alphabetically)
@@ -673,8 +701,8 @@ function Document() {
             </thead>
             <tbody>
               {filteredAndSortedDocuments.length > 0 ? (
-                filteredAndSortedDocuments.map((document) => (
-                  <tr key={document._id} style={{ backgroundColor: 'white' }}>
+                filteredAndSortedDocuments.map((document, index) => (
+                  <tr key={document._id || document.id || document.documentId || `doc-${index}`} style={{ backgroundColor: 'white' }}>
                     <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', color: '#2c3e50' }}>
                       <code style={{
                         backgroundColor: '#f8f9fa',
@@ -779,7 +807,15 @@ function Document() {
                           Edit
                         </button>
                         <button
-                          onClick={() => handleRemove(document._id)}
+                          onClick={() => {
+                            const docId = document._id || document.id || document.documentId;
+                            if (docId) {
+                              handleRemove(docId);
+                            } else {
+                              console.error('Document ID is missing:', document);
+                              alert('Error: Document ID is missing. Cannot delete this document.');
+                            }
+                          }}
                           style={{
                             padding: '6px 12px',
                             backgroundColor: '#dc3545',
@@ -1418,8 +1454,11 @@ function Document() {
                       showTracker.document.status !== 'Completed' && 
                       showTracker.document.status !== 'Archived';
                     
+                    // Create a unique key for routing history entries
+                    const entryKey = entry.id || entry._id || `${entry.timestamp || entry.date || Date.now()}-${index}`;
+                    
                     return (
-                      <div key={index} style={{
+                      <div key={entryKey} style={{
                         display: 'flex',
                         alignItems: 'flex-start',
                         marginBottom: isLast ? '0' : '12px',

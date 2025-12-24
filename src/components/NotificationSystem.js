@@ -42,7 +42,7 @@ function NotificationSystem({ variant = 'default' }) {
       if (!userData) return;
 
       const user = JSON.parse(userData);
-      const userId = user._id || user.id;
+      const userId = (user._id || user.id)?.toString();
       
       if (!userId) return;
 
@@ -195,7 +195,8 @@ function NotificationSystem({ variant = 'default' }) {
       });
       return cleaned;
     });
-  }, [notifications, toastShownTimes, shownNotificationIds]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notifications]); // Removed toastShownTimes and shownNotificationIds from deps to prevent infinite loop
 
   const markAsRead = async (id) => {
     const notification = notifications.find(n => n.id === id);

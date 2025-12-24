@@ -1,56 +1,67 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const sequelize = require('../config/database');
 
-const notificationSchema = new mongoose.Schema({
+const Notification = sequelize.define('Notification', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
   userId: {
-    type: String,
-    required: true,
-    index: true, // Index for faster queries
+    type: DataTypes.STRING(255),
+    allowNull: false
   },
   employeeId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Employee',
-    default: null,
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'employees',
+      key: 'id'
+    }
   },
   type: {
-    type: String,
-    enum: ['document_uploaded', 'document_updated', 'document_assigned', 'document_forwarded', 'document_approved', 'document_rejected', 'file_updated'],
-    required: true,
+    type: DataTypes.ENUM('document_uploaded', 'document_updated', 'document_assigned', 'document_forwarded', 'document_approved', 'document_rejected', 'file_updated'),
+    allowNull: false
   },
   title: {
-    type: String,
-    required: true,
+    type: DataTypes.STRING(255),
+    allowNull: false
   },
   message: {
-    type: String,
-    required: true,
+    type: DataTypes.TEXT,
+    allowNull: false
   },
   documentId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Document',
-    default: null,
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'documents',
+      key: 'id'
+    }
   },
   documentName: {
-    type: String,
-    default: '',
+    type: DataTypes.STRING(255),
+    defaultValue: ''
   },
   read: {
-    type: Boolean,
-    default: false,
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-    index: true, // Index for sorting
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
   },
   metadata: {
-    type: mongoose.Schema.Types.Mixed,
-    default: {},
-  },
+    type: DataTypes.JSON,
+    allowNull: true
+  }
+}, {
+  tableName: 'notifications',
+  timestamps: true,
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
 });
 
-// Index for efficient queries
-notificationSchema.index({ userId: 1, read: 1, createdAt: -1 });
-notificationSchema.index({ employeeId: 1, read: 1, createdAt: -1 });
+// Define associations after models are loaded
+Notification.associate = function(models) {
+  Notification.belongsTo(models.Employee, { foreignKey: 'employeeId', as: 'employee' });
+  Notification.belongsTo(models.Document, { foreignKey: 'documentId', as: 'document' });
+};
 
-module.exports = mongoose.model('Notification', notificationSchema);
-
+module.exports = Notification;

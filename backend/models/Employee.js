@@ -1,32 +1,59 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const sequelize = require('../config/database');
 
-const employeeSchema = new mongoose.Schema({
+const Employee = sequelize.define('Employee', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
   employeeId: {
-    type: String,
-    required: true,
-    unique: true,
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    unique: true
   },
   name: {
-    type: String,
-    required: true,
+    type: DataTypes.STRING(255),
+    allowNull: false
   },
   position: {
-    type: String,
-    required: true,
+    type: DataTypes.STRING(255),
+    allowNull: false
   },
   department: {
-    type: String,
-    required: true,
+    type: DataTypes.STRING(255),
+    allowNull: false
   },
   role: {
-    type: String,
-    default: '',
+    type: DataTypes.STRING(50),
+    defaultValue: ''
   },
-  office: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Office',
-    default: null,
-  },
+  officeId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'offices',
+      key: 'id'
+    }
+  }
+}, {
+  tableName: 'employees',
+  timestamps: true,
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
 });
 
-module.exports = mongoose.model('Employee', employeeSchema);
+// Define associations after Office model is loaded
+Employee.associate = function(models) {
+  Employee.belongsTo(models.Office, { foreignKey: 'officeId', as: 'office' });
+  
+  // Many-to-many relationship through junction table
+  Employee.belongsToMany(models.Office, { 
+    through: 'office_employees', 
+    foreignKey: 'employeeId', 
+    otherKey: 'officeId', 
+    as: 'employeeOffices' 
+  });
+};
+
+module.exports = Employee;

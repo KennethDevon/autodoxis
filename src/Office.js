@@ -40,8 +40,20 @@ function Office() {
     }));
   };
 
+  // Helper function to clean office names (remove [UPDATED])
+  const cleanName = (name) => {
+    if (!name) return name;
+    return name.replace(/\s*\[UPDATED\]\s*/gi, '').trim();
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    // Clean the name field before saving (remove [UPDATED])
+    const cleanedFormData = {
+      ...formData,
+      name: cleanName(formData.name)
+    };
     
     try {
       if (editingOffice) {
@@ -51,7 +63,7 @@ function Office() {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(formData),
+          body: JSON.stringify(cleanedFormData),
         });
         
         if (response.ok) {
@@ -73,7 +85,7 @@ function Office() {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(formData),
+          body: JSON.stringify(cleanedFormData),
         });
         
         if (response.ok) {
@@ -111,7 +123,7 @@ function Office() {
     setEditingOffice(office);
     setFormData({
       officeId: office.officeId,
-      name: office.name,
+      name: cleanName(office.name), // Clean the name when editing
       department: office.department
     });
     setShowModal(true);
@@ -267,7 +279,7 @@ function Office() {
                       {office.officeId}
                     </code>
                   </td>
-                  <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', fontWeight: '500', color: '#2c3e50' }}>{office.name}</td>
+                  <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', fontWeight: '500', color: '#2c3e50' }}>{cleanName(office.name)}</td>
                   <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', color: '#2c3e50' }}>{office.department}</td>
                   <td style={{ 
                     border: '1px solid #e0e0e0', 

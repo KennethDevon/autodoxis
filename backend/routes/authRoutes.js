@@ -5,6 +5,8 @@ const Employee = require('../models/Employee');
 const VerificationCode = require('../models/VerificationCode');
 const bcrypt = require('bcryptjs');
 const { sendVerificationEmail } = require('../utils/emailService');
+const { Op } = require('sequelize');
+const { formatResponse } = require('../utils/responseFormatter');
 
 // Register User
 router.post('/register', async (req, res) => {
@@ -12,13 +14,13 @@ router.post('/register', async (req, res) => {
     const { username, email, password, role, employeeId } = req.body;
 
     // Check if user already exists
-    let user = await User.findOne({ email });
+    let user = await User.findOne({ where: { email } });
     if (user) {
       return res.status(400).json({ message: 'User with this email already exists' });
     }
 
     // Check if username already exists
-    user = await User.findOne({ username });
+    user = await User.findOne({ where: { username } });
     if (user) {
       return res.status(400).json({ message: 'Username already exists' });
     }
@@ -26,28 +28,25 @@ router.post('/register', async (req, res) => {
     // If employeeId is provided, automatically set role to 'User'
     const finalRole = employeeId ? 'User' : (role || 'Employee');
 
-    // Create new user
-    user = new User({
-      username,
-      email,
-      password,
-      role: finalRole,
-      employeeId: employeeId || null,
-    });
-
     // Hash password
     const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(password, salt);
+    const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Save user
-    const savedUser = await user.save();
+    // Create new user
+    const savedUser = await User.create({
+      username,
+      email,
+      password: hashedPassword,
+      role: finalRole,
+      employeeId: employeeId || null
+    });
 
     // Remove password from response
-    const { password: _, ...userWithoutPassword } = savedUser.toObject();
+    const { password: _, ...userWithoutPassword } = savedUser.toJSON();
 
     res.status(201).json({ 
       message: 'User registered successfully',
-      user: userWithoutPassword
+      user: formatResponse(userWithoutPassword)
     });
   } catch (err) {
     console.error(err.message);
@@ -60,52 +59,82 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     
+    // Validate input
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
+    
     // Debug logging
     console.log('Login attempt:', { email, passwordLength: password?.length });
 
     // First try regular user login with email/password
-    let user = await User.findOne({ email });
-    console.log('User lookup result:', user ? `Found: ${user.email}` : 'Not found');
+    let user = await User.findOne({ where: { email } });
+    console.log('User lookup result:', user ? `Found: ${user.email} (ID: ${user.id})` : 'Not found');
+    
     if (user) {
+      // Check if password is provided
+      if (!user.password) {
+        console.log('User has no password set');
+        return res.status(400).json({ message: 'Account setup incomplete. Please contact administrator.' });
+      }
+      
       const isMatch = await bcrypt.compare(password, user.password);
+      console.log('Password match:', isMatch);
+      
       if (isMatch) {
         // Get role from user record directly
         let role = user.role || '';
         
         // If no role in user record, try to get from employee record
         if (!role && user.employeeId) {
-          const employee = await Employee.findOne({ employeeId: user.employeeId });
+          const employee = await Employee.findOne({ where: { employeeId: user.employeeId } });
           role = employee ? employee.role : '';
         }
 
-        // Force Admin role for sadmin@gmail.com regardless of database role
-        const isAdmin = user.email === 'sadmin@gmail.com' || role === 'Admin';
+        // Force Admin role for admin emails regardless of database role
+        const adminEmails = ['kennethdevon2004@gmail.com', 'kennethdevon2004.updated@gmail.com', 'sadmin@gmail.com'];
+        const isAdmin = adminEmails.includes(user.email.toLowerCase()) || role === 'Admin';
         if (isAdmin) {
           role = 'Admin';
           
-          // For admin users, require email verification
+          // For ALL admin users, require email verification
           // Generate 6-digit verification code
           const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
           
           // Save verification code to database
-          await VerificationCode.deleteMany({ email: user.email, used: false });
-          const verification = new VerificationCode({
+          await VerificationCode.destroy({ 
+            where: { email: user.email, used: false } 
+          });
+          await VerificationCode.create({
             email: user.email,
             code: verificationCode,
-            userId: user._id,
+            userId: user.id,
             expiresAt: new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
           });
-          await verification.save();
+          
+          // Log the verification code for debugging (only in development)
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`🔐 Verification code for ${user.email}: ${verificationCode}`);
+          }
           
           // Check if email is configured (Resend for production, Gmail SMTP for local)
           const hasResend = process.env.RESEND_API_KEY;
           const hasGmail = process.env.EMAIL_USER && process.env.EMAIL_PASS;
           
           if (!hasResend && !hasGmail) {
-            const errorMsg = process.env.NODE_ENV === 'production' 
-              ? 'Email service not configured. Please set RESEND_API_KEY in Railway variables. Railway blocks SMTP, so Resend API is required.'
-              : 'Email service not configured. For local development: set EMAIL_USER and EMAIL_PASS in .env file. For production: set RESEND_API_KEY in Railway variables.';
+            // In development, still allow login but show code in console
+            if (process.env.NODE_ENV !== 'production') {
+              console.log(`⚠️ Email service not configured. Verification code: ${verificationCode}`);
+              return res.json({ 
+                message: `Verification code generated. Check console for code: ${verificationCode}`,
+                requiresVerification: true,
+                userId: user.id.toString(),
+                email: user.email,
+                verificationCode: verificationCode // Include code in response for development
+              });
+            }
             
+            const errorMsg = 'Email service not configured. Please set RESEND_API_KEY in Railway variables. Railway blocks SMTP, so Resend API is required.';
             console.error('Email service not configured:', errorMsg);
             return res.status(500).json({ 
               message: errorMsg,
@@ -119,83 +148,96 @@ router.post('/login', async (req, res) => {
           sendVerificationEmail(user.email, verificationCode)
             .then(result => {
               if (result.success) {
-                console.log('Verification email sent successfully to', user.email);
+                console.log('✅ Verification email sent successfully to', user.email);
               } else {
-                console.error('Failed to send verification email:', result.error);
+                console.error('❌ Failed to send verification email:', result.error);
+                // In development, log the code if email fails
+                if (process.env.NODE_ENV !== 'production') {
+                  console.log(`⚠️ Email failed. Verification code: ${verificationCode}`);
+                }
               }
             })
             .catch(err => {
-              console.error('Error sending verification email:', err);
+              console.error('❌ Error sending verification email:', err);
+              // In development, log the code if email fails
+              if (process.env.NODE_ENV !== 'production') {
+                console.log(`⚠️ Email error. Verification code: ${verificationCode}`);
+              }
             });
           
           // Return immediately - email is sent in background
           return res.json({ 
-            message: 'Verification code sent to your email',
+            message: 'Verification code sent to your email. Please check your inbox (and spam folder).',
             requiresVerification: true,
-            userId: user._id.toString(),
+            userId: user.id.toString(),
             email: user.email
           });
         }
 
         return res.json({ 
           message: 'Logged in successfully',
-          user: {
-            id: user._id,
+          user: formatResponse({
+            id: user.id,
+            _id: user.id, // Add _id for compatibility
             username: user.username,
             email: user.email,
             employeeId: user.employeeId,
             role: role
-          }
+          })
         });
       }
     }
 
     // If email/password login fails, try employee login with name/employeeId
     // First check if there's a user account with this employeeId
-    const userWithEmployeeId = await User.findOne({ employeeId: password });
+    const userWithEmployeeId = await User.findOne({ where: { employeeId: password } });
     if (userWithEmployeeId) {
       // Verify the name matches
       if (userWithEmployeeId.username.toLowerCase() === email.toLowerCase() || 
           userWithEmployeeId.email.toLowerCase() === email.toLowerCase()) {
         return res.json({ 
           message: 'Logged in successfully',
-          user: {
-            id: userWithEmployeeId._id,
+          user: formatResponse({
+            id: userWithEmployeeId.id,
+            _id: userWithEmployeeId.id,
             username: userWithEmployeeId.username,
             email: userWithEmployeeId.email,
             employeeId: userWithEmployeeId.employeeId,
             role: userWithEmployeeId.role || 'User'
-          }
+          })
         });
       }
     }
     
     // Fallback: try employee login with name/employeeId (for backward compatibility)
     const employee = await Employee.findOne({ 
-      name: email, // Using email field as name for employee login
-      employeeId: password // Using password field as employeeId for employee login
+      where: {
+        name: email, // Using email field as name for employee login
+        employeeId: password // Using password field as employeeId for employee login
+      }
     });
 
     if (employee) {
       // Check if user account exists for this employee
-      const employeeUser = await User.findOne({ employeeId: employee.employeeId });
+      const employeeUser = await User.findOne({ where: { employeeId: employee.employeeId } });
       
       if (employeeUser) {
         // Use the actual user account
         return res.json({ 
           message: 'Logged in successfully',
-          user: {
-            id: employeeUser._id,
+          user: formatResponse({
+            id: employeeUser.id,
+            _id: employeeUser.id,
             username: employeeUser.username,
             email: employeeUser.email,
             employeeId: employeeUser.employeeId,
             role: employeeUser.role || 'User'
-          }
+          })
         });
       } else {
         // Create a virtual user object for employee login (backward compatibility)
         const virtualUser = {
-          id: employee._id,
+          id: employee.id,
           username: employee.name,
           email: employee.name, // Using name as email for consistency
           employeeId: employee.employeeId,
@@ -204,16 +246,24 @@ router.post('/login', async (req, res) => {
 
         return res.json({ 
           message: 'Logged in successfully',
-          user: virtualUser
+          user: formatResponse(virtualUser)
         });
       }
     }
 
     // If both login methods fail
-    return res.status(400).json({ message: 'Invalid Credentials' });
+    console.log('All login methods failed for:', email);
+    return res.status(400).json({ 
+      message: 'Invalid Credentials',
+      details: 'Please check your email and password. If you forgot your password, contact your administrator.'
+    });
   } catch (err) {
     console.error('Login error:', err);
-    res.status(500).json({ message: 'Server error', error: err.message });
+    res.status(500).json({ 
+      message: 'Server error during login', 
+      error: err.message,
+      details: 'Please try again later or contact support if the problem persists.'
+    });
   }
 });
 
@@ -226,8 +276,10 @@ router.post('/logout', (req, res) => {
 // Get all users (for super admin dashboard)
 router.get('/users', async (req, res) => {
   try {
-    const users = await User.find({}, { password: 0 }); // Exclude password field
-    res.json(users);
+    const users = await User.findAll({ 
+      attributes: { exclude: ['password'] }
+    });
+    res.json(formatResponse(users));
   } catch (err) {
     console.error('Login error:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -237,27 +289,29 @@ router.get('/users', async (req, res) => {
 // Update user profile (username, email, password)
 router.put('/users/:id', async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    const user = await User.findByPk(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
+    const updateData = {};
+
     // Check if username is being changed and if it's unique
     if (req.body.username && req.body.username !== user.username) {
-      const existingUser = await User.findOne({ username: req.body.username });
+      const existingUser = await User.findOne({ where: { username: req.body.username } });
       if (existingUser) {
         return res.status(400).json({ message: 'Username already exists' });
       }
-      user.username = req.body.username;
+      updateData.username = req.body.username;
     }
 
     // Check if email is being changed and if it's unique
     if (req.body.email && req.body.email !== user.email) {
-      const existingUser = await User.findOne({ email: req.body.email });
+      const existingUser = await User.findOne({ where: { email: req.body.email } });
       if (existingUser) {
         return res.status(400).json({ message: 'Email already exists' });
       }
-      user.email = req.body.email;
+      updateData.email = req.body.email;
     }
 
     // Handle password update if provided
@@ -269,13 +323,13 @@ router.put('/users/:id', async (req, res) => {
       
       // Hash the new password
       const salt = await bcrypt.genSalt(10);
-      user.password = await bcrypt.hash(req.body.password, salt);
+      updateData.password = await bcrypt.hash(req.body.password, salt);
     }
 
-    const updatedUser = await user.save();
+    await user.update(updateData);
     // Remove password from response
-    const { password, ...userWithoutPassword } = updatedUser.toObject();
-    res.json(userWithoutPassword);
+    const { password, ...userWithoutPassword } = user.toJSON();
+    res.json(formatResponse(userWithoutPassword));
   } catch (err) {
     console.error('Login error:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -285,28 +339,30 @@ router.put('/users/:id', async (req, res) => {
 // Update user role and email
 router.patch('/users/:id', async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    const user = await User.findByPk(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
+    const updateData = {};
+
     // Check if email is being changed and if it's unique
     if (req.body.email && req.body.email !== user.email) {
-      const existingUser = await User.findOne({ email: req.body.email });
+      const existingUser = await User.findOne({ where: { email: req.body.email } });
       if (existingUser) {
         return res.status(400).json({ message: 'Email already exists' });
       }
-      user.email = req.body.email;
+      updateData.email = req.body.email;
     }
 
     if (req.body.role !== undefined) {
-      user.role = req.body.role;
+      updateData.role = req.body.role;
     }
 
-    const updatedUser = await user.save();
+    await user.update(updateData);
     // Remove password from response
-    const { password, ...userWithoutPassword } = updatedUser.toObject();
-    res.json(userWithoutPassword);
+    const { password, ...userWithoutPassword } = user.toJSON();
+    res.json(formatResponse(userWithoutPassword));
   } catch (err) {
     console.error('Login error:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -316,7 +372,7 @@ router.patch('/users/:id', async (req, res) => {
 // Delete user
 router.delete('/users/:id', async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    const user = await User.findByPk(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
@@ -328,7 +384,7 @@ router.delete('/users/:id', async (req, res) => {
       });
     }
 
-    await User.findByIdAndDelete(req.params.id);
+    await user.destroy();
     res.json({ message: 'User deleted successfully' });
   } catch (err) {
     console.error(err.message);
@@ -346,18 +402,20 @@ router.post('/verify-code', async (req, res) => {
     }
 
     // Find the user
-    const user = await User.findById(userId);
+    const user = await User.findByPk(userId);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
     // Find valid verification code
     const verification = await VerificationCode.findOne({
-      userId: userId,
-      email: user.email,
-      code: code,
-      used: false,
-      expiresAt: { $gt: new Date() }
+      where: {
+        userId: userId,
+        email: user.email,
+        code: code,
+        used: false,
+        expiresAt: { [Op.gt]: new Date() }
+      }
     });
 
     if (!verification) {
@@ -365,8 +423,7 @@ router.post('/verify-code', async (req, res) => {
     }
 
     // Mark code as used
-    verification.used = true;
-    await verification.save();
+    await verification.update({ used: true });
 
     // Get role
     let role = user.role || '';
@@ -377,13 +434,14 @@ router.post('/verify-code', async (req, res) => {
     // Return user data for login
     return res.json({ 
       message: 'Verification successful',
-      user: {
-        id: user._id,
+      user: formatResponse({
+        id: user.id,
+        _id: user.id,
         username: user.username,
         email: user.email,
         employeeId: user.employeeId,
         role: role
-      }
+      })
     });
   } catch (err) {
     console.error('Verification error:', err);
@@ -401,7 +459,7 @@ router.post('/resend-code', async (req, res) => {
     }
 
     // Find the user
-    const user = await User.findById(userId);
+    const user = await User.findByPk(userId);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
@@ -426,16 +484,17 @@ router.post('/resend-code', async (req, res) => {
     const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
     
     // Delete old unused codes
-    await VerificationCode.deleteMany({ email: user.email, used: false });
+    await VerificationCode.destroy({ 
+      where: { email: user.email, used: false } 
+    });
     
     // Save new verification code
-    const verification = new VerificationCode({
+    await VerificationCode.create({
       email: user.email,
       code: verificationCode,
-      userId: user._id,
+      userId: user.id,
       expiresAt: new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
     });
-    await verification.save();
     
     // Send verification email
     const emailResult = await sendVerificationEmail(user.email, verificationCode);

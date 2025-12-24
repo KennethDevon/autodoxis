@@ -1,36 +1,46 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const sequelize = require('../config/database');
 
-const documentTypeSchema = new mongoose.Schema({
+const DocumentType = sequelize.define('DocumentType', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
   name: {
-    type: String,
-    required: true,
-    unique: true,
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    unique: true
   },
   description: {
-    type: String,
-    default: '',
+    type: DataTypes.TEXT,
+    defaultValue: ''
   },
   isActive: {
-    type: Boolean,
-    default: true,
+    type: DataTypes.BOOLEAN,
+    defaultValue: true
   },
   dateCreated: {
-    type: Date,
-    default: Date.now,
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
   },
   dateUploaded: {
-    type: String,
-    default: '',
+    type: DataTypes.STRING(255),
+    defaultValue: ''
   },
   timeUploaded: {
-    type: String,
-    default: '',
+    type: DataTypes.STRING(255),
+    defaultValue: ''
   },
   uploadedBy: {
-    type: String,
-    default: '',
-  },
+    type: DataTypes.STRING(255),
+    defaultValue: ''
+  }
+}, {
+  tableName: 'document_types',
+  timestamps: true,
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
 });
 
-module.exports = mongoose.model('DocumentType', documentTypeSchema);
-
+module.exports = DocumentType;

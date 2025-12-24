@@ -1,183 +1,163 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const sequelize = require('../config/database');
 
-const documentSchema = new mongoose.Schema({
+const Document = sequelize.define('Document', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
   documentId: {
-    type: String,
-    required: true,
-    unique: true,
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    unique: true
   },
   name: {
-    type: String,
-    required: true,
+    type: DataTypes.STRING(255),
+    allowNull: false
   },
   type: {
-    type: String,
-    required: true,
+    type: DataTypes.STRING(255),
+    allowNull: false
   },
   dateUploaded: {
-    type: Date,
-    default: Date.now,
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
   },
   status: {
-    type: String,
-    enum: ['Submitted', 'Under Review', 'Approved', 'Rejected', 'Processing', 'On Hold', 'Returned'],
-    default: 'Submitted',
+    type: DataTypes.ENUM('Submitted', 'Under Review', 'Approved', 'Rejected', 'Processing', 'On Hold', 'Returned'),
+    defaultValue: 'Submitted'
   },
   submittedBy: {
-    type: String,
-    default: '',
+    type: DataTypes.STRING(255),
+    defaultValue: ''
   },
   description: {
-    type: String,
-    default: '',
+    type: DataTypes.TEXT,
+    defaultValue: ''
   },
   reviewer: {
-    type: String,
-    default: '',
+    type: DataTypes.STRING(255),
+    defaultValue: ''
   },
   reviewDate: {
-    type: Date,
-    default: null,
+    type: DataTypes.DATE,
+    allowNull: true
   },
   comments: {
-    type: String,
-    default: '',
+    type: DataTypes.TEXT,
+    defaultValue: ''
   },
   filePath: {
-    type: String,
-    default: '',
+    type: DataTypes.STRING(500),
+    defaultValue: ''
   },
   nextOffice: {
-    type: String,
-    default: '',
+    type: DataTypes.STRING(255),
+    defaultValue: ''
   },
   qrCode: {
-    type: String,
-    default: '',
+    type: DataTypes.TEXT,
+    defaultValue: ''
   },
   barcode: {
-    type: String,
-    default: '',
+    type: DataTypes.TEXT,
+    defaultValue: ''
   },
-  // Delay Detection & Tracking Fields
   priority: {
-    type: String,
-    enum: ['Low', 'Normal', 'High', 'Urgent'],
-    default: 'Normal',
+    type: DataTypes.ENUM('Low', 'Normal', 'High', 'Urgent'),
+    defaultValue: 'Normal'
   },
   currentOffice: {
-    type: String,
-    default: '',
+    type: DataTypes.STRING(255),
+    defaultValue: ''
   },
   expectedProcessingTime: {
-    type: Number, // in hours
-    default: 24,
+    type: DataTypes.INTEGER,
+    defaultValue: 24
   },
   currentStageStartTime: {
-    type: Date,
-    default: Date.now,
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
   },
   isDelayed: {
-    type: Boolean,
-    default: false,
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
   },
   delayedHours: {
-    type: Number,
-    default: 0,
+    type: DataTypes.INTEGER,
+    defaultValue: 0
   },
-  routingHistory: [{
-    office: {
-      type: String,
-      required: true,
-    },
-    action: {
-      type: String,
-      enum: ['received', 'reviewed', 'approved', 'rejected', 'forwarded', 'on_hold', 'returned'],
-      required: true,
-    },
-    handler: {
-      type: String,
-      default: '',
-    },
-    timestamp: {
-      type: Date,
-      default: Date.now,
-    },
-    comments: {
-      type: String,
-      default: '',
-    },
-    processingTime: {
-      type: Number, // in hours
-      default: 0,
-    },
-  }],
-  scanHistory: [{
-    scannedAt: {
-      type: Date,
-      default: Date.now,
-    },
-    scannedBy: {
-      type: String,
-      default: '',
-    },
-    location: {
-      type: String,
-      default: '',
-    },
-    action: {
-      type: String,
-      enum: ['viewed', 'downloaded', 'printed', 'transferred'],
-      default: 'viewed',
-    },
-  }],
-  // Searchable tags for advanced search
-  tags: [{
-    type: String,
-  }],
+  routingHistory: {
+    type: DataTypes.JSON,
+    allowNull: true
+  },
+  scanHistory: {
+    type: DataTypes.JSON,
+    allowNull: true
+  },
+  tags: {
+    type: DataTypes.JSON,
+    allowNull: true
+  },
   department: {
-    type: String,
-    default: '',
+    type: DataTypes.STRING(255),
+    defaultValue: ''
   },
   category: {
-    type: String,
-    default: '',
+    type: DataTypes.STRING(255),
+    defaultValue: ''
   },
-  // Employee Access Control
-  assignedTo: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Employee'
-  }],
-  currentHandler: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Employee',
-    default: null
+  currentHandlerId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'employees',
+      key: 'id'
+    }
   },
   forwardedBy: {
-    type: String,
-    default: '',
+    type: DataTypes.STRING(255),
+    defaultValue: ''
   },
   forwardedDate: {
-    type: Date,
-    default: null,
+    type: DataTypes.DATE,
+    allowNull: true
   },
-  // Travel Order specific fields
   travelOrderDepartureDate: {
-    type: Date,
-    default: null,
+    type: DataTypes.DATE,
+    allowNull: true
   },
   travelOrderDepartureTime: {
-    type: String,
-    default: '',
+    type: DataTypes.STRING(50),
+    defaultValue: ''
   },
   travelOrderReturnDate: {
-    type: Date,
-    default: null,
+    type: DataTypes.DATE,
+    allowNull: true
   },
   travelOrderReturnTime: {
-    type: String,
-    default: '',
-  },
+    type: DataTypes.STRING(50),
+    defaultValue: ''
+  }
+}, {
+  tableName: 'documents',
+  timestamps: true,
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
 });
 
-module.exports = mongoose.model('Document', documentSchema);
+// Define associations after Employee model is loaded
+Document.associate = function(models) {
+  Document.belongsTo(models.Employee, { foreignKey: 'currentHandlerId', as: 'currentHandler' });
+  
+  // Many-to-many relationship for assigned employees
+  Document.belongsToMany(models.Employee, { 
+    through: 'document_employees', 
+    foreignKey: 'documentId', 
+    otherKey: 'employeeId', 
+    as: 'assignedTo' 
+  });
+};
+
+module.exports = Document;

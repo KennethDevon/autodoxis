@@ -1,40 +1,47 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const sequelize = require('../config/database');
 
-const officeSchema = new mongoose.Schema({
+const Office = sequelize.define('Office', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
   officeId: {
-    type: String,
-    required: true,
-    unique: true,
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    unique: true
   },
   name: {
-    type: String,
-    required: true,
+    type: DataTypes.STRING(255),
+    allowNull: false
   },
   department: {
-    type: String,
-    required: true,
+    type: DataTypes.STRING(255),
+    allowNull: false
   },
   location: {
-    type: String,
-    default: '',
-  },
-  employees: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Employee'
-  }],
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
+    type: DataTypes.STRING(255),
+    defaultValue: ''
+  }
+}, {
+  tableName: 'offices',
+  timestamps: true,
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
 });
 
-// Virtual field to calculate numberOfEmployees from the employees array
-officeSchema.virtual('numberOfEmployees').get(function() {
-  return this.employees ? this.employees.length : 0;
-});
+// Define associations after Employee model is loaded
+Office.associate = function(models) {
+  Office.hasMany(models.Employee, { foreignKey: 'officeId', as: 'employees' });
+  
+  // Many-to-many relationship through junction table
+  Office.belongsToMany(models.Employee, { 
+    through: 'office_employees', 
+    foreignKey: 'officeId', 
+    otherKey: 'employeeId', 
+    as: 'officeEmployees' 
+  });
+};
 
-// Ensure virtual fields are included when converting to JSON
-officeSchema.set('toJSON', { virtuals: true });
-officeSchema.set('toObject', { virtuals: true });
-
-module.exports = mongoose.model('Office', officeSchema);
+module.exports = Office;

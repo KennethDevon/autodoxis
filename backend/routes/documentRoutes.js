@@ -7,13 +7,26 @@ const QRCode = require('qrcode');
 const JsBarcode = require('jsbarcode');
 const upload = require('../multerConfig');
 const { notifyDocumentEvent } = require('./notificationRoutes');
+const { Op } = require('sequelize');
+
+// Helper function to find document by ID or documentId
+const findDocument = async (id) => {
+  let document = await Document.findOne({ where: { documentId: id } });
+  if (!document) {
+    document = await Document.findByPk(id);
+  }
+  return document;
+};
 
 // Get all documents
 router.get('/', async (req, res) => {
   try {
-    const documents = await Document.find();
+    const documents = await Document.findAll({
+      order: [['dateUploaded', 'DESC']]
+    });
     res.json(documents);
   } catch (err) {
+    console.error('Error fetching documents:', err);
     res.status(500).json({ message: err.message });
   }
 });
@@ -21,9 +34,13 @@ router.get('/', async (req, res) => {
 // Get documents by user
 router.get('/user/:submittedBy', async (req, res) => {
   try {
-    const documents = await Document.find({ submittedBy: req.params.submittedBy });
+    const documents = await Document.findAll({ 
+      where: { submittedBy: req.params.submittedBy },
+      order: [['dateUploaded', 'DESC']]
+    });
     res.json(documents);
   } catch (err) {
+    console.error('Error fetching documents by user:', err);
     res.status(500).json({ message: err.message });
   }
 });
@@ -31,12 +48,17 @@ router.get('/user/:submittedBy', async (req, res) => {
 // Get one document
 router.get('/:id', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    // Try to find by documentId first (string), then by id (integer)
+    let document = await Document.findOne({ where: { documentId: req.params.id } });
+    if (!document) {
+      document = await Document.findByPk(req.params.id);
+    }
     if (document == null) {
       return res.status(404).json({ message: 'Cannot find document' });
     }
     res.json(document);
   } catch (err) {
+    console.error('Error fetching document:', err);
     res.status(500).json({ message: err.message });
   }
 });
@@ -79,38 +101,16 @@ router.post('/', upload.single('attachment'), async (req, res) => {
       currentHandler = null;
     }
     
-    const document = new Document({
-      documentId: req.body.documentId,
-      name: fileName || `Document_${new Date().toISOString().split('T')[0]}`,
-      type: req.body.type,
-      dateUploaded: req.body.dateUploaded ? new Date(req.body.dateUploaded) : new Date(),
-      status: req.body.status || 'Submitted',
-      submittedBy: req.body.submittedBy,
-      description: req.body.description || '',
-      reviewer: req.body.reviewer || '',
-      reviewDate: req.body.reviewDate ? new Date(req.body.reviewDate) : null,
-      comments: req.body.comments || '',
-      filePath: filePath,
-      nextOffice: req.body.nextOffice || '',
-      currentOffice: req.body.nextOffice || '', // Set currentOffice to match nextOffice initially
-      category: req.body.category || '', // Save document category
-      // Employee assignment fields
-      assignedTo: assignedTo || [],
-      currentHandler: currentHandler || null,
-      forwardedBy: req.body.forwardedBy || '',
-      forwardedDate: req.body.forwardedDate ? new Date(req.body.forwardedDate) : null,
-      // Travel Order specific fields
-      travelOrderDepartureDate: req.body.travelOrderDepartureDate ? new Date(req.body.travelOrderDepartureDate) : null,
-      travelOrderDepartureTime: req.body.travelOrderDepartureTime || '',
-      travelOrderReturnDate: req.body.travelOrderReturnDate ? new Date(req.body.travelOrderReturnDate) : null,
-      travelOrderReturnTime: req.body.travelOrderReturnTime || ''
-    });
-
+    // Initialize routing history
+    let routingHistory = [];
+    
     // If document is assigned to an employee, add routing history
     if (currentHandler) {
-      const employee = await Employee.findById(currentHandler);
+      const employee = await Employee.findByPk(currentHandler, {
+        include: [{ model: Office, as: 'office' }]
+      });
       if (employee) {
-        document.routingHistory.push({
+        routingHistory.push({
           office: employee.office?.name || employee.department || 'Employee',
           action: 'forwarded',
           handler: employee.name,
@@ -125,7 +125,7 @@ router.post('/', upload.single('attachment'), async (req, res) => {
                            (req.body.category && req.body.category.toUpperCase().includes('TRAVEL ORDER'));
       
       if (isTravelOrder && req.body.nextOffice === 'Program Head') {
-        document.routingHistory.push({
+        routingHistory.push({
           office: 'Program Head',
           action: 'received',
           handler: '',
@@ -135,11 +135,35 @@ router.post('/', upload.single('attachment'), async (req, res) => {
       }
     }
 
-    const newDocument = await document.save();
-    console.log('Document created successfully:', newDocument._id);
+    const newDocument = await Document.create({
+      documentId: req.body.documentId,
+      name: fileName || `Document_${new Date().toISOString().split('T')[0]}`,
+      type: req.body.type,
+      dateUploaded: req.body.dateUploaded ? new Date(req.body.dateUploaded) : new Date(),
+      status: req.body.status || 'Submitted',
+      submittedBy: req.body.submittedBy,
+      description: req.body.description || '',
+      reviewer: req.body.reviewer || '',
+      reviewDate: req.body.reviewDate ? new Date(req.body.reviewDate) : null,
+      comments: req.body.comments || '',
+      filePath: filePath,
+      nextOffice: req.body.nextOffice || '',
+      currentOffice: req.body.nextOffice || '', // Set currentOffice to match nextOffice initially
+      category: req.body.category || '', // Save document category
+      currentHandlerId: currentHandler || null,
+      forwardedBy: req.body.forwardedBy || '',
+      forwardedDate: req.body.forwardedDate ? new Date(req.body.forwardedDate) : null,
+      routingHistory: routingHistory,
+      // Travel Order specific fields
+      travelOrderDepartureDate: req.body.travelOrderDepartureDate ? new Date(req.body.travelOrderDepartureDate) : null,
+      travelOrderDepartureTime: req.body.travelOrderDepartureTime || '',
+      travelOrderReturnDate: req.body.travelOrderReturnDate ? new Date(req.body.travelOrderReturnDate) : null,
+      travelOrderReturnTime: req.body.travelOrderReturnTime || ''
+    });
+    
+    console.log('Document created successfully:', newDocument.id);
     console.log('File path:', newDocument.filePath);
-    console.log('Assigned to employees:', newDocument.assignedTo);
-    console.log('Current handler:', newDocument.currentHandler);
+    console.log('Current handler:', newDocument.currentHandlerId);
     
     // Create notifications for document upload
     try {
@@ -159,16 +183,13 @@ router.post('/', upload.single('attachment'), async (req, res) => {
         name: newDocument.name,
         type: newDocument.type,
         status: newDocument.status,
-        url: `${req.protocol}://${req.get('host')}/documents/${newDocument._id}`,
+        url: `${req.protocol}://${req.get('host')}/documents/${newDocument.id}`,
         timestamp: new Date().toISOString()
       };
 
       const qrCodeDataURL = await QRCode.toDataURL(JSON.stringify(qrData));
-      newDocument.qrCode = qrCodeDataURL;
-
-      // Generate barcode
-      const canvas = require('canvas').createCanvas(200, 50);
-      JsBarcode(canvas, newDocument.documentId, {
+      const barcodeCanvas = require('canvas').createCanvas(200, 50);
+      JsBarcode(barcodeCanvas, newDocument.documentId, {
         format: "CODE128",
         width: 2,
         height: 50,
@@ -176,9 +197,12 @@ router.post('/', upload.single('attachment'), async (req, res) => {
         fontSize: 14,
         margin: 10
       });
-      newDocument.barcode = canvas.toDataURL();
+      const barcodeDataURL = barcodeCanvas.toDataURL();
 
-      await newDocument.save();
+      await newDocument.update({
+        qrCode: qrCodeDataURL,
+        barcode: barcodeDataURL
+      });
     } catch (qrError) {
       console.error('Error generating QR/barcode for new document:', qrError);
       // Don't fail the document creation if QR/barcode generation fails
@@ -196,7 +220,11 @@ router.post('/', upload.single('attachment'), async (req, res) => {
 // Update one document
 router.patch('/:id', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    // Try to find by documentId first (string), then by id (integer)
+    let document = await Document.findOne({ where: { documentId: req.params.id } });
+    if (!document) {
+      document = await Document.findByPk(req.params.id);
+    }
     if (document == null) {
       return res.status(404).json({ message: 'Cannot find document' });
     }
@@ -238,16 +266,22 @@ router.patch('/:id', async (req, res) => {
       const isForwarding = req.body.nextOffice !== document.nextOffice && req.body.nextOffice.trim() !== '';
       
       if (isForwarding) {
+        // Get current routing history
+        let routingHistory = document.routingHistory || [];
+        if (!Array.isArray(routingHistory)) {
+          routingHistory = [];
+        }
+        
         // Add routing history entry for forwarding
         // Calculate processing time for previous stage
-        if (document.routingHistory.length > 0) {
-          const lastEntry = document.routingHistory[document.routingHistory.length - 1];
+        if (routingHistory.length > 0) {
+          const lastEntry = routingHistory[routingHistory.length - 1];
           const processingTime = (new Date() - new Date(lastEntry.timestamp || lastEntry.date || new Date())) / (1000 * 60 * 60);
           lastEntry.processingTime = Math.round(processingTime * 10) / 10;
         }
         
         // Add new routing history entry
-        document.routingHistory.push({
+        routingHistory.push({
           office: req.body.nextOffice,
           action: 'forwarded',
           handler: req.body.forwardedBy || req.body.reviewer || document.reviewer || 'Unknown',
@@ -256,15 +290,18 @@ router.patch('/:id', async (req, res) => {
           processingTime: 0
         });
         
+        // Update routing history in document
+        req.body.routingHistory = routingHistory;
+        
         // Also update document.forwardedBy for notification purposes
         if (req.body.forwardedBy) {
-          document.forwardedBy = req.body.forwardedBy;
+          req.body.forwardedBy = req.body.forwardedBy;
         } else if (req.body.reviewer) {
-          document.forwardedBy = req.body.reviewer;
+          req.body.forwardedBy = req.body.reviewer;
         }
       }
       
-      document.nextOffice = req.body.nextOffice;
+      req.body.nextOffice = req.body.nextOffice;
     }
     if (req.body.currentOffice != null) {
       document.currentOffice = req.body.currentOffice;
@@ -273,30 +310,24 @@ router.patch('/:id', async (req, res) => {
       document.category = req.body.category;
     }
     
-    // Handle assignedTo array update
-    if (req.body.assignedTo != null) {
-      if (Array.isArray(req.body.assignedTo)) {
-        // Add employee IDs to assignedTo if not already present
-        req.body.assignedTo.forEach(empId => {
-          if (empId && !document.assignedTo.includes(empId)) {
-            document.assignedTo.push(empId);
-          }
-        });
-      }
-    }
-    
-    // Handle currentHandler update
-    if (req.body.currentHandler != null) {
-      document.currentHandler = req.body.currentHandler;
+    // Handle currentHandlerId update (Sequelize uses currentHandlerId, not currentHandler)
+    if (req.body.currentHandler != null || req.body.currentHandlerId != null) {
+      req.body.currentHandlerId = req.body.currentHandlerId || req.body.currentHandler;
     }
     
     // Handle routing history update if provided
     if (req.body.$push && req.body.$push.routingHistory) {
       const historyEntry = req.body.$push.routingHistory;
       
+      // Get current routing history
+      let routingHistory = document.routingHistory || [];
+      if (!Array.isArray(routingHistory)) {
+        routingHistory = [];
+      }
+      
       // Calculate processing time for previous stage
-      if (document.routingHistory.length > 0) {
-        const lastEntry = document.routingHistory[document.routingHistory.length - 1];
+      if (routingHistory.length > 0) {
+        const lastEntry = routingHistory[routingHistory.length - 1];
         const processingTime = (new Date() - new Date(lastEntry.timestamp || lastEntry.date || new Date())) / (1000 * 60 * 60);
         lastEntry.processingTime = Math.round(processingTime * 10) / 10;
       }
@@ -310,7 +341,8 @@ router.patch('/:id', async (req, res) => {
         comments: historyEntry.comments || '',
         processingTime: 0
       };
-      document.routingHistory.push(newHistoryEntry);
+      routingHistory.push(newHistoryEntry);
+      req.body.routingHistory = routingHistory;
       
       // Store approval action for notification detection
       if (historyEntry.action === 'approved' || historyEntry.action === 'approved and forwarded') {
@@ -319,7 +351,32 @@ router.patch('/:id', async (req, res) => {
       }
     }
     
-    const updatedDocument = await document.save();
+    // Build update object
+    const updateData = {};
+    if (req.body.documentId != null) updateData.documentId = req.body.documentId;
+    if (req.body.name != null) updateData.name = req.body.name;
+    if (req.body.type != null) updateData.type = req.body.type;
+    if (req.body.dateUploaded != null) updateData.dateUploaded = req.body.dateUploaded;
+    if (req.body.status != null) updateData.status = req.body.status;
+    if (req.body.submittedBy != null) updateData.submittedBy = req.body.submittedBy;
+    if (req.body.description != null) updateData.description = req.body.description;
+    if (req.body.reviewer != null) updateData.reviewer = req.body.reviewer;
+    if (req.body.reviewDate != null) updateData.reviewDate = req.body.reviewDate;
+    if (req.body.comments != null) updateData.comments = req.body.comments;
+    if (req.body.filePath != null) updateData.filePath = req.body.filePath;
+    if (req.body.nextOffice != null) updateData.nextOffice = req.body.nextOffice;
+    if (req.body.currentOffice != null) updateData.currentOffice = req.body.currentOffice;
+    if (req.body.category != null) updateData.category = req.body.category;
+    if (req.body.currentHandlerId != null) updateData.currentHandlerId = req.body.currentHandlerId;
+    if (req.body.forwardedBy != null) updateData.forwardedBy = req.body.forwardedBy;
+    if (req.body.forwardedDate != null) updateData.forwardedDate = req.body.forwardedDate;
+    if (req.body.routingHistory != null) updateData.routingHistory = req.body.routingHistory;
+    
+    await document.update(updateData);
+    // Reload to get updated data including routingHistory
+    await document.reload();
+    const updatedDocument = document;
+    
     console.log('✓ Document updated:', updatedDocument.documentId, '- Status:', updatedDocument.status, '- nextOffice:', updatedDocument.nextOffice, '- currentOffice:', updatedDocument.currentOffice);
     
     // Create notifications for document update
@@ -461,9 +518,13 @@ router.patch('/:id', async (req, res) => {
 // Get documents by status
 router.get('/status/:status', async (req, res) => {
   try {
-    const documents = await Document.find({ status: req.params.status });
+    const documents = await Document.findAll({ 
+      where: { status: req.params.status },
+      order: [['dateUploaded', 'DESC']]
+    });
     res.json(documents);
   } catch (err) {
+    console.error('Error fetching documents by status:', err);
     res.status(500).json({ message: err.message });
   }
 });
@@ -471,11 +532,15 @@ router.get('/status/:status', async (req, res) => {
 // Get documents pending review
 router.get('/pending/review', async (req, res) => {
   try {
-    const documents = await Document.find({ 
-      status: { $in: ['Submitted', 'Under Review'] } 
+    const documents = await Document.findAll({ 
+      where: { 
+        status: { [Op.in]: ['Submitted', 'Under Review'] } 
+      },
+      order: [['dateUploaded', 'DESC']]
     });
     res.json(documents);
   } catch (err) {
+    console.error('Error fetching pending documents:', err);
     res.status(500).json({ message: err.message });
   }
 });
@@ -483,17 +548,23 @@ router.get('/pending/review', async (req, res) => {
 // Approve document
 router.patch('/:id/approve', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    // Try to find by documentId first (string), then by id (integer)
+    let document = await Document.findOne({ where: { documentId: req.params.id } });
+    if (!document) {
+      document = await Document.findByPk(req.params.id);
+    }
     if (document == null) {
       return res.status(404).json({ message: 'Cannot find document' });
     }
     
-    document.status = 'Approved';
-    document.reviewer = req.body.reviewer || '';
-    document.reviewDate = new Date();
-    document.comments = req.body.comments || '';
-    
-    const updatedDocument = await document.save();
+    await document.update({
+      status: 'Approved',
+      reviewer: req.body.reviewer || '',
+      reviewDate: new Date(),
+      comments: req.body.comments || ''
+    });
+    await document.reload();
+    const updatedDocument = document;
     
     // Create notification for approval
     try {
@@ -514,17 +585,23 @@ router.patch('/:id/approve', async (req, res) => {
 // Reject document
 router.patch('/:id/reject', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    // Try to find by documentId first (string), then by id (integer)
+    let document = await Document.findOne({ where: { documentId: req.params.id } });
+    if (!document) {
+      document = await Document.findByPk(req.params.id);
+    }
     if (document == null) {
       return res.status(404).json({ message: 'Cannot find document' });
     }
     
-    document.status = 'Rejected';
-    document.reviewer = req.body.reviewer || '';
-    document.reviewDate = new Date();
-    document.comments = req.body.comments || '';
-    
-    const updatedDocument = await document.save();
+    await document.update({
+      status: 'Rejected',
+      reviewer: req.body.reviewer || '',
+      reviewDate: new Date(),
+      comments: req.body.comments || ''
+    });
+    await document.reload();
+    const updatedDocument = document;
     
     // Create notification for rejection
     try {
@@ -545,18 +622,23 @@ router.patch('/:id/reject', async (req, res) => {
 // Receive document (Receiver workflow)
 router.patch('/:id/receive', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    // Try to find by documentId first (string), then by id (integer)
+    let document = await Document.findOne({ where: { documentId: req.params.id } });
+    if (!document) {
+      document = await Document.findByPk(req.params.id);
+    }
     if (document == null) {
       return res.status(404).json({ message: 'Cannot find document' });
     }
     
-    document.status = 'On Hold';
-    document.reviewer = req.body.reviewer || '';
-    document.reviewDate = new Date();
-    document.comments = req.body.comments || '';
-    
-    const updatedDocument = await document.save();
-    res.json(updatedDocument);
+    await document.update({
+      status: 'On Hold',
+      reviewer: req.body.reviewer || '',
+      reviewDate: new Date(),
+      comments: req.body.comments || ''
+    });
+    await document.reload();
+    res.json(document);
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
@@ -565,18 +647,23 @@ router.patch('/:id/receive', async (req, res) => {
 // Return document (Receiver workflow)
 router.patch('/:id/return', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    // Try to find by documentId first (string), then by id (integer)
+    let document = await Document.findOne({ where: { documentId: req.params.id } });
+    if (!document) {
+      document = await Document.findByPk(req.params.id);
+    }
     if (document == null) {
       return res.status(404).json({ message: 'Cannot find document' });
     }
     
-    document.status = 'Returned';
-    document.reviewer = req.body.reviewer || '';
-    document.reviewDate = new Date();
-    document.comments = req.body.comments || '';
-    
-    const updatedDocument = await document.save();
-    res.json(updatedDocument);
+    await document.update({
+      status: 'Returned',
+      reviewer: req.body.reviewer || '',
+      reviewDate: new Date(),
+      comments: req.body.comments || ''
+    });
+    await document.reload();
+    res.json(document);
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
@@ -585,21 +672,31 @@ router.patch('/:id/return', async (req, res) => {
 // Forward document to next office
 router.patch('/:id/forward', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    // Try to find by documentId first (string), then by id (integer)
+    let document = await Document.findOne({ where: { documentId: req.params.id } });
+    if (!document) {
+      document = await Document.findByPk(req.params.id);
+    }
     if (document == null) {
       return res.status(404).json({ message: 'Cannot find document' });
     }
     
+    // Get current routing history
+    let routingHistory = document.routingHistory || [];
+    if (!Array.isArray(routingHistory)) {
+      routingHistory = [];
+    }
+    
     // Calculate processing time for previous stage
-    if (document.routingHistory.length > 0) {
-      const lastEntry = document.routingHistory[document.routingHistory.length - 1];
+    if (routingHistory.length > 0) {
+      const lastEntry = routingHistory[routingHistory.length - 1];
       const processingTime = (new Date() - new Date(lastEntry.timestamp)) / (1000 * 60 * 60);
       lastEntry.processingTime = Math.round(processingTime * 10) / 10;
     }
     
     // Add routing history entry
     if (req.body.nextOffice) {
-      document.routingHistory.push({
+      routingHistory.push({
         office: req.body.nextOffice,
         action: 'forwarded',
         handler: req.body.reviewer || 'Admin',
@@ -609,21 +706,20 @@ router.patch('/:id/forward', async (req, res) => {
       });
     }
     
-    document.status = req.body.status || 'Processing';
-    document.reviewer = req.body.reviewer || '';
-    document.reviewDate = new Date();
-    document.comments = req.body.comments || '';
-    document.nextOffice = req.body.nextOffice || '';
-    if (req.body.currentOffice) {
-      document.currentOffice = req.body.currentOffice;
-    }
-    // Update current stage start time
-    document.currentStageStartTime = new Date();
-    // Reset delay status for new stage
-    document.isDelayed = false;
-    document.delayedHours = 0;
-    
-    const updatedDocument = await document.save();
+    await document.update({
+      status: req.body.status || 'Processing',
+      reviewer: req.body.reviewer || '',
+      reviewDate: new Date(),
+      comments: req.body.comments || '',
+      nextOffice: req.body.nextOffice || '',
+      currentOffice: req.body.currentOffice || document.currentOffice,
+      currentStageStartTime: new Date(),
+      isDelayed: false,
+      delayedHours: 0,
+      routingHistory: routingHistory
+    });
+    await document.reload();
+    const updatedDocument = document;
     
     // Create notification for forwarding
     try {
@@ -645,9 +741,13 @@ router.patch('/:id/forward', async (req, res) => {
 // Get documents by reviewer
 router.get('/reviewer/:reviewer', async (req, res) => {
   try {
-    const documents = await Document.find({ reviewer: req.params.reviewer });
+    const documents = await Document.findAll({ 
+      where: { reviewer: req.params.reviewer },
+      order: [['dateUploaded', 'DESC']]
+    });
     res.json(documents);
   } catch (err) {
+    console.error('Error fetching documents by reviewer:', err);
     res.status(500).json({ message: err.message });
   }
 });
@@ -655,18 +755,14 @@ router.get('/reviewer/:reviewer', async (req, res) => {
 // Get document statistics
 router.get('/stats/overview', async (req, res) => {
   try {
-    const stats = await Document.aggregate([
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 }
-        }
-      }
-    ]);
+    const documents = await Document.findAll({
+      attributes: ['status']
+    });
     
     const formattedStats = {};
-    stats.forEach(stat => {
-      formattedStats[stat._id] = stat.count;
+    documents.forEach(doc => {
+      const status = doc.status || 'Unknown';
+      formattedStats[status] = (formattedStats[status] || 0) + 1;
     });
     
     res.json(formattedStats);
@@ -678,21 +774,70 @@ router.get('/stats/overview', async (req, res) => {
 // Delete one document
 router.delete('/:id', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    // Try to find by documentId first (string), then by id (integer)
+    let document = await Document.findOne({ where: { documentId: req.params.id } });
+    if (!document) {
+      document = await Document.findByPk(req.params.id);
+    }
     if (document == null) {
       return res.status(404).json({ message: 'Cannot find document' });
     }
-    await Document.deleteOne({ _id: req.params.id });
+    
+    // Delete associated notifications first (to avoid foreign key constraint errors)
+    // Notification.documentId refers to the document's database ID (integer), not documentId (string)
+    try {
+      const Notification = require('../models/Notification');
+      // Use the document's database ID (document.id), not the string documentId
+      const deletedNotifications = await Notification.destroy({ 
+        where: { documentId: document.id } 
+      });
+      console.log(`✅ Deleted ${deletedNotifications} notification(s) for document ID: ${document.id}`);
+    } catch (notifError) {
+      console.error('Error deleting notifications:', notifError);
+      // Continue with document deletion even if notification deletion fails
+    }
+    
+    // Delete the associated file if it exists
+    if (document.filePath) {
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        
+        // Remove leading slash if present
+        const filePath = document.filePath.startsWith('/') 
+          ? document.filePath.substring(1) 
+          : document.filePath;
+        
+        const fullPath = path.join(__dirname, '..', filePath);
+        
+        // Check if file exists and delete it
+        if (fs.existsSync(fullPath)) {
+          fs.unlinkSync(fullPath);
+          console.log(`✅ Deleted file: ${fullPath}`);
+        }
+      } catch (fileError) {
+        console.error('Error deleting file:', fileError);
+        // Continue with document deletion even if file deletion fails
+      }
+    }
+    
+    // Delete the document record
+    await document.destroy();
     res.json({ message: 'Deleted Document' });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error('Error deleting document:', err);
+    res.status(500).json({ message: err.message || 'Failed to delete document' });
   }
 });
 
 // Public document viewer page (for QR code scanning)
 router.get('/:id/view', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    // Try to find by documentId first (string), then by id (integer)
+    let document = await Document.findOne({ where: { documentId: req.params.id } });
+    if (!document) {
+      document = await Document.findByPk(req.params.id);
+    }
     if (document == null) {
       return res.status(404).send(`
         <!DOCTYPE html>
@@ -854,7 +999,7 @@ router.get('/:id/view', async (req, res) => {
             ` : ''}
             ${document.filePath ? `
             <div style="text-align: center; margin-top: 20px;">
-              <a href="${req.protocol}://${req.get('host')}/documents/${document._id}/download" class="btn" target="_blank">
+              <a href="${req.protocol}://${req.get('host')}/documents/${document.id}/download" class="btn" target="_blank">
                 📥 Download Document
               </a>
             </div>
@@ -890,7 +1035,7 @@ router.get('/:id/view', async (req, res) => {
 // Generate QR code for document
 router.get('/:id/qrcode', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    const document = await findDocument(req.params.id);
     if (document == null) {
       return res.status(404).json({ message: 'Cannot find document' });
     }
@@ -937,7 +1082,7 @@ router.get('/:id/qrcode', async (req, res) => {
     }
     
     // Use public view URL that works when scanned from mobile devices
-    const publicViewUrl = `${serverProtocol}://${serverHost}/documents/${document._id}/view`;
+    const publicViewUrl = `${serverProtocol}://${serverHost}/documents/${document.id}/view`;
 
     // Create QR code data with document information
     const qrData = {
@@ -964,8 +1109,7 @@ router.get('/:id/qrcode', async (req, res) => {
 
     // Update document with QR code if not already set
     if (!document.qrCode) {
-      document.qrCode = qrCodeDataURL;
-      await document.save();
+      await document.update({ qrCode: qrCodeDataURL });
     }
 
     res.json({
@@ -982,7 +1126,7 @@ router.get('/:id/qrcode', async (req, res) => {
 // Generate barcode for document
 router.get('/:id/barcode', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    const document = await findDocument(req.params.id);
     if (document == null) {
       return res.status(404).json({ message: 'Cannot find document' });
     }
@@ -1002,8 +1146,7 @@ router.get('/:id/barcode', async (req, res) => {
 
     // Update document with barcode if not already set
     if (!document.barcode) {
-      document.barcode = barcodeDataURL;
-      await document.save();
+      await document.update({ barcode: barcodeDataURL });
     }
 
     res.json({
@@ -1020,7 +1163,7 @@ router.get('/:id/barcode', async (req, res) => {
 // Scan document (track access)
 router.post('/:id/scan', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    const document = await findDocument(req.params.id);
     if (document == null) {
       return res.status(404).json({ message: 'Cannot find document' });
     }
@@ -1033,8 +1176,13 @@ router.post('/:id/scan', async (req, res) => {
       action: req.body.action || 'viewed'
     };
 
-    document.scanHistory.push(scanEntry);
-    await document.save();
+    let scanHistory = document.scanHistory || [];
+    if (!Array.isArray(scanHistory)) {
+      scanHistory = [];
+    }
+    scanHistory.push(scanEntry);
+    await document.update({ scanHistory: scanHistory });
+    await document.reload();
 
     res.json({
       message: 'Scan recorded successfully',
@@ -1054,15 +1202,19 @@ router.post('/:id/scan', async (req, res) => {
 // Get document scan history
 router.get('/:id/scan-history', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    const document = await findDocument(req.params.id);
     if (document == null) {
       return res.status(404).json({ message: 'Cannot find document' });
     }
 
+    const scanHistory = document.scanHistory && Array.isArray(document.scanHistory) 
+      ? document.scanHistory.sort((a, b) => new Date(b.scannedAt) - new Date(a.scannedAt))
+      : [];
+    
     res.json({
       documentId: document.documentId,
       documentName: document.name,
-      scanHistory: document.scanHistory.sort((a, b) => new Date(b.scannedAt) - new Date(a.scannedAt))
+      scanHistory: scanHistory
     });
   } catch (err) {
     console.error('Error fetching scan history:', err);
@@ -1089,46 +1241,51 @@ router.post('/search/advanced', async (req, res) => {
       tags 
     } = req.body;
 
-    let query = {};
+    const where = {};
 
     // Build search query based on provided filters
     if (documentId) {
-      query.documentId = { $regex: documentId, $options: 'i' };
+      where.documentId = { [Op.like]: `%${documentId}%` };
     }
     if (name) {
-      query.name = { $regex: name, $options: 'i' };
+      where.name = { [Op.like]: `%${name}%` };
     }
     if (type) {
-      query.type = { $regex: type, $options: 'i' };
+      where.type = { [Op.like]: `%${type}%` };
     }
     if (status) {
-      query.status = status;
+      where.status = status;
     }
     if (submittedBy) {
-      query.submittedBy = { $regex: submittedBy, $options: 'i' };
+      where.submittedBy = { [Op.like]: `%${submittedBy}%` };
     }
     if (currentOffice) {
-      query.currentOffice = { $regex: currentOffice, $options: 'i' };
+      where.currentOffice = { [Op.like]: `%${currentOffice}%` };
     }
     if (priority) {
-      query.priority = priority;
+      where.priority = priority;
     }
     if (department) {
-      query.department = { $regex: department, $options: 'i' };
+      where.department = { [Op.like]: `%${department}%` };
     }
     if (category) {
-      query.category = { $regex: category, $options: 'i' };
+      where.category = { [Op.like]: `%${category}%` };
     }
     if (dateFrom || dateTo) {
-      query.dateUploaded = {};
-      if (dateFrom) query.dateUploaded.$gte = new Date(dateFrom);
-      if (dateTo) query.dateUploaded.$lte = new Date(dateTo);
+      where.dateUploaded = {};
+      if (dateFrom) where.dateUploaded[Op.gte] = new Date(dateFrom);
+      if (dateTo) where.dateUploaded[Op.lte] = new Date(dateTo);
     }
     if (tags && tags.length > 0) {
-      query.tags = { $in: tags };
+      // For JSON field, we need to check if tags array contains any of the provided tags
+      // This is a simplified approach - for complex JSON queries, you might need raw SQL
+      where.tags = { [Op.like]: `%${tags[0]}%` }; // Simplified - checks first tag
     }
 
-    const documents = await Document.find(query).sort({ dateUploaded: -1 });
+    const documents = await Document.findAll({
+      where,
+      order: [['dateUploaded', 'DESC']]
+    });
     res.json(documents);
   } catch (err) {
     console.error('Error in advanced search:', err);
@@ -1139,8 +1296,10 @@ router.post('/search/advanced', async (req, res) => {
 // Check for delayed documents and update their status
 router.get('/delays/check', async (req, res) => {
   try {
-    const documents = await Document.find({ 
-      status: { $in: ['Submitted', 'Under Review', 'Processing', 'On Hold'] }
+    const documents = await Document.findAll({ 
+      where: {
+        status: { [Op.in]: ['Submitted', 'Under Review', 'Processing', 'On Hold'] }
+      }
     });
 
     const delayedDocs = [];
@@ -1150,12 +1309,14 @@ router.get('/delays/check', async (req, res) => {
       const timeDiff = (now - new Date(doc.currentStageStartTime)) / (1000 * 60 * 60); // hours
       
       if (timeDiff > doc.expectedProcessingTime) {
-        doc.isDelayed = true;
-        doc.delayedHours = Math.floor(timeDiff - doc.expectedProcessingTime);
-        await doc.save();
+        await doc.update({
+          isDelayed: true,
+          delayedHours: Math.floor(timeDiff - doc.expectedProcessingTime)
+        });
+        await doc.reload();
         
         delayedDocs.push({
-          _id: doc._id,
+          id: doc.id,
           documentId: doc.documentId,
           name: doc.name,
           type: doc.type,
@@ -1169,9 +1330,10 @@ router.get('/delays/check', async (req, res) => {
         });
       } else if (doc.isDelayed) {
         // Reset if no longer delayed
-        doc.isDelayed = false;
-        doc.delayedHours = 0;
-        await doc.save();
+        await doc.update({
+          isDelayed: false,
+          delayedHours: 0
+        });
       }
     }
 
@@ -1188,8 +1350,10 @@ router.get('/delays/check', async (req, res) => {
 // Get all delayed documents
 router.get('/delays/all', async (req, res) => {
   try {
-    const delayedDocuments = await Document.find({ isDelayed: true })
-      .sort({ delayedHours: -1 });
+    const delayedDocuments = await Document.findAll({ 
+      where: { isDelayed: true },
+      order: [['delayedHours', 'DESC']]
+    });
     
     res.json(delayedDocuments);
   } catch (err) {
@@ -1201,21 +1365,22 @@ router.get('/delays/all', async (req, res) => {
 // Get document routing history with detailed timeline
 router.get('/:id/routing-history', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    const document = await findDocument(req.params.id);
     if (!document) {
       return res.status(404).json({ message: 'Document not found' });
     }
 
     // Calculate processing time for each stage
-    const history = document.routingHistory.map((entry, index) => {
+    const routingHistory = document.routingHistory || [];
+    const history = routingHistory.map((entry, index) => {
       let processingTime = 0;
       if (index > 0) {
-        const prevEntry = document.routingHistory[index - 1];
+        const prevEntry = routingHistory[index - 1];
         processingTime = (new Date(entry.timestamp) - new Date(prevEntry.timestamp)) / (1000 * 60 * 60);
       }
 
       return {
-        ...entry.toObject(),
+        ...entry,
         processingTimeHours: Math.round(processingTime * 10) / 10
       };
     });
@@ -1239,22 +1404,28 @@ router.get('/:id/routing-history', async (req, res) => {
 // Add routing history entry when document moves
 router.post('/:id/routing-history', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    const document = await findDocument(req.params.id);
     if (!document) {
       return res.status(404).json({ message: 'Document not found' });
     }
 
     const { office, action, handler, comments } = req.body;
 
+    // Get current routing history
+    let routingHistory = document.routingHistory || [];
+    if (!Array.isArray(routingHistory)) {
+      routingHistory = [];
+    }
+
     // Calculate processing time for previous stage
-    if (document.routingHistory.length > 0) {
-      const lastEntry = document.routingHistory[document.routingHistory.length - 1];
+    if (routingHistory.length > 0) {
+      const lastEntry = routingHistory[routingHistory.length - 1];
       const processingTime = (new Date() - new Date(lastEntry.timestamp)) / (1000 * 60 * 60);
       lastEntry.processingTime = Math.round(processingTime * 10) / 10;
     }
 
     // Add new routing history entry
-    document.routingHistory.push({
+    routingHistory.push({
       office: office || document.currentOffice,
       action,
       handler: handler || '',
@@ -1264,16 +1435,15 @@ router.post('/:id/routing-history', async (req, res) => {
     });
 
     // Update current stage start time and office
-    document.currentStageStartTime = new Date();
-    if (office) {
-      document.currentOffice = office;
-    }
-
-    // Reset delay status for new stage
-    document.isDelayed = false;
-    document.delayedHours = 0;
-
-    const updatedDocument = await document.save();
+    await document.update({
+      routingHistory: routingHistory,
+      currentStageStartTime: new Date(),
+      currentOffice: office || document.currentOffice,
+      isDelayed: false,
+      delayedHours: 0
+    });
+    await document.reload();
+    const updatedDocument = document;
 
     // Create notifications when routing history is added (especially for approvals)
     try {
@@ -1324,19 +1494,19 @@ router.get('/analytics/delays', async (req, res) => {
   try {
     const { startDate, endDate, office } = req.query;
 
-    let query = { isDelayed: true };
+    const where = { isDelayed: true };
     
     if (startDate || endDate) {
-      query.dateUploaded = {};
-      if (startDate) query.dateUploaded.$gte = new Date(startDate);
-      if (endDate) query.dateUploaded.$lte = new Date(endDate);
+      where.dateUploaded = {};
+      if (startDate) where.dateUploaded[Op.gte] = new Date(startDate);
+      if (endDate) where.dateUploaded[Op.lte] = new Date(endDate);
     }
 
     if (office) {
-      query.currentOffice = office;
+      where.currentOffice = office;
     }
 
-    const delayedDocs = await Document.find(query);
+    const delayedDocs = await Document.findAll({ where });
 
     // Analytics by office
     const delaysByOffice = {};
@@ -1399,11 +1569,11 @@ router.get('/analytics/daily-activity', async (req, res) => {
     start.setHours(0, 0, 0, 0);
     end.setHours(23, 59, 59, 999);
 
-    let query = {
-      dateUploaded: { $gte: start, $lte: end }
+    const where = {
+      dateUploaded: { [Op.gte]: start, [Op.lte]: end }
     };
 
-    let documents = await Document.find(query);
+    let documents = await Document.findAll({ where });
     console.log(`Found ${documents.length} documents in date range`);
 
     // If office filter is provided, filter documents that have passed through that office
@@ -1524,7 +1694,9 @@ router.get('/analytics/daily-activity', async (req, res) => {
     const officeBreakdown = {};
     
     // Get all employees to map submitter names to offices
-    const employees = await Employee.find().populate('office');
+    const employees = await Employee.findAll({
+      include: [{ model: Office, as: 'office' }]
+    });
     
     // Create a map of submitter names to their offices
     const submitterToOffice = {};
@@ -1660,8 +1832,10 @@ router.get('/analytics/trends', async (req, res) => {
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - parseInt(months));
     
-    const documents = await Document.find({
-      dateUploaded: { $gte: startDate, $lte: endDate }
+    const documents = await Document.findAll({
+      where: {
+        dateUploaded: { [Op.gte]: startDate, [Op.lte]: endDate }
+      }
     });
 
     // Group documents by time period
@@ -1799,8 +1973,10 @@ router.get('/analytics/patterns', async (req, res) => {
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - parseInt(months));
     
-    const documents = await Document.find({
-      dateUploaded: { $gte: startDate }
+    const documents = await Document.findAll({
+      where: {
+        dateUploaded: { [Op.gte]: startDate }
+      }
     });
     
     // Pattern 1: Office-DocumentType combinations with high delay rates
@@ -1997,17 +2173,20 @@ router.get('/analytics/patterns', async (req, res) => {
 // Document tracking by scan/location
 router.get('/:id/current-location', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    const document = await findDocument(req.params.id);
     if (!document) {
       return res.status(404).json({ message: 'Document not found' });
     }
 
-    const lastScan = document.scanHistory.length > 0 
-      ? document.scanHistory[document.scanHistory.length - 1]
+    const scanHistory = document.scanHistory && Array.isArray(document.scanHistory) ? document.scanHistory : [];
+    const routingHistory = document.routingHistory && Array.isArray(document.routingHistory) ? document.routingHistory : [];
+    
+    const lastScan = scanHistory.length > 0 
+      ? scanHistory[scanHistory.length - 1]
       : null;
 
-    const lastRouting = document.routingHistory.length > 0
-      ? document.routingHistory[document.routingHistory.length - 1]
+    const lastRouting = routingHistory.length > 0
+      ? routingHistory[routingHistory.length - 1]
       : null;
 
     res.json({
@@ -2038,12 +2217,17 @@ router.get('/:id/current-location', async (req, res) => {
 router.get('/employee/:employeeId', async (req, res) => {
   try {
     console.log('Fetching documents for employee ID:', req.params.employeeId);
-    const documents = await Document.find({
-      $or: [
-        { assignedTo: req.params.employeeId },
-        { currentHandler: req.params.employeeId }
+    const employeeId = parseInt(req.params.employeeId);
+    const documents = await Document.findAll({
+      where: {
+        [Op.or]: [
+          { currentHandlerId: employeeId }
+        ]
+      },
+      include: [
+        { model: Employee, as: 'currentHandler' }
       ]
-    }).populate('assignedTo').populate('currentHandler');
+    });
     
     console.log('Found documents:', documents.length);
     res.json(documents);
@@ -2058,31 +2242,28 @@ router.post('/:id/forward-to-employee', async (req, res) => {
   try {
     console.log('Forward request - Document ID:', req.params.id, 'Employee ID:', req.body.employeeId);
     
-    const document = await Document.findById(req.params.id);
+    const document = await findDocument(req.params.id);
     if (!document) {
       return res.status(404).json({ message: 'Document not found' });
     }
 
-    const employee = await Employee.findById(req.body.employeeId);
+    const employee = await Employee.findByPk(req.body.employeeId, {
+      include: [{ model: Office, as: 'office' }]
+    });
     if (!employee) {
       return res.status(404).json({ message: 'Employee not found' });
     }
 
-    console.log('Forwarding to employee:', employee.name, 'ID:', employee._id);
+    console.log('Forwarding to employee:', employee.name, 'ID:', employee.id);
 
-    // Add employee to assignedTo array if not already there
-    if (!document.assignedTo.includes(req.body.employeeId)) {
-      document.assignedTo.push(req.body.employeeId);
+    // Get current routing history
+    let routingHistory = document.routingHistory || [];
+    if (!Array.isArray(routingHistory)) {
+      routingHistory = [];
     }
 
-    // Set as current handler
-    document.currentHandler = req.body.employeeId;
-    document.forwardedBy = req.body.forwardedBy || 'Admin';
-    document.forwardedDate = new Date();
-    document.status = 'Under Review';
-
     // Add to routing history
-    document.routingHistory.push({
+    routingHistory.push({
       office: employee.office?.name || employee.department || 'Employee',
       action: 'forwarded',
       handler: employee.name,
@@ -2090,8 +2271,15 @@ router.post('/:id/forward-to-employee', async (req, res) => {
       comments: req.body.comments || `Document forwarded to ${employee.name}`
     });
 
-    await document.save();
-    console.log('Document saved with assignedTo:', document.assignedTo, 'currentHandler:', document.currentHandler);
+    await document.update({
+      currentHandlerId: req.body.employeeId,
+      forwardedBy: req.body.forwardedBy || 'Admin',
+      forwardedDate: new Date(),
+      status: 'Under Review',
+      routingHistory: routingHistory
+    });
+    await document.reload();
+    console.log('Document saved with currentHandlerId:', document.currentHandlerId);
 
     // Create notification for forwarding to employee
     try {
@@ -2103,11 +2291,10 @@ router.post('/:id/forward-to-employee', async (req, res) => {
       console.error('Error creating forwarding notifications:', notifError);
     }
 
+    const updatedDoc = await findDocument(req.params.id);
     res.json({
       message: `Document forwarded to ${employee.name} successfully`,
-      document: await Document.findById(req.params.id)
-        .populate('assignedTo')
-        .populate('currentHandler')
+      document: updatedDoc
     });
   } catch (err) {
     console.error('Error forwarding document:', err);
@@ -2118,28 +2305,20 @@ router.post('/:id/forward-to-employee', async (req, res) => {
 // Remove employee access from document
 router.post('/:id/remove-employee-access', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    const document = await findDocument(req.params.id);
     if (!document) {
       return res.status(404).json({ message: 'Document not found' });
     }
 
-    // Remove employee from assignedTo array
-    document.assignedTo = document.assignedTo.filter(
-      empId => empId.toString() !== req.body.employeeId
-    );
-
     // Clear current handler if it's this employee
-    if (document.currentHandler && document.currentHandler.toString() === req.body.employeeId) {
-      document.currentHandler = null;
+    if (document.currentHandlerId && document.currentHandlerId.toString() === req.body.employeeId) {
+      await document.update({ currentHandlerId: null });
     }
 
-    await document.save();
-
+    await document.reload();
     res.json({
       message: 'Employee access removed successfully',
-      document: await Document.findById(req.params.id)
-        .populate('assignedTo')
-        .populate('currentHandler')
+      document: document
     });
   } catch (err) {
     console.error('Error removing employee access:', err);
@@ -2150,7 +2329,7 @@ router.post('/:id/remove-employee-access', async (req, res) => {
 // Download/view document file
 router.get('/:id/download', async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    const document = await findDocument(req.params.id);
     if (!document) {
       return res.status(404).json({ message: 'Document not found' });
     }

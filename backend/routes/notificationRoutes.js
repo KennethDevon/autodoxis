@@ -5,26 +5,61 @@ const Document = require('../models/Document');
 const Employee = require('../models/Employee');
 const User = require('../models/User');
 const Office = require('../models/Office');
+const { Op } = require('sequelize');
 
 // Get all notifications for a user
 router.get('/user/:userId', async (req, res) => {
   try {
     const { limit = 50, unreadOnly = false } = req.query;
-    let query = { userId: req.params.userId };
+    // Convert userId to string to match the database schema (userId is STRING(255))
+    const userId = req.params.userId.toString();
     
-    if (unreadOnly === 'true') {
-      query.read = false;
+    if (!userId || userId === 'undefined' || userId === 'null') {
+      return res.status(400).json({ message: 'Invalid user ID' });
     }
     
-    const notifications = await Notification.find(query)
-      .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .populate('documentId', 'documentId name status')
-      .populate('employeeId', 'name email');
+    const where = { userId };
+    
+    if (unreadOnly === 'true') {
+      where.read = false;
+    }
+    
+    // Try to include related models, but handle errors gracefully
+    let notifications;
+    try {
+      notifications = await Notification.findAll({
+        where,
+        order: [['createdAt', 'DESC']],
+        limit: parseInt(limit),
+        include: [
+          { 
+            model: Document, 
+            as: 'document', 
+            attributes: ['documentId', 'name', 'status'],
+            required: false // LEFT JOIN - don't fail if document doesn't exist
+          },
+          { 
+            model: Employee, 
+            as: 'employee', 
+            attributes: ['name', 'email'],
+            required: false // LEFT JOIN - don't fail if employee doesn't exist
+          }
+        ]
+      });
+    } catch (includeError) {
+      // If include fails (associations not set up), fetch without includes
+      console.warn('Warning: Failed to include related models, fetching without includes:', includeError.message);
+      notifications = await Notification.findAll({
+        where,
+        order: [['createdAt', 'DESC']],
+        limit: parseInt(limit)
+      });
+    }
     
     res.json(notifications);
   } catch (err) {
     console.error('Error fetching notifications:', err);
+    console.error('Error details:', err.stack);
     res.status(500).json({ message: err.message });
   }
 });
@@ -33,17 +68,21 @@ router.get('/user/:userId', async (req, res) => {
 router.get('/employee/:employeeId', async (req, res) => {
   try {
     const { limit = 50, unreadOnly = false } = req.query;
-    let query = { employeeId: req.params.employeeId };
+    const where = { employeeId: req.params.employeeId };
     
     if (unreadOnly === 'true') {
-      query.read = false;
+      where.read = false;
     }
     
-    const notifications = await Notification.find(query)
-      .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .populate('documentId', 'documentId name status')
-      .populate('employeeId', 'name email');
+    const notifications = await Notification.findAll({
+      where,
+      order: [['createdAt', 'DESC']],
+      limit: parseInt(limit),
+      include: [
+        { model: Document, as: 'document', attributes: ['documentId', 'name', 'status'] },
+        { model: Employee, as: 'employee', attributes: ['name', 'email'] }
+      ]
+    });
     
     res.json(notifications);
   } catch (err) {
@@ -55,9 +94,11 @@ router.get('/employee/:employeeId', async (req, res) => {
 // Get unread count for a user
 router.get('/user/:userId/unread-count', async (req, res) => {
   try {
-    const count = await Notification.countDocuments({ 
-      userId: req.params.userId, 
-      read: false 
+    const count = await Notification.count({ 
+      where: {
+        userId: req.params.userId, 
+        read: false 
+      }
     });
     res.json({ count });
   } catch (err) {
@@ -69,9 +110,11 @@ router.get('/user/:userId/unread-count', async (req, res) => {
 // Get unread count for an employee
 router.get('/employee/:employeeId/unread-count', async (req, res) => {
   try {
-    const count = await Notification.countDocuments({ 
-      employeeId: req.params.employeeId, 
-      read: false 
+    const count = await Notification.count({ 
+      where: {
+        employeeId: req.params.employeeId, 
+        read: false 
+      }
     });
     res.json({ count });
   } catch (err) {
@@ -83,13 +126,12 @@ router.get('/employee/:employeeId/unread-count', async (req, res) => {
 // Mark notification as read
 router.patch('/:id/read', async (req, res) => {
   try {
-    const notification = await Notification.findById(req.params.id);
+    const notification = await Notification.findByPk(req.params.id);
     if (!notification) {
       return res.status(404).json({ message: 'Notification not found' });
     }
     
-    notification.read = true;
-    await notification.save();
+    await notification.update({ read: true });
     
     res.json(notification);
   } catch (err) {
@@ -101,14 +143,19 @@ router.patch('/:id/read', async (req, res) => {
 // Mark all notifications as read for a user
 router.patch('/user/:userId/read-all', async (req, res) => {
   try {
-    const result = await Notification.updateMany(
-      { userId: req.params.userId, read: false },
-      { $set: { read: true } }
+    const [updatedCount] = await Notification.update(
+      { read: true },
+      { 
+        where: { 
+          userId: req.params.userId, 
+          read: false 
+        }
+      }
     );
     
     res.json({ 
       message: 'All notifications marked as read',
-      updatedCount: result.modifiedCount 
+      updatedCount 
     });
   } catch (err) {
     console.error('Error marking all notifications as read:', err);
@@ -119,14 +166,19 @@ router.patch('/user/:userId/read-all', async (req, res) => {
 // Mark all notifications as read for an employee
 router.patch('/employee/:employeeId/read-all', async (req, res) => {
   try {
-    const result = await Notification.updateMany(
-      { employeeId: req.params.employeeId, read: false },
-      { $set: { read: true } }
+    const [updatedCount] = await Notification.update(
+      { read: true },
+      { 
+        where: { 
+          employeeId: req.params.employeeId, 
+          read: false 
+        }
+      }
     );
     
     res.json({ 
       message: 'All notifications marked as read',
-      updatedCount: result.modifiedCount 
+      updatedCount 
     });
   } catch (err) {
     console.error('Error marking all employee notifications as read:', err);
@@ -137,12 +189,12 @@ router.patch('/employee/:employeeId/read-all', async (req, res) => {
 // Delete a notification
 router.delete('/:id', async (req, res) => {
   try {
-    const notification = await Notification.findById(req.params.id);
+    const notification = await Notification.findByPk(req.params.id);
     if (!notification) {
       return res.status(404).json({ message: 'Notification not found' });
     }
     
-    await Notification.deleteOne({ _id: req.params.id });
+    await notification.destroy();
     res.json({ message: 'Notification deleted' });
   } catch (err) {
     console.error('Error deleting notification:', err);
@@ -153,10 +205,12 @@ router.delete('/:id', async (req, res) => {
 // Delete all notifications for a user
 router.delete('/user/:userId/all', async (req, res) => {
   try {
-    const result = await Notification.deleteMany({ userId: req.params.userId });
+    const deletedCount = await Notification.destroy({ 
+      where: { userId: req.params.userId } 
+    });
     res.json({ 
       message: 'All notifications deleted',
-      deletedCount: result.deletedCount 
+      deletedCount 
     });
   } catch (err) {
     console.error('Error deleting all notifications:', err);
@@ -167,8 +221,7 @@ router.delete('/user/:userId/all', async (req, res) => {
 // Helper function to create notifications (can be imported by other routes)
 const createNotification = async (notificationData) => {
   try {
-    const notification = new Notification(notificationData);
-    await notification.save();
+    const notification = await Notification.create(notificationData);
     return notification;
   } catch (err) {
     console.error('Error creating notification:', err);
@@ -182,14 +235,14 @@ const findNextRecipients = async (document) => {
   const recipientUserIds = new Set();
   
   try {
-    // 1. Check if document is assigned to a specific employee (currentHandler)
-    if (document.currentHandler) {
-      console.log(`🔍 Finding user for currentHandler: ${document.currentHandler}`);
-      const employee = await Employee.findById(document.currentHandler);
+    // 1. Check if document is assigned to a specific employee (currentHandlerId)
+    if (document.currentHandlerId) {
+      console.log(`🔍 Finding user for currentHandlerId: ${document.currentHandlerId}`);
+      const employee = await Employee.findByPk(document.currentHandlerId);
       if (employee && employee.employeeId) {
-        const user = await User.findOne({ employeeId: employee.employeeId });
+        const user = await User.findOne({ where: { employeeId: employee.employeeId } });
         if (user) {
-          recipientUserIds.add(user._id.toString());
+          recipientUserIds.add(user.id.toString());
           console.log(`  ✓ Found user for employee ${employee.name}: ${user.username || user.email}`);
         } else {
           console.log(`  ⚠️ No user found for employee ${employee.name} (employeeId: ${employee.employeeId})`);
@@ -202,18 +255,21 @@ const findNextRecipients = async (document) => {
       console.log(`🔍 Finding users for nextOffice: ${document.nextOffice}`);
       
       // Try to find office by name
-      const office = await Office.findOne({ name: document.nextOffice });
-      if (office && office.employees && office.employees.length > 0) {
-        // Find all employees in this office
-        const employees = await Employee.find({ _id: { $in: office.employees } });
+      const office = await Office.findOne({ where: { name: document.nextOffice } });
+      if (office) {
+        // Find all employees in this office using the association
+        const employees = await Employee.findAll({ 
+          where: { officeId: office.id },
+          include: [{ model: Office, as: 'office' }]
+        });
         console.log(`  Found ${employees.length} employees in office ${document.nextOffice}`);
         
         // Find users for each employee
         for (const emp of employees) {
           if (emp.employeeId) {
-            const user = await User.findOne({ employeeId: emp.employeeId });
+            const user = await User.findOne({ where: { employeeId: emp.employeeId } });
             if (user) {
-              recipientUserIds.add(user._id.toString());
+              recipientUserIds.add(user.id.toString());
               console.log(`    ✓ Found user for employee ${emp.name}: ${user.username || user.email}`);
             }
           }
@@ -221,12 +277,12 @@ const findNextRecipients = async (document) => {
       } else {
         // If office not found by name, try to find employees by department (fallback)
         console.log(`  Office "${document.nextOffice}" not found, trying department match...`);
-        const employees = await Employee.find({ department: document.nextOffice });
+        const employees = await Employee.findAll({ where: { department: document.nextOffice } });
         for (const emp of employees) {
           if (emp.employeeId) {
-            const user = await User.findOne({ employeeId: emp.employeeId });
+            const user = await User.findOne({ where: { employeeId: emp.employeeId } });
             if (user) {
-              recipientUserIds.add(user._id.toString());
+              recipientUserIds.add(user.id.toString());
               console.log(`    ✓ Found user for employee ${emp.name} (department match): ${user.username || user.email}`);
             }
           }
@@ -255,21 +311,21 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
       
       // Try multiple methods to find the submitter user
       // Method 1: Try to find user by username
-      submitterUser = await User.findOne({ username: document.submittedBy });
+      submitterUser = await User.findOne({ where: { username: document.submittedBy } });
       if (submitterUser) {
-        console.log(`  ✓ Found by username: ${submitterUser.username} (ID: ${submitterUser._id})`);
+        console.log(`  ✓ Found by username: ${submitterUser.username} (ID: ${submitterUser.id})`);
       }
       
       // Method 2: Try to find by employee name (submittedBy might be employee name)
       if (!submitterUser) {
         const Employee = require('../models/Employee');
         // Try exact match first
-        let employee = await Employee.findOne({ name: document.submittedBy });
+        let employee = await Employee.findOne({ where: { name: document.submittedBy } });
         
         // If not found, try partial match (in case of variations)
         if (!employee) {
           // Try matching with name that contains the submittedBy value
-          const allEmployees = await Employee.find({});
+          const allEmployees = await Employee.findAll();
           employee = allEmployees.find(emp => 
             emp.name.toLowerCase().includes(document.submittedBy.toLowerCase()) ||
             document.submittedBy.toLowerCase().includes(emp.name.toLowerCase())
@@ -278,7 +334,7 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
         
         if (employee && employee.employeeId) {
           console.log(`  ✓ Found employee: ${employee.name}, employeeId: ${employee.employeeId}`);
-          submitterUser = await User.findOne({ employeeId: employee.employeeId });
+          submitterUser = await User.findOne({ where: { employeeId: employee.employeeId } });
           if (submitterUser) {
             console.log(`  ✓ Found user linked to employee: ${submitterUser.username || submitterUser.email}`);
           } else {
@@ -291,7 +347,7 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
       
       // Method 3: Try finding by email if submittedBy might be an email
       if (!submitterUser) {
-        submitterUser = await User.findOne({ email: document.submittedBy });
+        submitterUser = await User.findOne({ where: { email: document.submittedBy } });
         if (submitterUser) {
           console.log(`  ✓ Found by email: ${submitterUser.email}`);
         }
@@ -299,7 +355,7 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
       
       // Method 4: Try finding by partial username match (case-insensitive)
       if (!submitterUser) {
-        const allUsers = await User.find({});
+        const allUsers = await User.findAll();
         submitterUser = allUsers.find(user => 
           user.username && user.username.toLowerCase().includes(document.submittedBy.toLowerCase()) ||
           user.email && user.email.toLowerCase().includes(document.submittedBy.toLowerCase())
@@ -315,11 +371,11 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
         const message = getNotificationMessage(eventType, document, options, true); // true = isSubmitter
         
         notifications.push({
-          userId: submitterUser._id.toString(),
+          userId: submitterUser.id.toString(),
           type: eventType,
           title,
           message,
-          documentId: document._id,
+          documentId: document.id,
           documentName: document.name,
           metadata: {
             documentId: document.documentId,
@@ -328,7 +384,7 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
             ...options
           }
         });
-        console.log(`✅ Notification sent to document owner: ${submitterUser.username || submitterUser.email} (ID: ${submitterUser._id}) - "${title}"`);
+        console.log(`✅ Notification sent to document owner: ${submitterUser.username || submitterUser.email} (ID: ${submitterUser.id}) - "${title}"`);
         console.log(`   Message: "${message}"`);
       } else {
         console.log(`❌ User not found for document owner: "${document.submittedBy}". Tried username, employee name, email, and partial match.`);
@@ -336,7 +392,7 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
         console.log(`   ⚠️ OWNER WILL NOT BE NOTIFIED - This is a problem!`);
         
         // Log all users for debugging
-        const allUsers = await User.find({}).select('username email employeeId');
+        const allUsers = await User.findAll({ attributes: ['username', 'email', 'employeeId'] });
         console.log(`   Available users: ${JSON.stringify(allUsers.map(u => ({ username: u.username, email: u.email, employeeId: u.employeeId })), null, 2)}`);
       }
     } else {
@@ -347,7 +403,7 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
     // 2. Notify next recipients (users who should receive the document)
     // This applies to both uploads and forwarding events
     const nextRecipientIds = await findNextRecipients(document);
-    const ownerUserId = submitterUser ? submitterUser._id.toString() : null;
+    const ownerUserId = submitterUser ? submitterUser.id.toString() : null;
     
     if (nextRecipientIds.length > 0) {
       console.log(`📬 Notifying ${nextRecipientIds.length} next recipient(s) for event: ${eventType}`);
@@ -434,7 +490,7 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
           type: eventType,
           title,
           message,
-          documentId: document._id,
+          documentId: document.id,
           documentName: document.name,
           metadata: {
             documentId: document.documentId,
@@ -445,7 +501,7 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
           }
         });
         
-        const recipientUser = await User.findById(recipientId);
+        const recipientUser = await User.findByPk(recipientId);
         console.log(`  ✓ Notification sent to recipient: ${recipientUser?.username || recipientUser?.email || recipientId} - "${title}"`);
       }
     } else {
@@ -456,11 +512,11 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
     // IMPORTANT: Uploads notify everyone, forwarding notifies admins, status changes only notify owner
     if (eventType === 'document_uploaded') {
       // For uploads, notify ALL users (except the owner and next recipients) so everyone knows a new document was uploaded
-      const usersToNotify = await User.find({});
+      const usersToNotify = await User.findAll();
       console.log(`📢 Document uploaded - notifying all other users (except owner and recipients)`);
       
       for (const user of usersToNotify) {
-        const userIdStr = user._id.toString();
+        const userIdStr = user.id.toString();
         
         // Skip if this user is the document owner (already notified above with personalized message)
         let isOwner = false;
@@ -489,7 +545,7 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
           type: eventType,
           title,
           message,
-          documentId: document._id,
+          documentId: document.id,
           documentName: document.name,
           metadata: {
             documentId: document.documentId,
@@ -502,11 +558,11 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
       }
     } else if (eventType === 'document_forwarded') {
       // For forwarding events, notify ALL ADMIN users so they can track document flow
-      const adminUsers = await User.find({ role: 'Admin' });
+      const adminUsers = await User.findAll({ where: { role: 'Admin' } });
       console.log(`📢 Document forwarded - notifying all admins (${adminUsers.length} admins)`);
       
       for (const admin of adminUsers) {
-        const adminIdStr = admin._id.toString();
+        const adminIdStr = admin.id.toString();
         
         // Skip if admin is the document owner (already notified above with personalized message)
         let isOwner = false;
@@ -535,7 +591,7 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
           type: eventType,
           title,
           message,
-          documentId: document._id,
+          documentId: document.id,
           documentName: document.name,
           metadata: {
             documentId: document.documentId,
@@ -567,7 +623,7 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
             type: eventType,
             title,
             message,
-            documentId: document._id,
+            documentId: document.id,
             documentName: document.name,
             metadata: {
               documentId: document.documentId,
@@ -578,7 +634,7 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
             }
           });
           
-          const recipientUser = await User.findById(recipientId);
+          const recipientUser = await User.findByPk(recipientId);
           console.log(`  ✓ Notification sent to recipient: ${recipientUser?.username || recipientUser?.email || recipientId} - "${title}"`);
         }
       }
@@ -590,7 +646,7 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
     
     // Create all notifications
     if (notifications.length > 0) {
-      await Notification.insertMany(notifications);
+      await Notification.bulkCreate(notifications);
     }
     
     return notifications;

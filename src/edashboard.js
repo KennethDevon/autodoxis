@@ -113,7 +113,8 @@ function Edashboard({ onLogout }) {
           try {
             // Get employee data by employeeId
             const employeesResponse = await fetch(`${API_URL}/employees`);
-            const allEmployees = await employeesResponse.json();
+            const allEmployeesData = await employeesResponse.json();
+            const allEmployees = Array.isArray(allEmployeesData) ? allEmployeesData : [];
             const currentEmployee = allEmployees.find(emp => emp.employeeId === parsedUser.employeeId);
             
             console.log('Current employee found:', currentEmployee);
@@ -123,6 +124,7 @@ function Edashboard({ onLogout }) {
               // Fetch ALL documents
               const response = await fetch(`${API_URL}/documents`);
               let fetchedDocuments = await response.json();
+              fetchedDocuments = Array.isArray(fetchedDocuments) ? fetchedDocuments : [];
               console.log('Total documents fetched:', fetchedDocuments.length);
               
               // Helper function to check if document is assigned/forwarded to this employee
@@ -405,9 +407,9 @@ function Edashboard({ onLogout }) {
                 console.log('Filtered for other position:', filteredDocuments.length);
               }
               
-              setDocuments(filteredDocuments);
-              setAllDocuments(fetchedDocuments); // Store ALL documents for History Logs
-              calculateSummaryStats(filteredDocuments);
+              setDocuments(Array.isArray(filteredDocuments) ? filteredDocuments : []);
+              setAllDocuments(Array.isArray(fetchedDocuments) ? fetchedDocuments : []); // Store ALL documents for History Logs
+              calculateSummaryStats(Array.isArray(filteredDocuments) ? filteredDocuments : []);
               setLoading(false);
               // System notification only on initial load
               if (isInitialLoad.current && filteredDocuments.length > 0) {
@@ -425,10 +427,11 @@ function Edashboard({ onLogout }) {
       // Fallback: fetch all documents if no employee found
       const response = await fetch(`${API_URL}/documents`);
       const data = await response.json();
-      console.log('Documents fetched (fallback):', data.length);
-      setDocuments(data);
-      setAllDocuments(data); // Also update allDocuments for History Logs
-      calculateSummaryStats(data);
+      const documentsArray = Array.isArray(data) ? data : [];
+      console.log('Documents fetched (fallback):', documentsArray.length);
+      setDocuments(documentsArray);
+      setAllDocuments(documentsArray); // Also update allDocuments for History Logs
+      calculateSummaryStats(documentsArray);
       // System notification only on initial load
       if (isInitialLoad.current && data.length > 0) {
         isInitialLoad.current = false;
@@ -1266,8 +1269,33 @@ function Edashboard({ onLogout }) {
   };
 
   const handleDeleteDocument = (documentId) => {
-    const document = documents.find(doc => doc._id === documentId);
-    setDocumentToDelete({ id: documentId, name: document?.name || 'this document' });
+    if (!documentId) {
+      console.error('Document ID is undefined');
+      setShowNotificationPane(true);
+      setNotificationMessage('Error: Document ID is missing');
+      setNotificationType('error');
+      setTimeout(() => setShowNotificationPane(false), 3000);
+      return;
+    }
+    
+    // Try to find document by _id, id, or documentId
+    const document = documents.find(doc => 
+      doc._id === documentId || 
+      doc.id === documentId || 
+      doc.documentId === documentId
+    );
+    
+    // Use documentId (string) if available, otherwise use _id or id
+    const idToUse = document?.documentId || document?._id || document?.id || documentId;
+    
+    console.log('Deleting document:', { 
+      documentId, 
+      found: !!document, 
+      idToUse,
+      documentIds: document ? { _id: document._id, id: document.id, documentId: document.documentId } : null
+    });
+    
+    setDocumentToDelete({ id: idToUse, name: document?.name || 'this document' });
     setShowDeleteDocumentModal(true);
   };
 
@@ -1286,17 +1314,20 @@ function Edashboard({ onLogout }) {
         fetchDocuments(); // Refresh the documents list
         setTimeout(() => setShowNotificationPane(false), 3000);
       } else {
+        // Get the actual error message from the response
+        const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
+        console.error('Delete error:', errorData);
         setShowNotificationPane(true);
-        setNotificationMessage('Failed to delete document');
+        setNotificationMessage(`Failed to delete document: ${errorData.message || 'Unknown error'}`);
         setNotificationType('error');
-        setTimeout(() => setShowNotificationPane(false), 3000);
+        setTimeout(() => setShowNotificationPane(false), 5000);
       }
     } catch (error) {
       console.error('Error deleting document:', error);
       setShowNotificationPane(true);
-      setNotificationMessage('Error deleting document');
+      setNotificationMessage(`Error deleting document: ${error.message || 'Network error'}`);
       setNotificationType('error');
-      setTimeout(() => setShowNotificationPane(false), 3000);
+      setTimeout(() => setShowNotificationPane(false), 5000);
     }
     
     setShowDeleteDocumentModal(false);
@@ -1493,13 +1524,16 @@ function Edashboard({ onLogout }) {
 
   // Get unique submitters for filter dropdown
   const getUniqueSubmitters = () => {
+    if (!Array.isArray(documents)) {
+      return [];
+    }
     const submitters = [...new Set(documents.map(doc => doc.submittedBy).filter(Boolean))];
     return submitters;
   };
 
   // Filter documents based on search and filters
   // Only show documents assigned to the employee
-  const filteredDocuments = documents.filter(doc => {
+  const filteredDocuments = Array.isArray(documents) ? documents.filter(doc => {
     const matchesSearch = doc.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          doc.documentId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          doc.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -1509,7 +1543,7 @@ function Edashboard({ onLogout }) {
     const matchesSubmitter = submitterFilter === 'All' || doc.submittedBy === submitterFilter;
     
     return matchesSearch && matchesStatus && matchesSubmitter;
-  });
+  }) : [];
 
   const handleLogout = () => {
     setShowLogoutModal(true);
@@ -1632,11 +1666,109 @@ function Edashboard({ onLogout }) {
     }
   };
 
-  const handleDocumentInputChange = (field, value) => {
+  const handleDocumentInputChange = async (field, value) => {
     setDocumentForm(prev => ({
       ...prev,
       [field]: value
     }));
+    
+    // Auto-select receiver based on document type
+    if (field === 'type' && value) {
+      const docType = value.toUpperCase();
+      const isFacultyLoading = docType.includes('FACULTY LOADING') || value === 'Faculty Loading';
+      const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || value === 'Requested Subject';
+      
+      if (isFacultyLoading || isRequestedSubject) {
+        try {
+          // Fetch all employees
+          const response = await fetch(`${API_URL}/employees`);
+          if (response.ok) {
+            const allEmployees = await response.json();
+            
+            // Get current user's department to match Program Head
+            let userDepartment = '';
+            if (employee && employee.department) {
+              userDepartment = employee.department;
+            } else {
+              const userData = localStorage.getItem('userData');
+              if (userData) {
+                const parsedUser = JSON.parse(userData);
+                if (parsedUser.employeeId) {
+                  const currentEmp = allEmployees.find(emp => emp.employeeId === parsedUser.employeeId);
+                  if (currentEmp && currentEmp.department) {
+                    userDepartment = currentEmp.department;
+                  }
+                }
+              }
+            }
+            
+            // Find Program Head employee
+            // Try to find one in the same department first, otherwise get any Program Head
+            let programHead = null;
+            if (userDepartment) {
+              programHead = allEmployees.find(emp => 
+                emp.position === 'Program Head' && 
+                (emp.department === userDepartment || 
+                 emp.department?.toLowerCase() === userDepartment.toLowerCase() ||
+                 emp.office?.name === userDepartment ||
+                 emp.office?.department === userDepartment)
+              );
+            }
+            
+            // If not found in same department, get any Program Head
+            if (!programHead) {
+              programHead = allEmployees.find(emp => emp.position === 'Program Head');
+            }
+            
+            if (programHead) {
+              // Find the office for this Program Head
+              let programHeadOffice = null;
+              
+              // First try to find by officeId
+              if (programHead.officeId) {
+                programHeadOffice = offices.find(office => 
+                  office._id === programHead.officeId ||
+                  office.id === programHead.officeId
+                );
+              }
+              
+              // If not found, try to match by department or name
+              if (!programHeadOffice) {
+                programHeadOffice = offices.find(office => 
+                  office.name === programHead.department ||
+                  office.department === programHead.department ||
+                  office.name?.toLowerCase() === programHead.department?.toLowerCase() ||
+                  office.department?.toLowerCase() === programHead.department?.toLowerCase()
+                );
+              }
+              
+              // Set the office and fetch employees
+              const officeToUse = programHeadOffice ? programHeadOffice.name : programHead.department;
+              setSelectedOffice(officeToUse);
+              
+              // Fetch employees for the office/department
+              await fetchEmployees(officeToUse);
+              
+              // Set the receiver (the employee name, which will be matched when employees list loads)
+              setDocumentForm(prev => ({
+                ...prev,
+                receiver: programHead.name
+              }));
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching employees for auto-selection:', error);
+        }
+      } else {
+        // Clear receiver if document type is not Faculty Loading or Requested Subject
+        setSelectedOffice('');
+        setEmployees([]);
+        setDocumentForm(prev => ({
+          ...prev,
+          receiver: ''
+        }));
+      }
+    }
   };
 
   const handleOfficeChange = (officeName) => {
@@ -1855,8 +1987,14 @@ function Edashboard({ onLogout }) {
           time: '',
           notes: '',
           attachment: null,
-          receiver: ''
+          receiver: '',
+          travelOrderDepartureDate: '',
+          travelOrderDepartureTime: '',
+          travelOrderReturnDate: '',
+          travelOrderReturnTime: ''
         });
+        setSelectedOffice('');
+        setEmployees([]);
         fetchDocuments(); // Refresh the documents list
       } else {
         const errorData = await response.json();
@@ -1884,6 +2022,8 @@ function Edashboard({ onLogout }) {
       travelOrderReturnDate: '',
       travelOrderReturnTime: ''
     });
+    setSelectedOffice('');
+    setEmployees([]);
   };
 
   const handleOpenDocumentModal = async () => {
@@ -1929,9 +2069,16 @@ function Edashboard({ onLogout }) {
       senderName = user.username || user.name || '';
     }
     
+    // Auto-set current date and time
+    const now = new Date();
+    const currentDate = now.toISOString().split('T')[0]; // YYYY-MM-DD format
+    const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`; // HH:MM format
+    
     setDocumentForm(prev => ({
       ...prev,
-      sender: senderName
+      sender: senderName,
+      date: currentDate,
+      time: currentTime
     }));
     // Reset office and employee selections
     setSelectedOffice('');
@@ -2959,7 +3106,13 @@ function Edashboard({ onLogout }) {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleDeleteDocument(document._id);
+                                  const docId = document._id || document.id || document.documentId;
+                                  if (docId) {
+                                    handleDeleteDocument(docId);
+                                  } else {
+                                    console.error('Document ID is missing:', document);
+                                    alert('Error: Document ID is missing. Cannot delete this document.');
+                                  }
                                 }}
                                 style={{
                                   backgroundColor: '#e74c3c',
@@ -4206,7 +4359,13 @@ function Edashboard({ onLogout }) {
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      handleDeleteDocument(doc._id);
+                                      const docId = doc._id || doc.id || doc.documentId;
+                                      if (docId) {
+                                        handleDeleteDocument(docId);
+                                      } else {
+                                        console.error('Document ID is missing:', doc);
+                                        alert('Error: Document ID is missing. Cannot delete this document.');
+                                      }
                                     }}
                                     style={{
                                       padding: '6px 12px',
@@ -4832,8 +4991,8 @@ function Edashboard({ onLogout }) {
                 </select>
               </div>
 
-              {/* Date and Time - Hide for TRAVEL ORDER */}
-              {!(documentForm.type && documentForm.type.toUpperCase().includes('TRAVEL ORDER')) && (
+              {/* Date and Time - Hide by default and for TRAVEL ORDER */}
+              {documentForm.type && !(documentForm.type.toUpperCase().includes('TRAVEL ORDER')) && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
                 <div>
                   <label style={{
@@ -4843,19 +5002,23 @@ function Edashboard({ onLogout }) {
                     fontWeight: '600',
                     color: '#2c3e50'
                   }}>
-                    Date *
+                    Date * <span style={{ fontSize: '12px', fontWeight: '400', color: '#7f8c8d' }}>(Auto-filled)</span>
                   </label>
                   <input
                     type="date"
                     value={documentForm.date}
                     onChange={(e) => handleDocumentInputChange('date', e.target.value)}
+                    readOnly
                     style={{
                       width: '100%',
                       padding: '12px',
                       border: '1px solid #ddd',
                       borderRadius: '8px',
                       fontSize: '14px',
-                      boxSizing: 'border-box'
+                      boxSizing: 'border-box',
+                      backgroundColor: '#f8f9fa',
+                      color: '#6c757d',
+                      cursor: 'not-allowed'
                     }}
                   />
                 </div>
@@ -4867,19 +5030,23 @@ function Edashboard({ onLogout }) {
                     fontWeight: '600',
                     color: '#2c3e50'
                   }}>
-                    Time *
+                    Time * <span style={{ fontSize: '12px', fontWeight: '400', color: '#7f8c8d' }}>(Auto-filled)</span>
                   </label>
                   <input
                     type="time"
                     value={documentForm.time}
                     onChange={(e) => handleDocumentInputChange('time', e.target.value)}
+                    readOnly
                     style={{
                       width: '100%',
                       padding: '12px',
                       border: '1px solid #ddd',
                       borderRadius: '8px',
                       fontSize: '14px',
-                      boxSizing: 'border-box'
+                      boxSizing: 'border-box',
+                      backgroundColor: '#f8f9fa',
+                      color: '#6c757d',
+                      cursor: 'not-allowed'
                     }}
                   />
                 </div>
@@ -5034,82 +5201,97 @@ function Edashboard({ onLogout }) {
                 </>
               )}
 
-              {/* Receiver */}
-              <div>
-                <label style={{
-                  display: 'block',
-                  marginBottom: '8px',
-                  fontSize: '14px',
-                  fontWeight: '600',
-                  color: '#2c3e50'
-                }}>
-                  To (Receiver) *
-                </label>
-                <div style={{ marginBottom: '12px' }}>
-                  <label style={{
-                    display: 'block',
-                    marginBottom: '4px',
-                    fontSize: '12px',
-                    fontWeight: '500',
-                    color: '#666'
-                  }}>
-                    Select Office:
-                  </label>
-                  <select
-                    value={selectedOffice}
-                    onChange={(e) => handleOfficeChange(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '12px',
-                      border: '1px solid #ddd',
-                      borderRadius: '8px',
+              {/* Receiver - Hidden by default, only show for document types that need manual selection */}
+              {(() => {
+                const docType = documentForm.type?.toUpperCase() || '';
+                const isFacultyLoading = docType.includes('FACULTY LOADING') || documentForm.type === 'Faculty Loading';
+                const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || documentForm.type === 'Requested Subject';
+                const isAutoFilled = isFacultyLoading || isRequestedSubject;
+                
+                // Hide receiver fields if no document type selected, or if auto-filled
+                if (!documentForm.type || isAutoFilled) {
+                  return null;
+                }
+                
+                return (
+                  <div>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '8px',
                       fontSize: '14px',
-                      boxSizing: 'border-box',
-                      backgroundColor: 'white'
-                    }}
-                  >
-                    <option value="">Select Office</option>
-                    {offices.map((office) => (
-                      <option key={office._id} value={office.name}>
-                        {office.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={{
-                    display: 'block',
-                    marginBottom: '4px',
-                    fontSize: '12px',
-                    fontWeight: '500',
-                    color: '#666'
-                  }}>
-                    Select Employee:
-                  </label>
-                  <select
-                    value={documentForm.receiver}
-                    onChange={(e) => handleEmployeeChange(e.target.value)}
-                    disabled={!selectedOffice}
-                    style={{
-                      width: '100%',
-                      padding: '12px',
-                      border: '1px solid #ddd',
-                      borderRadius: '8px',
-                      fontSize: '14px',
-                      boxSizing: 'border-box',
-                      backgroundColor: selectedOffice ? 'white' : '#f8f9fa',
-                      cursor: selectedOffice ? 'pointer' : 'not-allowed'
-                    }}
-                  >
-                    <option value="">Select Employee</option>
-                    {employees.map((employee) => (
-                      <option key={employee._id} value={employee.name}>
-                        {employee.name} - {employee.position}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+                      fontWeight: '600',
+                      color: '#2c3e50'
+                    }}>
+                      To (Receiver) *
+                    </label>
+                    <div style={{ marginBottom: '12px' }}>
+                      <label style={{
+                        display: 'block',
+                        marginBottom: '4px',
+                        fontSize: '12px',
+                        fontWeight: '500',
+                        color: '#666'
+                      }}>
+                        Select Office:
+                      </label>
+                      <select
+                        value={selectedOffice}
+                        onChange={(e) => handleOfficeChange(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '12px',
+                          border: '1px solid #ddd',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          boxSizing: 'border-box',
+                          backgroundColor: 'white',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value="">Select Office</option>
+                        {offices.map((office) => (
+                          <option key={office._id} value={office.name}>
+                            {office.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{
+                        display: 'block',
+                        marginBottom: '4px',
+                        fontSize: '12px',
+                        fontWeight: '500',
+                        color: '#666'
+                      }}>
+                        Select Employee:
+                      </label>
+                      <select
+                        value={documentForm.receiver}
+                        onChange={(e) => handleEmployeeChange(e.target.value)}
+                        disabled={!selectedOffice}
+                        style={{
+                          width: '100%',
+                          padding: '12px',
+                          border: '1px solid #ddd',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          boxSizing: 'border-box',
+                          backgroundColor: selectedOffice ? 'white' : '#f8f9fa',
+                          cursor: selectedOffice ? 'pointer' : 'not-allowed'
+                        }}
+                      >
+                        <option value="">Select Employee</option>
+                        {employees.map((employee) => (
+                          <option key={employee._id} value={employee.name}>
+                            {employee.name} - {employee.position}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Notes */}
               <div>
@@ -6194,8 +6376,14 @@ function Edashboard({ onLogout }) {
                   </button>
                   <button
                     onClick={() => {
-                        handleDeleteDocument(selectedDocument._id);
-                        handleCloseReviewModal();
+                        const docId = selectedDocument._id || selectedDocument.id || selectedDocument.documentId;
+                        if (docId) {
+                          handleDeleteDocument(docId);
+                          handleCloseReviewModal();
+                        } else {
+                          console.error('Document ID is missing:', selectedDocument);
+                          alert('Error: Document ID is missing. Cannot delete this document.');
+                        }
                     }}
                     style={{
                       padding: '10px 20px',

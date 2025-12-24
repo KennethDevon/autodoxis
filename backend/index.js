@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const mongoose = require('mongoose');
+const sequelize = require('./config/database');
 const cors = require('cors');
 
 const app = express();
@@ -36,10 +36,31 @@ app.use('/document-types', documentTypeRoutes);
 app.use('/auth', authRoutes);
 app.use('/notifications', notificationRoutes);
 
-// MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI)
-.then(() => console.log('MongoDB connected...'))
-.catch(err => console.error(err));
+// Initialize models
+const User = require('./models/User');
+const Office = require('./models/Office');
+const Employee = require('./models/Employee');
+const Document = require('./models/Document');
+const DocumentType = require('./models/DocumentType');
+const Notification = require('./models/Notification');
+const VerificationCode = require('./models/VerificationCode');
+
+// Initialize associations
+const models = { User, Office, Employee, Document, DocumentType, Notification, VerificationCode };
+Object.keys(models).forEach(modelName => {
+  if (models[modelName].associate) {
+    models[modelName].associate(models);
+  }
+});
+
+// MySQL Connection via Sequelize
+sequelize.sync({ alter: false }) // Set to { alter: true } to auto-update schema, or use migrations
+  .then(() => {
+    console.log('✅ MySQL database synced successfully');
+  })
+  .catch(err => {
+    console.error('❌ MySQL database sync error:', err);
+  });
 
 // Basic Route
 app.get('/', (req, res) => {

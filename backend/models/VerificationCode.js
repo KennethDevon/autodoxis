@@ -1,37 +1,46 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const sequelize = require('../config/database');
 
-const verificationCodeSchema = new mongoose.Schema({
+const VerificationCode = sequelize.define('VerificationCode', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
   email: {
-    type: String,
-    required: true,
-    index: true
+    type: DataTypes.STRING(255),
+    allowNull: false
   },
   code: {
-    type: String,
-    required: true
+    type: DataTypes.STRING(10),
+    allowNull: false
   },
   userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: 'users',
+      key: 'id'
+    }
   },
   expiresAt: {
-    type: Date,
-    required: true,
-    default: () => new Date(Date.now() + 10 * 60 * 1000) // 10 minutes from now
+    type: DataTypes.DATE,
+    allowNull: false
   },
   used: {
-    type: Boolean,
-    default: false
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
   }
+}, {
+  tableName: 'verification_codes',
+  timestamps: true,
+  createdAt: 'createdAt',
+  updatedAt: false
 });
 
-// Auto-delete expired codes
-verificationCodeSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+// Define associations after User model is loaded
+VerificationCode.associate = function(models) {
+  VerificationCode.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
+};
 
-module.exports = mongoose.model('VerificationCode', verificationCodeSchema);
-
+module.exports = VerificationCode;

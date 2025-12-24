@@ -4,12 +4,17 @@ const Employee = require('../models/Employee');
 const User = require('../models/User');
 const Office = require('../models/Office');
 const bcrypt = require('bcryptjs');
+const sequelize = require('../config/database');
+const { Op } = require('sequelize');
+const { formatResponse } = require('../utils/responseFormatter');
 
 // Get all employees
 router.get('/', async (req, res) => {
   try {
-    const employees = await Employee.find().populate('office');
-    res.json(employees);
+    const employees = await Employee.findAll({
+      include: [{ model: Office, as: 'office' }]
+    });
+    res.json(formatResponse(employees));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -18,11 +23,13 @@ router.get('/', async (req, res) => {
 // Get one employee
 router.get('/:id', async (req, res) => {
   try {
-    const employee = await Employee.findById(req.params.id).populate('office');
+    const employee = await Employee.findByPk(req.params.id, {
+      include: [{ model: Office, as: 'office' }]
+    });
     if (employee == null) {
       return res.status(404).json({ message: 'Cannot find employee' });
     }
-    res.json(employee);
+    res.json(formatResponse(employee));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -30,21 +37,20 @@ router.get('/:id', async (req, res) => {
 
 // Create one employee
 router.post('/', async (req, res) => {
-  const employee = new Employee({
-    employeeId: req.body.employeeId,
-    name: req.body.name,
-    position: req.body.position,
-    department: req.body.department,
-    role: req.body.role || '',
-  });
-
   try {
-    const newEmployee = await employee.save();
+    const newEmployee = await Employee.create({
+      employeeId: req.body.employeeId,
+      name: req.body.name,
+      position: req.body.position,
+      department: req.body.department,
+      role: req.body.role || '',
+      officeId: req.body.officeId || null
+    });
     
     // Automatically create a user account for the employee
     try {
       // Check if user already exists with this employeeId
-      const existingUser = await User.findOne({ employeeId: req.body.employeeId });
+      const existingUser = await User.findOne({ where: { employeeId: req.body.employeeId } });
       
       if (!existingUser) {
         // Hash the password (employee ID will be the password)
@@ -57,20 +63,20 @@ router.post('/', async (req, res) => {
         
         // Check if email already exists, if so, append employeeId
         let finalEmail = email;
-        let emailExists = await User.findOne({ email: finalEmail });
+        let emailExists = await User.findOne({ where: { email: finalEmail } });
         if (emailExists) {
           finalEmail = `${emailUsername}.${req.body.employeeId}@employee.com`;
         }
         
         // Check if username already exists, if so, append employeeId
         let finalUsername = req.body.name;
-        let usernameExists = await User.findOne({ username: finalUsername });
+        let usernameExists = await User.findOne({ where: { username: finalUsername } });
         if (usernameExists) {
           finalUsername = `${req.body.name} (${req.body.employeeId})`;
         }
         
         // Create user account with role 'User' for employees
-        const user = new User({
+        await User.create({
           username: finalUsername,
           email: finalEmail,
           password: hashedPassword,
@@ -78,7 +84,6 @@ router.post('/', async (req, res) => {
           employeeId: req.body.employeeId
         });
         
-        await user.save();
         console.log(`✅ Auto-created user account for employee: ${req.body.name} (${req.body.employeeId})`);
         console.log(`   - Username: ${finalUsername}`);
         console.log(`   - Email: ${finalEmail}`);
@@ -95,83 +100,82 @@ router.post('/', async (req, res) => {
       // Don't fail the employee creation if user creation fails
     }
     
-    res.status(201).json(newEmployee);
+    res.status(201).json(formatResponse(newEmployee));
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
 });
 
-// Update one employee
+// Update one employee (accepts both id and _id)
 router.patch('/:id', async (req, res) => {
   try {
-    const employee = await Employee.findById(req.params.id);
+    const employeeId = parseInt(req.params.id) || req.params.id;
+    const employee = await Employee.findByPk(employeeId);
     if (employee == null) {
       return res.status(404).json({ message: 'Cannot find employee' });
     }
-    if (req.body.employeeId != null) {
-      employee.employeeId = req.body.employeeId;
-    }
-    if (req.body.name != null) {
-      employee.name = req.body.name;
-    }
-    if (req.body.position != null) {
-      employee.position = req.body.position;
-    }
-    if (req.body.department != null) {
-      employee.department = req.body.department;
-    }
-    if (req.body.role != null) {
-      employee.role = req.body.role;
-    }
-    const updatedEmployee = await employee.save();
-    res.json(updatedEmployee);
+    
+    // Update fields
+    const updateData = {};
+    if (req.body.employeeId != null) updateData.employeeId = req.body.employeeId;
+    if (req.body.name != null) updateData.name = req.body.name;
+    if (req.body.position != null) updateData.position = req.body.position;
+    if (req.body.department != null) updateData.department = req.body.department;
+    if (req.body.role != null) updateData.role = req.body.role;
+    if (req.body.officeId !== undefined) updateData.officeId = req.body.officeId;
+    
+    await employee.update(updateData);
+    const updatedEmployee = await Employee.findByPk(employeeId, {
+      include: [{ model: Office, as: 'office' }]
+    });
+    res.json(formatResponse(updatedEmployee));
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
 });
 
-// Delete one employee
+// Delete one employee (accepts both id and _id)
 router.delete('/:id', async (req, res) => {
   try {
-    const employee = await Employee.findById(req.params.id);
+    const employeeId = parseInt(req.params.id) || req.params.id;
+    const employee = await Employee.findByPk(employeeId);
     if (employee == null) {
       return res.status(404).json({ message: 'Cannot find employee' });
     }
     
-    // Get the employeeId before deleting the employee
-    const employeeId = employee.employeeId;
-    
-    // Remove employee from their office if they have one
-    if (employee.office) {
+    // Remove employee from office_employees junction table if they have one
+    if (employee.officeId) {
       try {
-        const office = await Office.findById(employee.office);
-        if (office) {
-          office.employees = office.employees.filter(
-            empId => empId.toString() !== req.params.id
-          );
-          office.numberOfEmployees = office.employees.length;
-          await office.save();
-          console.log(`✅ Removed employee from office: ${office.name}`);
-        }
+        await sequelize.query(
+          `DELETE FROM office_employees WHERE employeeId = ?`,
+          { replacements: [employee.id] }
+        );
+        console.log(`✅ Removed employee from office associations`);
       } catch (officeError) {
         console.error('Error removing employee from office:', officeError);
       }
     }
     
+    // Store the employee's string ID before deletion (needed to find associated user)
+    const employeeStringId = employee.employeeId;
+    
     // Delete the employee
-    await Employee.deleteOne({ _id: req.params.id });
+    await employee.destroy();
     
     // Also delete the associated user account if it exists
+    // Use employee.employeeId (the string ID like "2022-1000") not the database ID
     try {
-      const user = await User.findOne({ employeeId: employeeId });
+      const user = await User.findOne({ where: { employeeId: employeeStringId } });
       if (user) {
         // Protect the admin account from deletion
         if (user.email === 'sadmin@gmail.com') {
           console.log('⚠️ Skipping deletion of protected admin account');
         } else {
-          await User.deleteOne({ _id: user._id });
-          console.log(`✅ Deleted user account for employee: ${employee.name} (${employeeId})`);
+          await user.destroy();
+          console.log(`✅ Deleted user account for employee: ${employee.name} (${employeeStringId})`);
         }
+      } else {
+        console.log(`ℹ️ No user account found for employee ID: ${employeeStringId}`);
       }
     } catch (userError) {
       console.error('Error deleting user account:', userError);

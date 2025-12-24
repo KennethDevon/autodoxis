@@ -28,17 +28,39 @@ function Employee() {
     fetchOffices();
   }, []);
 
-  // Collapse all departments by default when employees are loaded
+  // Collapse all departments by default when employees/offices are loaded
   useEffect(() => {
-    if (employees.length > 0) {
+    if (offices.length > 0 || employees.length > 0) {
       const allDepartments = {};
-      employees.forEach(employee => {
-        const deptName = employee.office?.name || employee.department || 'Unassigned';
-        allDepartments[deptName] = true; // true means collapsed
+      
+      // Initialize all offices as collapsed
+      offices.forEach(office => {
+        const deptName = cleanName(office.name);
+        if (deptName) {
+          allDepartments[deptName] = true; // true means collapsed (hidden)
+        }
       });
-      setCollapsedDepartments(allDepartments);
+      
+      // Also include departments from employees (for unassigned or custom departments)
+      employees.forEach(employee => {
+        const rawDeptName = employee.office?.name || employee.department || 'Unassigned';
+        const deptName = cleanName(rawDeptName);
+        if (deptName && !allDepartments.hasOwnProperty(deptName)) {
+          allDepartments[deptName] = true; // true means collapsed (hidden)
+        }
+      });
+      
+      // Only update if we haven't set it yet (preserve user's manual toggles)
+      setCollapsedDepartments(prev => {
+        // If prev is empty, initialize with all collapsed
+        if (Object.keys(prev).length === 0) {
+          return allDepartments;
+        }
+        // Otherwise, merge new departments but keep existing state
+        return { ...allDepartments, ...prev };
+      });
     }
-  }, [employees]); // Run when employees array changes
+  }, [employees, offices]); // Run when employees or offices array changes
 
   const fetchEmployees = async () => {
     try {
@@ -65,7 +87,7 @@ function Employee() {
     
     // If office is selected, automatically set the department
     if (name === 'officeId' && value) {
-      const selectedOffice = offices.find(office => office._id === value);
+      const selectedOffice = offices.find(office => (office._id === value || office.id === value));
       setFormData(prev => ({
         ...prev,
         [name]: value,
@@ -91,7 +113,8 @@ function Employee() {
       
       if (editingEmployee) {
         // Update existing employee
-        const response = await fetch(`${API_URL}/employees/${editingEmployee._id}`, {
+        const employeeId = editingEmployee._id || editingEmployee.id;
+        const response = await fetch(`${API_URL}/employees/${employeeId}`, {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
@@ -202,14 +225,15 @@ function Employee() {
       name: employee.name,
       position: employee.position,
       department: employee.department,
-      officeId: employee.office?._id || ''
+      officeId: employee.office?._id || employee.office?.id || ''
     });
     setShowModal(true);
   };
 
   const handleRemove = (employeeId) => {
-    const employee = employees.find(emp => emp._id === employeeId);
-    setEmployeeToDelete({ id: employeeId, name: employee?.name || 'this employee' });
+    const employee = employees.find(emp => (emp._id === employeeId || emp.id === employeeId));
+    const idToUse = employee?._id || employee?.id || employeeId;
+    setEmployeeToDelete({ id: idToUse, name: employee?.name || 'this employee' });
     setShowDeleteModal(true);
   };
 
@@ -296,18 +320,40 @@ function Employee() {
     return filtered;
   };
 
-  // Group employees by department
+  // Helper function to clean office/department names (remove [UPDATED])
+  const cleanName = (name) => {
+    if (!name) return name;
+    return name.replace(/\s*\[UPDATED\]\s*/gi, '').trim();
+  };
+
+  // Group employees by department - include all offices even if they have no employees
   const groupEmployeesByDepartment = () => {
     const filtered = getFilteredAndSortedEmployees();
     const grouped = {};
     
+    // First, initialize all offices/departments with empty arrays
+    offices.forEach(office => {
+      const deptName = cleanName(office.name);
+      if (deptName && !grouped[deptName]) {
+        grouped[deptName] = [];
+      }
+    });
+    
+    // Then, add employees to their respective departments
     filtered.forEach(employee => {
-      const deptName = employee.office?.name || employee.department || 'Unassigned';
+      const rawDeptName = employee.office?.name || employee.department || 'Unassigned';
+      const deptName = cleanName(rawDeptName);
       if (!grouped[deptName]) {
         grouped[deptName] = [];
       }
       grouped[deptName].push(employee);
     });
+    
+    // Also include "Unassigned" if there are employees without offices
+    const unassignedEmployees = filtered.filter(emp => !emp.office && !emp.department);
+    if (unassignedEmployees.length > 0) {
+      grouped['Unassigned'] = unassignedEmployees;
+    }
     
     return grouped;
   };
@@ -364,7 +410,8 @@ function Employee() {
       <div style={{ marginTop: '20px' }}>
         {Object.keys(groupedEmployees).sort().map((deptName) => {
           const deptEmployees = groupedEmployees[deptName];
-          const isCollapsed = collapsedDepartments[deptName];
+          // Default to collapsed (true) if not set
+          const isCollapsed = collapsedDepartments[deptName] !== false;
           
           return (
             <div key={deptName} style={{ marginBottom: '15px', border: '1px solid #e0e0e0', borderRadius: '8px', overflow: 'hidden' }}>
@@ -428,7 +475,7 @@ function Employee() {
                   </thead>
                   <tbody>
                     {deptEmployees.map((employee) => (
-                      <tr key={employee._id} style={{ backgroundColor: 'white' }}>
+                      <tr key={employee._id || employee.id} style={{ backgroundColor: 'white' }}>
                         <td style={{ border: '1px solid #e0e0e0', padding: '10px' }}>{employee.employeeId}</td>
                         <td style={{ border: '1px solid #e0e0e0', padding: '10px', fontWeight: '500' }}>{employee.name}</td>
                         <td style={{ border: '1px solid #e0e0e0', padding: '10px' }}>{employee.position}</td>
@@ -442,7 +489,7 @@ function Employee() {
                               color: '#1976d2',
                               fontWeight: '500'
                             }}>
-                              {employee.office.name}
+                              {cleanName(employee.office.name)}
                             </span>
                           ) : (
                             <span style={{ color: '#999', fontStyle: 'italic', fontSize: '13px' }}>Not assigned</span>
@@ -466,7 +513,7 @@ function Employee() {
                             Edit
                           </button>
                           <button
-                            onClick={() => handleRemove(employee._id)}
+                            onClick={() => handleRemove(employee._id || employee.id)}
                             style={{
                               padding: '5px 10px',
                               backgroundColor: '#dc3545',
@@ -820,8 +867,8 @@ function Employee() {
                   style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
                 >
                   <option value="">Select Office</option>
-                  {offices.map((office) => (
-                    <option key={office._id} value={office._id}>
+                    {offices.map((office) => (
+                    <option key={office._id || office.id} value={office._id || office.id}>
                       {office.name} ({office.department})
                     </option>
                   ))}

@@ -86,10 +86,10 @@ function Reports() {
       const documentsData = await documentsRes.json();
       const docTypesData = await docTypesRes.json();
 
-      setEmployees(employeesData);
-      setOffices(officesData);
-      setDocuments(documentsData);
-      setDocumentTypes(docTypesData);
+      setEmployees(Array.isArray(employeesData) ? employeesData : []);
+      setOffices(Array.isArray(officesData) ? officesData : []);
+      setDocuments(Array.isArray(documentsData) ? documentsData : []);
+      setDocumentTypes(Array.isArray(docTypesData) ? docTypesData : []);
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -110,25 +110,32 @@ function Reports() {
     const types = {};
     
     // Initialize all document types with 0 count
-    documentTypes.forEach(docType => {
-      types[docType.name] = 0;
-    });
+    if (Array.isArray(documentTypes)) {
+      documentTypes.forEach(docType => {
+        types[docType.name] = 0;
+      });
+    }
     
     // Count actual documents
-    documents.forEach(doc => {
-      if (types.hasOwnProperty(doc.type)) {
-        types[doc.type] += 1;
-      } else {
-        // If document type not in list, still count it
-        types[doc.type] = (types[doc.type] || 0) + 1;
-      }
-    });
+    if (Array.isArray(documents)) {
+      documents.forEach(doc => {
+        if (types.hasOwnProperty(doc.type)) {
+          types[doc.type] += 1;
+        } else {
+          // If document type not in list, still count it
+          types[doc.type] = (types[doc.type] || 0) + 1;
+        }
+      });
+    }
     
     return types;
   };
 
 
   const getRecentDocuments = () => {
+    if (!Array.isArray(documents)) {
+      return [];
+    }
     return documents
       .sort((a, b) => new Date(b.dateUploaded) - new Date(a.dateUploaded))
       .slice(0, 5);
@@ -515,13 +522,15 @@ function Reports() {
 
             // Group documents by department
             const documentsByDepartment = {};
-            documents.forEach(doc => {
-              const dept = getSubmitterDepartment(doc.submittedBy) || 'Unknown';
-              if (!documentsByDepartment[dept]) {
-                documentsByDepartment[dept] = [];
-              }
-              documentsByDepartment[dept].push(doc);
-            });
+            if (Array.isArray(documents)) {
+              documents.forEach(doc => {
+                const dept = getSubmitterDepartment(doc.submittedBy) || 'Unknown';
+                if (!documentsByDepartment[dept]) {
+                  documentsByDepartment[dept] = [];
+                }
+                documentsByDepartment[dept].push(doc);
+              });
+            }
 
             // Helper function to check if document is approved
             const isDocumentApproved = (doc) => {
@@ -1162,11 +1171,11 @@ function Reports() {
         <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px', border: '1px solid #ddd' }}>
           <h3 style={{ marginBottom: '15px', color: '#2c3e50' }}>Recent Documents</h3>
         <div>
-          {recentDocuments.map((document) => {
+          {recentDocuments.map((document, index) => {
             const isExpanded = expandedRecentDocs.has(document._id);
             
             return (
-              <div key={document._id} style={{ 
+              <div key={document._id || document.id || document.documentId || `doc-${index}`} style={{ 
                 marginBottom: '10px',
                 border: '1px solid #ddd',
                 borderRadius: '8px',

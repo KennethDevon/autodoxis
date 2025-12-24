@@ -2,12 +2,36 @@ const express = require('express');
 const router = express.Router();
 const Office = require('../models/Office');
 const Employee = require('../models/Employee');
+const sequelize = require('../config/database');
+const { Op } = require('sequelize');
+const { formatResponse } = require('../utils/responseFormatter');
+
+// Helper function to clean office names (remove [UPDATED])
+const cleanOfficeName = (name) => {
+  if (!name) return name;
+  return name.replace(/\s*\[UPDATED\]\s*/gi, '').trim();
+};
 
 // Get all offices
 router.get('/', async (req, res) => {
   try {
-    const offices = await Office.find().populate('employees');
-    res.json(offices);
+    const offices = await Office.findAll({
+      include: [{
+        model: Employee,
+        as: 'employees',
+        attributes: ['id', 'employeeId', 'name', 'position', 'department']
+      }]
+    });
+    
+    // Add numberOfEmployees virtual field and clean office names
+    const officesWithCount = offices.map(office => {
+      const officeData = office.toJSON();
+      officeData.name = cleanOfficeName(officeData.name);
+      officeData.numberOfEmployees = officeData.employees ? officeData.employees.length : 0;
+      return officeData;
+    });
+    
+    res.json(formatResponse(officesWithCount));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -16,11 +40,20 @@ router.get('/', async (req, res) => {
 // Get one office
 router.get('/:id', async (req, res) => {
   try {
-    const office = await Office.findById(req.params.id).populate('employees');
+    const office = await Office.findByPk(req.params.id, {
+      include: [{
+        model: Employee,
+        as: 'employees',
+        attributes: ['id', 'employeeId', 'name', 'position', 'department']
+      }]
+    });
     if (office == null) {
       return res.status(404).json({ message: 'Cannot find office' });
     }
-    res.json(office);
+    const officeData = office.toJSON();
+    officeData.name = cleanOfficeName(officeData.name);
+    officeData.numberOfEmployees = officeData.employees ? officeData.employees.length : 0;
+    res.json(formatResponse(officeData));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -28,16 +61,16 @@ router.get('/:id', async (req, res) => {
 
 // Create one office
 router.post('/', async (req, res) => {
-  const office = new Office({
-    officeId: req.body.officeId,
-    name: req.body.name,
-    department: req.body.department,
-    numberOfEmployees: req.body.numberOfEmployees,
-  });
-
   try {
-    const newOffice = await office.save();
-    res.status(201).json(newOffice);
+    const newOffice = await Office.create({
+      officeId: req.body.officeId,
+      name: cleanOfficeName(req.body.name),
+      department: req.body.department,
+      location: req.body.location || ''
+    });
+    const officeData = newOffice.toJSON();
+    officeData.numberOfEmployees = 0;
+    res.status(201).json(formatResponse(officeData));
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
@@ -46,24 +79,29 @@ router.post('/', async (req, res) => {
 // Update one office
 router.patch('/:id', async (req, res) => {
   try {
-    const office = await Office.findById(req.params.id);
+    const office = await Office.findByPk(req.params.id);
     if (office == null) {
       return res.status(404).json({ message: 'Cannot find office' });
     }
-    if (req.body.officeId != null) {
-      office.officeId = req.body.officeId;
-    }
-    if (req.body.name != null) {
-      office.name = req.body.name;
-    }
-    if (req.body.department != null) {
-      office.department = req.body.department;
-    }
-    if (req.body.numberOfEmployees != null) {
-      office.numberOfEmployees = req.body.numberOfEmployees;
-    }
-    const updatedOffice = await office.save();
-    res.json(updatedOffice);
+    
+    const updateData = {};
+    if (req.body.officeId != null) updateData.officeId = req.body.officeId;
+    if (req.body.name != null) updateData.name = cleanOfficeName(req.body.name);
+    if (req.body.department != null) updateData.department = req.body.department;
+    if (req.body.location !== undefined) updateData.location = req.body.location;
+    
+    await office.update(updateData);
+    const updatedOffice = await Office.findByPk(req.params.id, {
+      include: [{
+        model: Employee,
+        as: 'employees',
+        attributes: ['id', 'employeeId', 'name', 'position', 'department']
+      }]
+    });
+    const officeData = updatedOffice.toJSON();
+    officeData.name = cleanOfficeName(officeData.name);
+    officeData.numberOfEmployees = officeData.employees ? officeData.employees.length : 0;
+    res.json(formatResponse(officeData));
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
@@ -72,18 +110,24 @@ router.patch('/:id', async (req, res) => {
 // Delete one office
 router.delete('/:id', async (req, res) => {
   try {
-    const office = await Office.findById(req.params.id);
+    const office = await Office.findByPk(req.params.id);
     if (office == null) {
       return res.status(404).json({ message: 'Cannot find office' });
     }
     
     // Remove office reference from all employees in this office
-    await Employee.updateMany(
-      { office: req.params.id },
-      { $set: { office: null } }
+    await Employee.update(
+      { officeId: null },
+      { where: { officeId: req.params.id } }
     );
     
-    await Office.deleteOne({ _id: req.params.id });
+    // Remove from junction table
+    await sequelize.query(
+      `DELETE FROM office_employees WHERE officeId = ?`,
+      { replacements: [req.params.id] }
+    );
+    
+    await office.destroy();
     res.json({ message: 'Deleted Office' });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -93,45 +137,56 @@ router.delete('/:id', async (req, res) => {
 // Assign employee to office
 router.post('/:id/assign-employee', async (req, res) => {
   try {
-    const office = await Office.findById(req.params.id);
+    const office = await Office.findByPk(req.params.id);
     if (!office) {
       return res.status(404).json({ message: 'Office not found' });
     }
 
-    const employee = await Employee.findById(req.body.employeeId);
+    const employee = await Employee.findByPk(req.body.employeeId);
     if (!employee) {
       return res.status(404).json({ message: 'Employee not found' });
     }
 
-    // Check if employee is already in this office
-    if (office.employees.includes(req.body.employeeId)) {
+    // Check if employee is already in this office (via junction table)
+    const [existing] = await sequelize.query(
+      `SELECT * FROM office_employees WHERE officeId = ? AND employeeId = ?`,
+      { replacements: [officeId, employeeId] }
+    );
+    
+    if (existing && existing.length > 0) {
       return res.status(400).json({ message: 'Employee already assigned to this office' });
     }
 
     // Remove employee from previous office if any
-    if (employee.office) {
-      const previousOffice = await Office.findById(employee.office);
-      if (previousOffice) {
-        previousOffice.employees = previousOffice.employees.filter(
-          empId => empId.toString() !== req.body.employeeId
-        );
-        previousOffice.numberOfEmployees = previousOffice.employees.length;
-        await previousOffice.save();
-      }
+    if (employee.officeId) {
+      await sequelize.query(
+        `DELETE FROM office_employees WHERE officeId = ? AND employeeId = ?`,
+        { replacements: [employee.officeId, employeeId] }
+      );
     }
 
-    // Add employee to new office
-    office.employees.push(req.body.employeeId);
-    office.numberOfEmployees = office.employees.length;
-    await office.save();
+    // Add employee to new office (update officeId and add to junction table)
+    await employee.update({ officeId: officeId });
+    
+    await sequelize.query(
+      `INSERT INTO office_employees (officeId, employeeId, createdAt) VALUES (?, ?, NOW())`,
+      { replacements: [officeId, employeeId] }
+    );
 
-    // Update employee's office reference
-    employee.office = req.params.id;
-    await employee.save();
-
+    const updatedOffice = await Office.findByPk(officeId, {
+      include: [{
+        model: Employee,
+        as: 'employees',
+        attributes: ['id', 'employeeId', 'name', 'position', 'department']
+      }]
+    });
+    
+    const officeData = updatedOffice.toJSON();
+    officeData.numberOfEmployees = officeData.employees ? officeData.employees.length : 0;
+    
     res.json({ 
       message: 'Employee assigned to office successfully',
-      office: await Office.findById(req.params.id).populate('employees')
+      office: officeData
     });
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -141,30 +196,42 @@ router.post('/:id/assign-employee', async (req, res) => {
 // Remove employee from office
 router.post('/:id/remove-employee', async (req, res) => {
   try {
-    const office = await Office.findById(req.params.id);
+    const officeId = parseInt(req.params.id) || req.params.id;
+    const office = await Office.findByPk(officeId);
     if (!office) {
       return res.status(404).json({ message: 'Office not found' });
     }
 
-    const employee = await Employee.findById(req.body.employeeId);
+    const employeeId = parseInt(req.body.employeeId) || req.body.employeeId;
+    const employee = await Employee.findByPk(employeeId);
     if (!employee) {
       return res.status(404).json({ message: 'Employee not found' });
     }
 
-    // Remove employee from office
-    office.employees = office.employees.filter(
-      empId => empId.toString() !== req.body.employeeId
+    // Remove employee from office (junction table and officeId)
+    await sequelize.query(
+      `DELETE FROM office_employees WHERE officeId = ? AND employeeId = ?`,
+      { replacements: [officeId, employeeId] }
     );
-    office.numberOfEmployees = office.employees.length;
-    await office.save();
+    
+    if (employee.officeId == officeId) {
+      await employee.update({ officeId: null });
+    }
 
-    // Remove office reference from employee
-    employee.office = null;
-    await employee.save();
+    const updatedOffice = await Office.findByPk(officeId, {
+      include: [{
+        model: Employee,
+        as: 'employees',
+        attributes: ['id', 'employeeId', 'name', 'position', 'department']
+      }]
+    });
+    
+    const officeData = updatedOffice.toJSON();
+    officeData.numberOfEmployees = officeData.employees ? officeData.employees.length : 0;
 
     res.json({ 
       message: 'Employee removed from office successfully',
-      office: await Office.findById(req.params.id).populate('employees')
+      office: officeData
     });
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -174,14 +241,22 @@ router.post('/:id/remove-employee', async (req, res) => {
 // Get all employees in an office
 router.get('/:id/employees', async (req, res) => {
   try {
-    const office = await Office.findById(req.params.id).populate('employees');
+    const officeId = parseInt(req.params.id) || req.params.id;
+    const office = await Office.findByPk(officeId, {
+      include: [{
+        model: Employee,
+        as: 'employees',
+        attributes: ['id', 'employeeId', 'name', 'position', 'department']
+      }]
+    });
     if (!office) {
       return res.status(404).json({ message: 'Office not found' });
     }
-    res.json(office.employees);
+    res.json(formatResponse(office.employees || []));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
 module.exports = router;
+
