@@ -3,11 +3,13 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import DailyActivityReport from './components/DailyActivityReport';
 import NotificationSystem from './components/NotificationSystem';
+import AnalyticsGraphs from './components/AnalyticsGraphs';
 import API_URL from './config';
 
 function Reports() {
   const [employees, setEmployees] = useState([]);
   const [offices, setOffices] = useState([]);
+  const [programs, setPrograms] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [documentTypes, setDocumentTypes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -16,7 +18,16 @@ function Reports() {
   const [expandedDocTypes, setExpandedDocTypes] = useState(new Set());
   const [expandedRecentDocs, setExpandedRecentDocs] = useState(new Set());
   const [showReportModal, setShowReportModal] = useState(false);
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'daily', or 'trends'
+  const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'daily', 'trends', or 'custom'
+  
+  // Custom report filters
+  const [selectedOffice, setSelectedOffice] = useState('all');
+  const [selectedEmployee, setSelectedEmployee] = useState('all');
+  const [selectedDocTypes, setSelectedDocTypes] = useState([]);
+  const [selectedStatuses, setSelectedStatuses] = useState([]);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [filteredDocuments, setFilteredDocuments] = useState([]);
 
   const toggleOffice = (officeId) => {
     const newExpanded = new Set(expandedOffices);
@@ -74,20 +85,23 @@ function Reports() {
   const fetchAllData = async () => {
     setLoading(true);
     try {
-      const [employeesRes, officesRes, documentsRes, docTypesRes] = await Promise.all([
+      const [employeesRes, officesRes, programsRes, documentsRes, docTypesRes] = await Promise.all([
         fetch(`${API_URL}/employees`),
         fetch(`${API_URL}/offices`),
+        fetch(`${API_URL}/programs`),
         fetch(`${API_URL}/documents`),
         fetch(`${API_URL}/document-types`)
       ]);
 
       const employeesData = await employeesRes.json();
       const officesData = await officesRes.json();
+      const programsData = await programsRes.json();
       const documentsData = await documentsRes.json();
       const docTypesData = await docTypesRes.json();
 
       setEmployees(Array.isArray(employeesData) ? employeesData : []);
       setOffices(Array.isArray(officesData) ? officesData : []);
+      setPrograms(Array.isArray(programsData) ? programsData : []);
       setDocuments(Array.isArray(documentsData) ? documentsData : []);
       setDocumentTypes(Array.isArray(docTypesData) ? docTypesData : []);
     } catch (error) {
@@ -98,12 +112,13 @@ function Reports() {
   };
 
   // Calculate statistics
-  const getEmployeesByDepartment = () => {
-    const departments = {};
+  const getEmployeesByOffices = () => {
+    const officeGroups = {};
     employees.forEach(emp => {
-      departments[emp.department] = (departments[emp.department] || 0) + 1;
+      const officeName = emp.office?.name || emp.department || 'Unassigned';
+      officeGroups[officeName] = (officeGroups[officeName] || 0) + 1;
     });
-    return departments;
+    return officeGroups;
   };
 
   const getDocumentsByType = () => {
@@ -242,29 +257,29 @@ function Reports() {
     doc.save('Documents_Report.pdf');
   };
 
-  const downloadEmployeesByDepartmentReport = () => {
+  const downloadEmployeesByOfficesReport = () => {
     const doc = new jsPDF();
-    const employeesByDepartment = getEmployeesByDepartment();
+    const employeesByOffices = getEmployeesByOffices();
     
     doc.setFontSize(18);
-    doc.text('Employees by Department', 14, 20);
+    doc.text('Employees by Offices', 14, 20);
     doc.setFontSize(10);
     doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 28);
     
-    const tableData = Object.entries(employeesByDepartment).map(([dept, count]) => [
-      dept,
+    const tableData = Object.entries(employeesByOffices).map(([office, count]) => [
+      office,
       count
     ]);
     
     doc.autoTable({
-      head: [['Department', 'Number of Employees']],
+      head: [['Office', 'Number of Employees']],
       body: tableData,
       startY: 35,
       theme: 'grid',
       headStyles: { fillColor: [245, 124, 0] }
     });
     
-    doc.save('Employees_By_Department_Report.pdf');
+    doc.save('Employees_By_Offices_Report.pdf');
   };
 
   const downloadDocumentsByTypeReport = () => {
@@ -292,9 +307,237 @@ function Reports() {
     doc.save('Documents_By_Type_Report.pdf');
   };
 
+  // Apply filters to documents
+  const applyFilters = () => {
+    let filtered = [...documents];
+
+    console.log('🎯 Apply Filters Called');
+    console.log('📋 Available offices:', offices.map(o => ({ 
+      id: o._id, 
+      idType: typeof o._id,
+      name: o.name 
+    })));
+    console.log('🔑 Selected Office ID:', selectedOffice, 'Type:', typeof selectedOffice);
+
+    // Filter by office
+    if (selectedOffice !== 'all') {
+      // Convert to string for comparison to handle type mismatches
+      const office = offices.find(o => String(o._id) === String(selectedOffice));
+      console.log('🔍 Found Office:', office);
+      
+      if (office) {
+        const officeEmployees = employees.filter(emp => {
+          // Match by office._id or by office name/department
+          return emp.office?._id === office._id || 
+                 emp.office?.name === office.name ||
+                 emp.department === office.name;
+        });
+        
+        console.log('👥 Employees in this office:', officeEmployees.map(e => ({
+          name: e.name,
+          office: e.office?.name,
+          department: e.department
+        })));
+        
+        if (officeEmployees.length > 0) {
+          const officeEmployeeNames = officeEmployees.map(emp => emp.name.toLowerCase());
+          console.log('📝 Employee names in office:', officeEmployeeNames);
+          
+          filtered = filtered.filter(doc => 
+            officeEmployeeNames.some(name => 
+              doc.submittedBy?.toLowerCase().includes(name) || 
+              name.includes(doc.submittedBy?.toLowerCase())
+            )
+          );
+        } else {
+          // No employees in this office, so no documents should match
+          console.log('⚠️ No employees found in this office - showing no documents');
+          filtered = [];
+        }
+        
+        console.log('📄 Filtered documents:', filtered.map(d => ({
+          id: d.documentId,
+          name: d.name,
+          submittedBy: d.submittedBy
+        })));
+      } else {
+        // Office not found - show no documents
+        console.log('❌ Office not found - showing no documents');
+        filtered = [];
+      }
+    }
+
+    // Filter by employee
+    if (selectedEmployee !== 'all') {
+      console.log('🔑 Selected Employee ID:', selectedEmployee, 'Type:', typeof selectedEmployee);
+      
+      // Convert to string for comparison to handle type mismatches
+      const employee = employees.find(emp => String(emp._id) === String(selectedEmployee));
+      console.log('👤 Found Employee:', employee);
+      
+      if (employee) {
+        console.log('🔍 Filtering documents by employee:', employee.name);
+        
+        filtered = filtered.filter(doc => {
+          const docSubmitter = doc.submittedBy?.toLowerCase() || '';
+          const empName = employee.name.toLowerCase();
+          
+          // Check if document submitter matches employee name
+          const matches = docSubmitter.includes(empName) || empName.includes(docSubmitter);
+          
+          console.log(`  📄 ${doc.documentId} - "${doc.submittedBy}" matches "${employee.name}"?`, matches);
+          
+          return matches;
+        });
+        
+        console.log('✅ Final filtered documents:', filtered.map(d => ({
+          id: d.documentId,
+          name: d.name,
+          submittedBy: d.submittedBy
+        })));
+      } else {
+        // Employee not found - show no documents
+        console.log('❌ Employee not found - showing no documents');
+        filtered = [];
+      }
+    }
+
+    // Filter by document types
+    if (selectedDocTypes.length > 0) {
+      filtered = filtered.filter(doc => selectedDocTypes.includes(doc.type));
+    }
+
+    // Filter by status
+    if (selectedStatuses.length > 0) {
+      filtered = filtered.filter(doc => selectedStatuses.includes(doc.status || 'Processing'));
+    }
+
+    // Filter by date range
+    if (dateFrom) {
+      const fromDate = new Date(dateFrom);
+      fromDate.setHours(0, 0, 0, 0);
+      filtered = filtered.filter(doc => {
+        const docDate = new Date(doc.dateUploaded);
+        return docDate >= fromDate;
+      });
+    }
+
+    if (dateTo) {
+      const toDate = new Date(dateTo);
+      toDate.setHours(23, 59, 59, 999);
+      filtered = filtered.filter(doc => {
+        const docDate = new Date(doc.dateUploaded);
+        return docDate <= toDate;
+      });
+    }
+
+    setFilteredDocuments(filtered);
+  };
+
+  // Reset filters
+  const resetFilters = () => {
+    setSelectedOffice('all');
+    setSelectedEmployee('all');
+    setSelectedDocTypes([]);
+    setSelectedStatuses([]);
+    setDateFrom('');
+    setDateTo('');
+    setFilteredDocuments([]);
+  };
+
+  // Download custom filtered report
+  const downloadCustomReport = () => {
+    const doc = new jsPDF();
+    
+    doc.setFontSize(18);
+    doc.text('Custom Filtered Report', 14, 20);
+    doc.setFontSize(10);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 28);
+    
+    let yPos = 35;
+    
+    // Add filter information
+    doc.setFontSize(12);
+    doc.setFont(undefined, 'bold');
+    doc.text('Filter Criteria:', 14, yPos);
+    yPos += 7;
+    
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'normal');
+    
+    if (selectedOffice !== 'all') {
+      const office = offices.find(o => o._id === selectedOffice);
+      doc.text(`Office: ${office?.name || 'N/A'}`, 14, yPos);
+      yPos += 5;
+    }
+    
+    if (selectedEmployee !== 'all') {
+      const employee = employees.find(emp => emp._id === selectedEmployee);
+      doc.text(`Employee: ${employee?.name || 'N/A'}`, 14, yPos);
+      yPos += 5;
+    }
+    
+    if (selectedDocTypes.length > 0) {
+      doc.text(`Document Types: ${selectedDocTypes.join(', ')}`, 14, yPos);
+      yPos += 5;
+    }
+    
+    if (selectedStatuses.length > 0) {
+      doc.text(`Statuses: ${selectedStatuses.join(', ')}`, 14, yPos);
+      yPos += 5;
+    }
+    
+    if (dateFrom) {
+      doc.text(`Date From: ${new Date(dateFrom).toLocaleDateString()}`, 14, yPos);
+      yPos += 5;
+    }
+    
+    if (dateTo) {
+      doc.text(`Date To: ${new Date(dateTo).toLocaleDateString()}`, 14, yPos);
+      yPos += 5;
+    }
+    
+    yPos += 5;
+    
+    // Add document table
+    const tableData = filteredDocuments.map(d => [
+      d.documentId,
+      d.name,
+      d.type,
+      d.status || 'Processing',
+      d.submittedBy || 'N/A',
+      d.dateUploaded ? new Date(d.dateUploaded).toLocaleDateString() : 'N/A'
+    ]);
+    
+    doc.autoTable({
+      head: [['ID', 'Name', 'Type', 'Status', 'Submitted By', 'Date']],
+      body: tableData,
+      startY: yPos,
+      theme: 'grid',
+      headStyles: { fillColor: [52, 152, 219] },
+      styles: { fontSize: 8 }
+    });
+    
+    doc.save('Custom_Filtered_Report.pdf');
+  };
+
+  // Handle document type checkbox
+  const handleDocTypeChange = (type) => {
+    setSelectedDocTypes(prev => 
+      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+    );
+  };
+
+  // Handle status checkbox
+  const handleStatusChange = (status) => {
+    setSelectedStatuses(prev => 
+      prev.includes(status) ? prev.filter(s => s !== status) : [...prev, status]
+    );
+  };
+
   const downloadFullSystemReport = () => {
     const doc = new jsPDF();
-    const employeesByDepartment = getEmployeesByDepartment();
+    const employeesByOffices = getEmployeesByOffices();
     const documentsByType = getDocumentsByType();
     
     let yPos = 20;
@@ -330,15 +573,15 @@ function Reports() {
     
     yPos = doc.lastAutoTable.finalY + 15;
     
-    // Employees by Department
+    // Employees by Offices
     doc.setFontSize(14);
     doc.setFont(undefined, 'bold');
-    doc.text('Employees by Department', 14, yPos);
+    doc.text('Employees by Offices', 14, yPos);
     yPos += 8;
     
     doc.autoTable({
-      head: [['Department', 'Count']],
-      body: Object.entries(employeesByDepartment).map(([dept, count]) => [dept, count]),
+      head: [['Office', 'Count']],
+      body: Object.entries(employeesByOffices).map(([office, count]) => [office, count]),
       startY: yPos,
       theme: 'grid',
       headStyles: { fillColor: [52, 152, 219] }
@@ -406,7 +649,7 @@ function Reports() {
     );
   }
 
-  const employeesByDepartment = getEmployeesByDepartment();
+  const employeesByOffices = getEmployeesByOffices();
   const documentsByType = getDocumentsByType();
   const recentDocuments = getRecentDocuments();
 
@@ -501,11 +744,474 @@ function Reports() {
         >
           Department Delays
         </button>
+        <button
+          onClick={() => setActiveTab('custom')}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: activeTab === 'custom' ? '#3498db' : 'transparent',
+            color: activeTab === 'custom' ? 'white' : '#2c3e50',
+            border: 'none',
+            borderBottom: activeTab === 'custom' ? '3px solid #2980b9' : '3px solid transparent',
+            fontSize: '14px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            borderRadius: '6px 6px 0 0',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          Custom Report
+        </button>
+        <button
+          onClick={() => setActiveTab('analytics')}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: activeTab === 'analytics' ? '#3498db' : 'transparent',
+            color: activeTab === 'analytics' ? 'white' : '#2c3e50',
+            border: 'none',
+            borderBottom: activeTab === 'analytics' ? '3px solid #2980b9' : '3px solid transparent',
+            fontSize: '14px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            borderRadius: '6px 6px 0 0',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          Analytics & Graphs
+        </button>
       </div>
 
       {/* Conditional Rendering based on Active Tab */}
       {activeTab === 'daily' ? (
         <DailyActivityReport />
+      ) : activeTab === 'analytics' ? (
+        <AnalyticsGraphs 
+          documents={documents}
+          employees={employees}
+          offices={offices}
+          documentTypes={documentTypes}
+        />
+      ) : activeTab === 'custom' ? (
+        <div>
+          <h2 style={{
+            margin: '0 0 20px 0',
+            fontSize: '24px',
+            fontWeight: '600',
+            color: '#2c3e50'
+          }}>
+            Custom Report Generator
+          </h2>
+
+          {/* Filters Section */}
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '8px',
+            padding: '25px',
+            marginBottom: '25px',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+          }}>
+            <h3 style={{
+              margin: '0 0 20px 0',
+              fontSize: '18px',
+              fontWeight: '600',
+              color: '#2c3e50'
+            }}>
+              Filter Criteria
+            </h3>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', marginBottom: '20px' }}>
+              {/* Office Filter */}
+              <div>
+                <label style={{ 
+                  display: 'block', 
+                  marginBottom: '8px', 
+                  fontSize: '14px', 
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  Office
+                </label>
+                <select
+                  value={selectedOffice}
+                  onChange={(e) => setSelectedOffice(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    borderRadius: '6px',
+                    border: '1px solid #ddd',
+                    fontSize: '14px',
+                    backgroundColor: 'white'
+                  }}
+                >
+                  <option value="all">All Offices</option>
+                  {offices.map(office => (
+                    <option key={office._id} value={office._id}>{office.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Employee Filter */}
+              <div>
+                <label style={{ 
+                  display: 'block', 
+                  marginBottom: '8px', 
+                  fontSize: '14px', 
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  Employee
+                </label>
+                <select
+                  value={selectedEmployee}
+                  onChange={(e) => setSelectedEmployee(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    borderRadius: '6px',
+                    border: '1px solid #ddd',
+                    fontSize: '14px',
+                    backgroundColor: 'white'
+                  }}
+                >
+                  <option value="all">All Employees</option>
+                  {employees.map(emp => (
+                    <option key={emp._id} value={emp._id}>{emp.name} ({emp.employeeId})</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Date From */}
+              <div>
+                <label style={{ 
+                  display: 'block', 
+                  marginBottom: '8px', 
+                  fontSize: '14px', 
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  Date From
+                </label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    borderRadius: '6px',
+                    border: '1px solid #ddd',
+                    fontSize: '14px',
+                    backgroundColor: 'white'
+                  }}
+                />
+              </div>
+
+              {/* Date To */}
+              <div>
+                <label style={{ 
+                  display: 'block', 
+                  marginBottom: '8px', 
+                  fontSize: '14px', 
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  Date To
+                </label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    borderRadius: '6px',
+                    border: '1px solid #ddd',
+                    fontSize: '14px',
+                    backgroundColor: 'white'
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Document Types Filter */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ 
+                display: 'block', 
+                marginBottom: '8px', 
+                fontSize: '14px', 
+                fontWeight: '600',
+                color: '#2c3e50'
+              }}>
+                Document Types
+              </label>
+              <div style={{ 
+                display: 'flex', 
+                flexWrap: 'wrap', 
+                gap: '10px',
+                padding: '15px',
+                backgroundColor: '#f8f9fa',
+                borderRadius: '6px'
+              }}>
+                {documentTypes.map(docType => (
+                  <label key={docType._id} style={{ 
+                    display: 'flex', 
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'pointer',
+                    padding: '6px 12px',
+                    backgroundColor: selectedDocTypes.includes(docType.name) ? '#e3f2fd' : 'white',
+                    borderRadius: '4px',
+                    border: '1px solid',
+                    borderColor: selectedDocTypes.includes(docType.name) ? '#3498db' : '#ddd',
+                    fontSize: '13px',
+                    transition: 'all 0.2s ease'
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedDocTypes.includes(docType.name)}
+                      onChange={() => handleDocTypeChange(docType.name)}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    {docType.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Status Filter */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ 
+                display: 'block', 
+                marginBottom: '8px', 
+                fontSize: '14px', 
+                fontWeight: '600',
+                color: '#2c3e50'
+              }}>
+                Document Status
+              </label>
+              <div style={{ 
+                display: 'flex', 
+                flexWrap: 'wrap', 
+                gap: '10px',
+                padding: '15px',
+                backgroundColor: '#f8f9fa',
+                borderRadius: '6px'
+              }}>
+                {['Processing', 'Approved', 'Rejected', 'Under Review', 'On Hold', 'Completed'].map(status => (
+                  <label key={status} style={{ 
+                    display: 'flex', 
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'pointer',
+                    padding: '6px 12px',
+                    backgroundColor: selectedStatuses.includes(status) ? '#e3f2fd' : 'white',
+                    borderRadius: '4px',
+                    border: '1px solid',
+                    borderColor: selectedStatuses.includes(status) ? '#3498db' : '#ddd',
+                    fontSize: '13px',
+                    transition: 'all 0.2s ease'
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedStatuses.includes(status)}
+                      onChange={() => handleStatusChange(status)}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    {status}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={applyFilters}
+                style={{
+                  padding: '12px 30px',
+                  backgroundColor: '#3498db',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.3s ease'
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#2980b9'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = '#3498db'}
+              >
+                Apply Filters
+              </button>
+              <button
+                onClick={resetFilters}
+                style={{
+                  padding: '12px 30px',
+                  backgroundColor: '#95a5a6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.3s ease'
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#7f8c8d'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = '#95a5a6'}
+              >
+                Reset Filters
+              </button>
+            </div>
+          </div>
+
+          {/* Results Section */}
+          {filteredDocuments.length > 0 && (
+            <div style={{
+              backgroundColor: 'white',
+              borderRadius: '8px',
+              padding: '25px',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+            }}>
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                marginBottom: '20px'
+              }}>
+                <h3 style={{
+                  margin: '0',
+                  fontSize: '18px',
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  Filtered Results ({filteredDocuments.length} documents)
+                </h3>
+                <button
+                  onClick={downloadCustomReport}
+                  style={{
+                    padding: '10px 20px',
+                    backgroundColor: '#27ae60',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    transition: 'background-color 0.3s ease'
+                  }}
+                  onMouseEnter={(e) => e.target.style.backgroundColor = '#229954'}
+                  onMouseLeave={(e) => e.target.style.backgroundColor = '#27ae60'}
+                >
+                  Download PDF Report
+                </button>
+              </div>
+
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#f8f9fa' }}>
+                      <th style={{ border: '1px solid #ddd', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                        Document ID
+                      </th>
+                      <th style={{ border: '1px solid #ddd', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                        Name
+                      </th>
+                      <th style={{ border: '1px solid #ddd', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                        Type
+                      </th>
+                      <th style={{ border: '1px solid #ddd', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                        Status
+                      </th>
+                      <th style={{ border: '1px solid #ddd', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                        Submitted By
+                      </th>
+                      <th style={{ border: '1px solid #ddd', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                        Date Uploaded
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredDocuments.map((doc, index) => (
+                      <tr key={doc._id} style={{ backgroundColor: index % 2 === 0 ? 'white' : '#f8f9fa' }}>
+                        <td style={{ border: '1px solid #ddd', padding: '10px', fontSize: '13px', color: '#2c3e50' }}>
+                          <code style={{
+                            backgroundColor: '#e9ecef',
+                            padding: '3px 6px',
+                            borderRadius: '3px',
+                            fontSize: '11px',
+                            fontWeight: '600'
+                          }}>
+                            {doc.documentId}
+                          </code>
+                        </td>
+                        <td style={{ border: '1px solid #ddd', padding: '10px', fontSize: '13px', fontWeight: '500', color: '#2c3e50' }}>
+                          {doc.name}
+                        </td>
+                        <td style={{ border: '1px solid #ddd', padding: '10px', fontSize: '13px', color: '#2c3e50' }}>
+                          <span style={{
+                            backgroundColor: '#e8f5e8',
+                            color: '#388e3c',
+                            padding: '3px 8px',
+                            borderRadius: '8px',
+                            fontSize: '11px',
+                            fontWeight: '600',
+                            textTransform: 'uppercase'
+                          }}>
+                            {doc.type || 'N/A'}
+                          </span>
+                        </td>
+                        <td style={{ border: '1px solid #ddd', padding: '10px', fontSize: '13px' }}>
+                          <span style={{
+                            padding: '4px 10px',
+                            borderRadius: '10px',
+                            fontSize: '11px',
+                            fontWeight: '600',
+                            backgroundColor: (() => {
+                              const status = doc.status || 'Processing';
+                              const colors = {
+                                'Approved': '#28a745',
+                                'Processing': '#17a2b8',
+                                'Under Review': '#ffc107',
+                                'Rejected': '#dc3545',
+                                'On Hold': '#6c757d',
+                                'Completed': '#28a745'
+                              };
+                              return colors[status] || '#6c757d';
+                            })(),
+                            color: 'white'
+                          }}>
+                            {doc.status || 'Processing'}
+                          </span>
+                        </td>
+                        <td style={{ border: '1px solid #ddd', padding: '10px', fontSize: '13px', color: '#6c757d' }}>
+                          {doc.submittedBy || 'N/A'}
+                        </td>
+                        <td style={{ border: '1px solid #ddd', padding: '10px', fontSize: '13px', color: '#6c757d' }}>
+                          {doc.dateUploaded ? new Date(doc.dateUploaded).toLocaleDateString() : 'N/A'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {filteredDocuments.length === 0 && (selectedOffice !== 'all' || selectedEmployee !== 'all' || selectedDocTypes.length > 0 || selectedStatuses.length > 0 || dateFrom || dateTo) && (
+            <div style={{
+              backgroundColor: 'white',
+              borderRadius: '8px',
+              padding: '40px',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+              textAlign: 'center'
+            }}>
+              <p style={{ fontSize: '16px', color: '#6c757d', margin: 0 }}>
+                No documents match the selected filters. Try adjusting your criteria.
+              </p>
+            </div>
+          )}
+        </div>
       ) : activeTab === 'delays' ? (
         <div>
           {(() => {
@@ -913,20 +1619,25 @@ function Reports() {
           <h3 style={{ margin: '0 0 10px 0', color: '#388e3c' }}>Total Documents</h3>
           <p style={{ fontSize: '2em', fontWeight: 'bold', margin: 0, color: '#388e3c' }}>{documents.length}</p>
         </div>
+        
+        <div style={{ backgroundColor: '#fff3e0', padding: '20px', borderRadius: '8px', textAlign: 'center' }}>
+          <h3 style={{ margin: '0 0 10px 0', color: '#f57c00' }}>Total Programs</h3>
+          <p style={{ fontSize: '2em', fontWeight: 'bold', margin: 0, color: '#f57c00' }}>{programs.length}</p>
+        </div>
       </div>
 
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px', marginBottom: '30px' }}>
-        {/* Employees by Department */}
+        {/* Employees by Offices */}
         <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px', border: '1px solid #ddd' }}>
-          <h3 style={{ marginBottom: '15px', color: '#2c3e50' }}>Employees by Department</h3>
+          <h3 style={{ marginBottom: '15px', color: '#2c3e50' }}>Employees by Offices</h3>
           <div>
-            {Object.entries(employeesByDepartment).map(([dept, count]) => {
-              const isExpanded = expandedDepartments.has(dept);
-              const deptEmployees = employees.filter(emp => emp.department === dept);
+            {Object.entries(employeesByOffices).map(([officeName, count]) => {
+              const isExpanded = expandedDepartments.has(officeName);
+              const officeEmployees = employees.filter(emp => (emp.office?.name || emp.department) === officeName);
               
               return (
-                <div key={dept} style={{ 
+                <div key={officeName} style={{ 
                   marginBottom: '10px',
                   border: '1px solid #ddd',
                   borderRadius: '8px',
@@ -934,7 +1645,7 @@ function Reports() {
                   backgroundColor: 'white'
                 }}>
                   <div
-                    onClick={() => toggleDepartment(dept)}
+                    onClick={() => toggleDepartment(officeName)}
                     style={{
                       padding: '15px',
                       backgroundColor: isExpanded ? '#e3f2fd' : '#f8f9fa',
@@ -956,7 +1667,7 @@ function Reports() {
                         {isExpanded ? '▼' : '▶'}
                       </span>
                       <span style={{ fontSize: '14px', fontWeight: '600', color: '#2c3e50' }}>
-                        {dept}
+                        {officeName}
                       </span>
                     </div>
                     <span style={{
@@ -973,7 +1684,7 @@ function Reports() {
                   
                   {isExpanded && (
                     <div style={{ padding: '15px', borderTop: '1px solid #ddd' }}>
-                      {deptEmployees.map((emp, index) => (
+                      {officeEmployees.map((emp, index) => (
                         <div key={emp._id} style={{
                           padding: '10px',
                           backgroundColor: index % 2 === 0 ? '#f8f9fa' : 'white',
@@ -1412,7 +2123,7 @@ function Reports() {
                 </div>
               </div>
 
-              {/* Employees by Department Report */}
+              {/* Employees by Offices Report */}
               <div style={{
                 padding: '15px',
                 border: '1px solid #ddd',
@@ -1421,7 +2132,7 @@ function Reports() {
                 cursor: 'pointer',
                 transition: 'all 0.3s ease'
               }}
-              onClick={downloadEmployeesByDepartmentReport}
+              onClick={downloadEmployeesByOfficesReport}
               onMouseEnter={(e) => {
                 e.currentTarget.style.borderColor = '#f57c00';
                 e.currentTarget.style.backgroundColor = '#f8f9fa';
@@ -1432,9 +2143,9 @@ function Reports() {
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <h4 style={{ margin: '0 0 3px 0', color: '#2c3e50', fontSize: '15px' }}>Employees by Department</h4>
+                    <h4 style={{ margin: '0 0 3px 0', color: '#2c3e50', fontSize: '15px' }}>Employees by Offices</h4>
                     <p style={{ margin: 0, fontSize: '12px', color: '#666' }}>
-                      Employee distribution across departments
+                      Employee distribution across offices
                     </p>
                   </div>
                   <span style={{ fontSize: '20px', fontWeight: 'bold' }}>↓</span>

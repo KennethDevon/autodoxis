@@ -20,14 +20,20 @@ function Edashboard({ onLogout }) {
     position: '',
     department: ''
   });
+  const [showDocumentTypeModal, setShowDocumentTypeModal] = useState(false);
   const [showDocumentModal, setShowDocumentModal] = useState(false);
+  const [showTravelOrderModal, setShowTravelOrderModal] = useState(false);
+  const [showRequestedSubjectModal, setShowRequestedSubjectModal] = useState(false);
+  const [showEndorsementModal, setShowEndorsementModal] = useState(false);
+  const [showFacultyLoadingModal, setShowFacultyLoadingModal] = useState(false);
+  const [selectedDocumentType, setSelectedDocumentType] = useState('');
   const [documentForm, setDocumentForm] = useState({
     sender: '',
     type: '',
     date: '',
     time: '',
     notes: '',
-    attachment: null,
+    attachments: [], // Changed to array to support multiple files
     receiver: '',
     travelOrderDepartureDate: '',
     travelOrderDepartureTime: '',
@@ -53,6 +59,9 @@ function Edashboard({ onLogout }) {
   const [trackedDocument, setTrackedDocument] = useState(null);
   const [showApprovalTimeModal, setShowApprovalTimeModal] = useState(false);
   const [approvalTimeDocument, setApprovalTimeDocument] = useState(null);
+  const [showViewFilesModal, setShowViewFilesModal] = useState(false);
+  const [viewFilesDocument, setViewFilesDocument] = useState(null);
+  const [editingDocument, setEditingDocument] = useState(null);
   const [reviewForm, setReviewForm] = useState({
     status: '',
     comments: '',
@@ -62,7 +71,8 @@ function Edashboard({ onLogout }) {
   const [activeSidebarTab, setActiveSidebarTab] = useState('dashboard');
   const [documentTypes, setDocumentTypes] = useState([]);
   const [offices, setOffices] = useState([]);
-  const [employees, setEmployees] = useState([]);
+  const [employees, setEmployees] = useState([]); // For office dropdown in modal
+  const [allEmployees, setAllEmployees] = useState([]); // For document filtering - never cleared
   const [selectedOffice, setSelectedOffice] = useState('');
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showDeleteDocumentModal, setShowDeleteDocumentModal] = useState(false);
@@ -86,9 +96,22 @@ function Edashboard({ onLogout }) {
           const response = await fetch(`${API_URL}/employees`);
           if (response.ok) {
             const allEmployees = await response.json();
-            const employeeData = allEmployees.find(emp => emp.employeeId === parsedUser.employeeId);
+            // Ensure employeeId comparison is done as strings to avoid type mismatch issues
+            const userEmployeeId = String(parsedUser.employeeId).trim();
+            const employeeData = allEmployees.find(emp => {
+              const empId = String(emp.employeeId || '').trim();
+              return empId === userEmployeeId;
+            });
             if (employeeData) {
-            setEmployee(employeeData);
+              console.log('Employee data found for user:', {
+                employeeId: employeeData.employeeId,
+                name: employeeData.name,
+                position: employeeData.position,
+                department: employeeData.department
+              });
+              setEmployee(employeeData);
+            } else {
+              console.warn('No employee data found for employeeId:', parsedUser.employeeId);
             }
           }
         }
@@ -97,6 +120,82 @@ function Edashboard({ onLogout }) {
       console.error('Error fetching user data:', error);
     }
   };
+
+  // Helper function to check if document is assigned/forwarded to an employee
+  const isDocumentAssignedToEmployee = useCallback((doc, employeeId) => {
+    // Convert employeeId to string for comparison
+    const employeeIdStr = String(employeeId);
+    
+    // Check if employee is in assignedTo array (handle both ObjectId objects and strings)
+    const isAssigned = doc.assignedTo?.some(assignedId => {
+      if (!assignedId) return false;
+      // Handle both populated objects and raw IDs
+      const assignedIdStr = assignedId._id ? String(assignedId._id) : String(assignedId);
+      return assignedIdStr === employeeIdStr;
+    });
+    
+    // Check if employee is currentHandler (handle both ObjectId objects and strings)
+    const isCurrentHandler = doc.currentHandler ? (
+      doc.currentHandler._id ? String(doc.currentHandler._id) === employeeIdStr : 
+      String(doc.currentHandler) === employeeIdStr
+    ) : false;
+    
+    // Check if document was forwarded (has forwardedDate) - include if forwarded to this employee
+    const isForwarded = doc.forwardedDate && (isAssigned || isCurrentHandler);
+    
+    return isAssigned || isCurrentHandler || isForwarded;
+  }, []);
+
+  // Summary stats calculator
+  // NOTE: This MUST be declared before fetchDocuments to avoid "Cannot access before initialization"
+  const calculateSummaryStats = useCallback((docs) => {
+    const stats = {
+      total: docs.length,
+      incoming: 0,
+      outgoing: 0,
+      active: 0,
+      pending: 0,
+      completed: 0
+    };
+
+    // Get current user data
+    const userData = localStorage.getItem('userData');
+    const currentUser = userData ? JSON.parse(userData) : null;
+    // IMPORTANT: Don't depend on React state here (like `employee`) to avoid re-fetch loops / UI flicker.
+    const currentUserName = currentUser?.name || currentUser?.username;
+
+    docs.forEach(doc => {
+      // Count incoming vs outgoing based on submittedBy
+      const isSubmittedByCurrentUser = doc.submittedBy && currentUserName && (
+        doc.submittedBy.toLowerCase() === currentUserName.toLowerCase() ||
+        doc.submittedBy.toLowerCase().includes(currentUserName.toLowerCase()) ||
+        currentUserName.toLowerCase().includes(doc.submittedBy.toLowerCase())
+      );
+      
+      if (isSubmittedByCurrentUser) {
+        stats.outgoing++;
+      } else {
+        stats.incoming++;
+      }
+
+      // Count by status
+      if (doc.status) {
+        const status = doc.status.toLowerCase();
+        if (status === 'submitted' || status === 'under review' || status === 'processing' || status === 'returned') {
+          stats.active++;
+        } else if (status === 'pending' || status === 'on hold') {
+          stats.pending++;
+        } else if (status === 'approved' || status === 'completed') {
+          stats.completed++;
+        }
+      } else {
+        // Default to active if no status
+        stats.active++;
+      }
+    });
+
+    setSummaryStats(stats);
+  }, []);
 
   const fetchDocuments = useCallback(async () => {
     setLoading(true);
@@ -115,10 +214,16 @@ function Edashboard({ onLogout }) {
             const employeesResponse = await fetch(`${API_URL}/employees`);
             const allEmployeesData = await employeesResponse.json();
             const allEmployees = Array.isArray(allEmployeesData) ? allEmployeesData : [];
-            const currentEmployee = allEmployees.find(emp => emp.employeeId === parsedUser.employeeId);
+            // Ensure employeeId comparison is done as strings to avoid type mismatch issues
+            const userEmployeeId = String(parsedUser.employeeId).trim();
+            const currentEmployee = allEmployees.find(emp => {
+              const empId = String(emp.employeeId || '').trim();
+              return empId === userEmployeeId;
+            });
             
             console.log('Current employee found:', currentEmployee);
             console.log('Employee position:', currentEmployee?.position);
+            console.log('Employee ID:', currentEmployee?.employeeId);
             
             if (currentEmployee) {
               // Fetch ALL documents
@@ -126,31 +231,6 @@ function Edashboard({ onLogout }) {
               let fetchedDocuments = await response.json();
               fetchedDocuments = Array.isArray(fetchedDocuments) ? fetchedDocuments : [];
               console.log('Total documents fetched:', fetchedDocuments.length);
-              
-              // Helper function to check if document is assigned/forwarded to this employee
-              const isDocumentAssignedToEmployee = (doc, employeeId) => {
-                // Convert employeeId to string for comparison
-                const employeeIdStr = String(employeeId);
-                
-                // Check if employee is in assignedTo array (handle both ObjectId objects and strings)
-                const isAssigned = doc.assignedTo?.some(assignedId => {
-                  if (!assignedId) return false;
-                  // Handle both populated objects and raw IDs
-                  const assignedIdStr = assignedId._id ? String(assignedId._id) : String(assignedId);
-                  return assignedIdStr === employeeIdStr;
-                });
-                
-                // Check if employee is currentHandler (handle both ObjectId objects and strings)
-                const isCurrentHandler = doc.currentHandler ? (
-                  doc.currentHandler._id ? String(doc.currentHandler._id) === employeeIdStr : 
-                  String(doc.currentHandler) === employeeIdStr
-                ) : false;
-                
-                // Check if document was forwarded (has forwardedDate) - include if forwarded to this employee
-                const isForwarded = doc.forwardedDate && (isAssigned || isCurrentHandler);
-                
-                return isAssigned || isCurrentHandler || isForwarded;
-              };
               
               // Filter documents based on employee position
               const position = currentEmployee.position;
@@ -238,6 +318,7 @@ function Edashboard({ onLogout }) {
                 filteredDocuments = fetchedDocuments.filter(doc => {
                   // STRICT: Position must match AND department must match
                   if (!isDocumentRoutedToMyDepartment(doc)) {
+                    console.log(`❌ PH: Document ${doc.documentId} not from my department`);
                     return false;
                   }
                   
@@ -249,28 +330,25 @@ function Edashboard({ onLogout }) {
                   // Check if forwarded directly to this employee
                   const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
                   
-                  // Check if it's Faculty Loading, Requested Subject, or Travel Order by category OR type
-                  const isFacultyLoadingDoc = 
-                    doc.category === 'Faculty Loading' || 
-                    doc.category === 'Requested Subject' ||
-                    doc.category === 'Travel Order' ||
-                    doc.category === 'Endorsement Form' ||
-                    doc.type === 'FACULTY LOADING' ||
-                    doc.type === 'Faculty Loading' ||
-                    doc.type === 'Requested Subject' ||
-                    doc.type === 'Travel Order' ||
-                    doc.type === 'Endorsement Form' ||
-                    doc.type?.toLowerCase().includes('faculty loading') ||
-                    doc.type?.toLowerCase().includes('requested subject') ||
-                    doc.type?.toLowerCase().includes('travel order') ||
-                    doc.type?.toLowerCase().includes('endorsement form');
+                  console.log(`📋 PH checking: ${doc.documentId}, nextOffice: ${doc.nextOffice}, currentOffice: ${doc.currentOffice}, routedToPH: ${routedToPH}, forwarded: ${forwardedToEmployee}`);
                   
-                  // Show if routed to PH OR forwarded to employee OR if it's a Faculty Loading type document that's Under Review/Submitted
-                  // BUT ONLY if from same department
-                  const shouldShow = (routedToPH || forwardedToEmployee || 
-                    (isFacultyLoadingDoc && 
-                     (doc.status === 'Under Review' || doc.status === 'Submitted'))) &&
-                    isDocumentRoutedToMyDepartment(doc);
+                  // Check if it's Travel Order - PH should NOT see these documents (Travel Order follows HR workflow)
+                  const isTravelOrder = doc.type?.toUpperCase().includes('TRAVEL ORDER');
+                  if (isTravelOrder) {
+                    console.log('❌ PH: Excluding Travel Order (uses HR workflow)');
+                    return false;
+                  }
+                  
+                  // Faculty Loading follows workflow: Program Head → Dean → Academic VP
+                  const isFacultyLoading = doc.type?.toUpperCase().includes('FACULTY LOADING');
+                  if (isFacultyLoading) {
+                    console.log('✅ PH: Including Faculty Loading document (PH → Dean → Academic VP)');
+                  }
+                  
+                  // Show if routed to PH OR forwarded to employee
+                  // For Faculty Loading: department-specific routing
+                  const shouldShow = (routedToPH || forwardedToEmployee) &&
+                    (isFacultyLoading ? isDocumentRoutedToMyDepartment(doc) : isDocumentRoutedToMyDepartment(doc));
                   
                   if (shouldShow) {
                     console.log('✓ Program Head will see:', doc.name, '- Type:', doc.type, '- Status:', doc.status, '- Dept:', getSubmitterDepartment(doc.submittedBy));
@@ -299,6 +377,151 @@ function Edashboard({ onLogout }) {
                   return routedToDean || forwardedToEmployee;
                 });
                 console.log('Filtered for Dean:', filteredDocuments.length);
+              } else if (position && (position.includes('Director of Instruction') || position.includes('Director For Instruction') || position.includes('Director Instruction'))) {
+                // Show documents routed to Director of Instruction OR forwarded to this employee
+                // For Requested Subject: university-wide (bypasses department restrictions)
+                // For other documents: department-specific
+                console.log('🔍 Director For Instruction filter - Position:', position);
+                console.log('🔍 Total documents to filter:', fetchedDocuments.length);
+                filteredDocuments = fetchedDocuments.filter(doc => {
+                  // Check if this is a Requested Subject document (university-wide)
+                  const docType = doc.type?.toUpperCase() || '';
+                  const docCategory = doc.category?.toUpperCase() || '';
+                  const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory.includes('REQUESTED SUBJECT');
+                  
+                  // Enhanced routing check: verify Director of Instruction match (handles both "of" and "For")
+                  // Use case-insensitive matching
+                  const nextOfficeLower = (doc.nextOffice || '').toLowerCase();
+                  const currentOfficeLower = (doc.currentOffice || '').toLowerCase();
+                  const routedToDirector = (nextOfficeLower.includes('director') && nextOfficeLower.includes('instruction')) ||
+                                          (currentOfficeLower.includes('director') && currentOfficeLower.includes('instruction'));
+                  
+                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  
+                  console.log(`📋 Director checking doc ${doc.documentId}: nextOffice="${doc.nextOffice}", currentOffice="${doc.currentOffice}", routedToDirector=${routedToDirector}, forwarded=${forwardedToEmployee}, isRequestedSubject=${isRequestedSubject}`);
+                  
+                  // For Requested Subject: bypass department check (university-wide)
+                  if (isRequestedSubject && routedToDirector) {
+                    console.log('✓ Director of Instruction will see Requested Subject (university-wide):', doc.name);
+                    return true;
+                  }
+                  
+                  // For other documents: STRICT - Only show documents from the SAME department
+                  if (!isDocumentRoutedToMyDepartment(doc)) {
+                    console.log(`❌ Director: Document ${doc.documentId} not from my department`);
+                    return false;
+                  }
+                  
+                  const routedToOffice = routedToDirector && isDocumentRoutedToMyDepartment(doc);
+                  
+                  if (routedToOffice || forwardedToEmployee) {
+                    console.log('✓ Director of Instruction will see:', doc.name, '- Dept:', getSubmitterDepartment(doc.submittedBy));
+                  }
+                  return routedToOffice || forwardedToEmployee;
+                });
+                console.log('✅ Filtered for Director of Instruction:', filteredDocuments.length);
+              } else if (position && (position.includes('Academic Adviser') || position.includes('Academic Advisor'))) {
+                // Show documents routed to Academic Adviser OR forwarded to this employee
+                // For Requested Subject: university-wide (bypasses department restrictions)
+                // For other documents: department-specific
+                filteredDocuments = fetchedDocuments.filter(doc => {
+                  // Check if this is a Requested Subject document (university-wide)
+                  const docType = doc.type?.toUpperCase() || '';
+                  const docCategory = doc.category?.toUpperCase() || '';
+                  const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory.includes('REQUESTED SUBJECT');
+                  
+                  // Enhanced routing check: verify Academic Adviser match
+                  const routedToAdviser = (doc.nextOffice && (doc.nextOffice.includes('Academic Adviser') || doc.nextOffice.includes('Academic Advisor'))) ||
+                                          (doc.currentOffice && (doc.currentOffice.includes('Academic Adviser') || doc.currentOffice.includes('Academic Advisor')));
+                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  
+                  // For Requested Subject: bypass department check (university-wide)
+                  if (isRequestedSubject && routedToAdviser) {
+                    console.log('✓ Academic Adviser will see Requested Subject (university-wide):', doc.name);
+                    return true;
+                  }
+                  
+                  // For other documents: STRICT - Only show documents from the SAME department
+                  if (!isDocumentRoutedToMyDepartment(doc)) {
+                    return false;
+                  }
+                  
+                  const routedToOffice = routedToAdviser && isDocumentRoutedToMyDepartment(doc);
+                  
+                  if (routedToOffice || forwardedToEmployee) {
+                    console.log('✓ Academic Adviser will see:', doc.name, '- Dept:', getSubmitterDepartment(doc.submittedBy));
+                  }
+                  return routedToOffice || forwardedToEmployee;
+                });
+                console.log('Filtered for Academic Adviser:', filteredDocuments.length);
+              } else if (position && (position.includes('VPAA') || position.includes('Vice President for Academic Affairs'))) {
+                // Show documents routed to VPAA OR forwarded to this employee
+                // For Requested Subject: university-wide (bypasses department restrictions)
+                // For other documents: department-specific
+                filteredDocuments = fetchedDocuments.filter(doc => {
+                  // Check if this is a Requested Subject document (university-wide)
+                  const docType = doc.type?.toUpperCase() || '';
+                  const docCategory = doc.category?.toUpperCase() || '';
+                  const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory.includes('REQUESTED SUBJECT');
+                  
+                  // Enhanced routing check: verify VPAA match
+                  const routedToVPAA = (doc.nextOffice && (doc.nextOffice.includes('VPAA') || doc.nextOffice.includes('Vice President for Academic Affairs'))) ||
+                                       (doc.currentOffice && (doc.currentOffice.includes('VPAA') || doc.currentOffice.includes('Vice President for Academic Affairs')));
+                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  
+                  // For Requested Subject: bypass department check (university-wide)
+                  if (isRequestedSubject && routedToVPAA) {
+                    console.log('✓ VPAA will see Requested Subject (university-wide):', doc.name);
+                    return true;
+                  }
+                  
+                  // For other documents: STRICT - Only show documents from the SAME department
+                  if (!isDocumentRoutedToMyDepartment(doc)) {
+                    return false;
+                  }
+                  
+                  const routedToOffice = routedToVPAA && isDocumentRoutedToMyDepartment(doc);
+                  
+                  if (routedToOffice || forwardedToEmployee) {
+                    console.log('✓ VPAA will see:', doc.name, '- Dept:', getSubmitterDepartment(doc.submittedBy));
+                  }
+                  return routedToOffice || forwardedToEmployee;
+                });
+                console.log('Filtered for VPAA:', filteredDocuments.length);
+              } else if (position && position.includes('Encoder')) {
+                // Show documents routed to Encoder OR forwarded to this employee
+                // For Requested Subject: university-wide (bypasses department restrictions)
+                // For other documents: department-specific
+                filteredDocuments = fetchedDocuments.filter(doc => {
+                  // Check if this is a Requested Subject document (university-wide)
+                  const docType = doc.type?.toUpperCase() || '';
+                  const docCategory = doc.category?.toUpperCase() || '';
+                  const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory.includes('REQUESTED SUBJECT');
+                  
+                  // Enhanced routing check: verify Encoder match
+                  const routedToEncoder = (doc.nextOffice && doc.nextOffice.includes('Encoder')) ||
+                                          (doc.currentOffice && doc.currentOffice.includes('Encoder'));
+                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  
+                  // For Requested Subject: bypass department check (university-wide)
+                  if (isRequestedSubject && routedToEncoder) {
+                    console.log('✓ Encoder will see Requested Subject (university-wide):', doc.name);
+                    return true;
+                  }
+                  
+                  // For other documents: STRICT - Only show documents from the SAME department
+                  if (!isDocumentRoutedToMyDepartment(doc)) {
+                    return false;
+                  }
+                  
+                  const routedToOffice = routedToEncoder && isDocumentRoutedToMyDepartment(doc);
+                  
+                  if (routedToOffice || forwardedToEmployee) {
+                    console.log('✓ Encoder will see:', doc.name, '- Dept:', getSubmitterDepartment(doc.submittedBy));
+                  }
+                  return routedToOffice || forwardedToEmployee;
+                });
+                console.log('Filtered for Encoder:', filteredDocuments.length);
               } else if (position === 'Academic VP' || position === 'Academic Vice President') {
                 // Show documents routed to Academic Vice President OR forwarded to this employee
                 // STRICT: Academic VP is department-specific - only show documents from SAME department
@@ -347,7 +570,8 @@ function Edashboard({ onLogout }) {
                 console.log('Filtered for Vice President:', filteredDocuments.length);
               } else if (position === 'OP' || position === 'Office of the President' || position === 'President') {
                 // Show documents routed to Office of the President OR forwarded to this employee OR submitted by this user
-                // STRICT: OP is now department-specific - only show documents from SAME department
+                // For Faculty Loading: university-wide (no department restriction)
+                // For other documents: department-specific
                 filteredDocuments = fetchedDocuments.filter(doc => {
                   // Always show documents submitted by this user
                   const userData = localStorage.getItem('userData');
@@ -360,20 +584,29 @@ function Edashboard({ onLogout }) {
                     return true;
                   }
                   
-                  // STRICT: Position must match AND department must match
+                  // Check if document is routed to OP
+                  const routedToOP = doc.nextOffice === 'Office of the President' || 
+                    doc.nextOffice === 'OP' ||
+                    doc.nextOffice === 'President' ||
+                    doc.currentOffice === 'Office of the President' ||
+                    doc.currentOffice === 'OP' ||
+                    doc.currentOffice === 'President';
+                  
+                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  
+                  // For Faculty Loading: bypass department check (university-wide)
+                  const isFacultyLoading = doc.type?.toUpperCase().includes('FACULTY LOADING');
+                  if (isFacultyLoading && routedToOP) {
+                    console.log('✓ OP will see Faculty Loading (university-wide):', doc.name);
+                    return true;
+                  }
+                  
+                  // For other documents: apply department check
                   if (!isDocumentRoutedToMyDepartment(doc)) {
                     return false;
                   }
-                  // Enhanced routing check: verify OP match AND department context
-                  const routedToOffice = (doc.nextOffice === 'Office of the President' || 
-                  doc.nextOffice === 'OP' ||
-                  doc.nextOffice === 'President' ||
-                  doc.currentOffice === 'Office of the President' ||
-                  doc.currentOffice === 'OP' ||
-                    doc.currentOffice === 'President') &&
-                    // Ensure department context matches
-                    isDocumentRoutedToMyDepartment(doc);
-                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  
+                  const routedToOffice = routedToOP && isDocumentRoutedToMyDepartment(doc);
                   
                   if (routedToOffice || forwardedToEmployee) {
                     console.log('✓ OP will see:', doc.name, '- Dept:', getSubmitterDepartment(doc.submittedBy));
@@ -381,24 +614,96 @@ function Edashboard({ onLogout }) {
                   return routedToOffice || forwardedToEmployee;
                 });
                 console.log('Filtered for Office of the President:', filteredDocuments.length);
+              } else if (position && (position.includes('HR') || position.includes('Human Resources'))) {
+                // HR sees documents routed to HR (university-wide, not department-specific)
+                filteredDocuments = fetchedDocuments.filter(doc => {
+                  const routedToHR = (doc.nextOffice && (doc.nextOffice.includes('HR') || doc.nextOffice.includes('Human Resources'))) || 
+                                     (doc.currentOffice && (doc.currentOffice.includes('HR') || doc.currentOffice.includes('Human Resources')));
+                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  
+                  if (routedToHR || forwardedToEmployee) {
+                    console.log('✓ HR will see:', doc.name, '- Type:', doc.type);
+                  }
+                  return routedToHR || forwardedToEmployee;
+                });
+                console.log('Filtered for HR:', filteredDocuments.length);
+              } else if (position && (position.includes('Records Office') || position.includes('Records'))) {
+                // Records Office sees documents routed to Records Office (university-wide)
+                filteredDocuments = fetchedDocuments.filter(doc => {
+                  const routedToRecords = (doc.nextOffice && doc.nextOffice.includes('Records')) || 
+                                         (doc.currentOffice && doc.currentOffice.includes('Records'));
+                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  
+                  if (routedToRecords || forwardedToEmployee) {
+                    console.log('✓ Records Office will see:', doc.name, '- Type:', doc.type);
+                  }
+                  return routedToRecords || forwardedToEmployee;
+                });
+                console.log('Filtered for Records Office:', filteredDocuments.length);
+              } else if (position && (position.includes('Executive Assistant') || position.includes('Executive Asst'))) {
+                // Executive Assistant sees documents routed to Executive Assistant (university-wide)
+                filteredDocuments = fetchedDocuments.filter(doc => {
+                  const routedToEA = (doc.nextOffice && doc.nextOffice.includes('Executive')) || 
+                                    (doc.currentOffice && doc.currentOffice.includes('Executive'));
+                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  
+                  if (routedToEA || forwardedToEmployee) {
+                    console.log('✓ Executive Assistant will see:', doc.name, '- Type:', doc.type);
+                  }
+                  return routedToEA || forwardedToEmployee;
+                });
+                console.log('Filtered for Executive Assistant:', filteredDocuments.length);
               } else if (position === 'Faculty' || position === 'Staff') {
                 // Faculty/Staff see documents they submitted, assigned to them, or forwarded to them
-                // STRICT: Only show documents from the SAME department
+                // IMPORTANT: Documents submitted by user should ALWAYS be visible (bypasses department check)
+                console.log('🔍 Faculty/Staff filtering - User:', parsedUser.username, 'Employee:', currentEmployee.name);
                 filteredDocuments = fetchedDocuments.filter(doc => {
-                  // STRICT: Position must match AND department must match
+                  console.log(`📋 Checking doc ${doc.documentId}: submittedBy="${doc.submittedBy}", status="${doc.status}", user="${parsedUser.username}", employee="${currentEmployee.name}"`);
+                  
+                  // FIRST: Check if document was submitted by this user (ALWAYS show, regardless of status or department)
+                  const isSubmitted = doc.submittedBy === parsedUser.username || 
+                                     doc.submittedBy === currentEmployee.name ||
+                                     (doc.submittedBy && parsedUser.username && doc.submittedBy.toLowerCase() === parsedUser.username.toLowerCase()) ||
+                                     (doc.submittedBy && currentEmployee.name && doc.submittedBy.toLowerCase() === currentEmployee.name.toLowerCase());
+                  
+                  if (isSubmitted) {
+                    console.log('✓ Faculty/Staff will see their submitted document:', doc.name, '- submittedBy:', doc.submittedBy, '- status:', doc.status);
+                    return true; // Always show documents submitted by this user, regardless of department or status
+                  }
+                  
+                  // SECOND: For other documents (assigned/forwarded): STRICT - Only show documents from the SAME department
                   if (!isDocumentRoutedToMyDepartment(doc)) {
+                    console.log(`❌ Faculty/Staff: Document ${doc.documentId} not from my department and not submitted by me`);
                     return false;
                   }
-                  const isSubmitted = doc.submittedBy === parsedUser.username;
+                  
                   const isAssignedOrForwarded = isDocumentAssignedToEmployee(doc, currentEmployee._id);
-                  return isSubmitted || isAssignedOrForwarded;
+                  if (isAssignedOrForwarded) {
+                    console.log('✓ Faculty/Staff will see assigned/forwarded document:', doc.name);
+                  } else {
+                    console.log(`❌ Faculty/Staff: Document ${doc.documentId} not assigned/forwarded to me`);
+                  }
+                  return isAssignedOrForwarded;
                 });
-                console.log('Filtered for Faculty/Staff:', filteredDocuments.length);
+                console.log('✅ Filtered for Faculty/Staff:', filteredDocuments.length, 'out of', fetchedDocuments.length);
               } else {
                 // Default: show documents assigned to or forwarded to this employee
-                // STRICT: Only show documents from the SAME department
+                // IMPORTANT: Returned documents should ALWAYS be visible to the sender (bypasses department check)
                 filteredDocuments = fetchedDocuments.filter(doc => {
-                  // STRICT: Position must match AND department must match
+                  // Check if this is a returned document submitted by this user
+                  const isReturnedAndSubmitted = doc.status === 'Returned' && 
+                    (doc.submittedBy === parsedUser.username || 
+                     doc.submittedBy === currentEmployee.name ||
+                     (doc.submittedBy && parsedUser.username && doc.submittedBy.toLowerCase() === parsedUser.username.toLowerCase()) ||
+                     (doc.submittedBy && currentEmployee.name && doc.submittedBy.toLowerCase() === currentEmployee.name.toLowerCase()));
+                  
+                  // If it's a returned document submitted by this user, always show it (like Travel Order)
+                  if (isReturnedAndSubmitted) {
+                    console.log('✓ User will see returned document:', doc.name, '- Status: Returned');
+                    return true;
+                  }
+                  
+                  // For non-returned documents: STRICT - Only show documents from the SAME department
                   if (!isDocumentRoutedToMyDepartment(doc)) {
                     return false;
                   }
@@ -409,6 +714,9 @@ function Edashboard({ onLogout }) {
               
               setDocuments(Array.isArray(filteredDocuments) ? filteredDocuments : []);
               setAllDocuments(Array.isArray(fetchedDocuments) ? fetchedDocuments : []); // Store ALL documents for History Logs
+              
+              // Calculate stats based on Document Management documents (not just filtered documents)
+              // This will be recalculated after getDocumentManagementDocuments is ready
               calculateSummaryStats(Array.isArray(filteredDocuments) ? filteredDocuments : []);
               setLoading(false);
               // System notification only on initial load
@@ -442,7 +750,7 @@ function Edashboard({ onLogout }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isDocumentAssignedToEmployee, calculateSummaryStats]);
 
   const fetchDocumentTypes = async () => {
     try {
@@ -478,7 +786,8 @@ function Edashboard({ onLogout }) {
       try {
         const response = await fetch(`${API_URL}/employees`);
         const data = await response.json();
-        setEmployees(data);
+        setAllEmployees(data); // Keep all employees for document filtering
+        setEmployees(data); // Also set for dropdown initially
       } catch (error) {
         console.error('Error fetching employees:', error);
       }
@@ -505,55 +814,40 @@ function Edashboard({ onLogout }) {
     }
   };
 
-  const calculateSummaryStats = (docs) => {
-    const stats = {
-      total: docs.length,
-      incoming: 0,
-      outgoing: 0,
-      active: 0,
-      pending: 0,
-      completed: 0
-    };
-
-    // Get current user data
-    const userData = localStorage.getItem('userData');
-    const currentUser = userData ? JSON.parse(userData) : null;
-
-    docs.forEach(doc => {
-      // Count incoming vs outgoing based on submittedBy
-      if (doc.submittedBy && currentUser && doc.submittedBy.toLowerCase() === currentUser.username.toLowerCase()) {
-        stats.outgoing++;
-      } else {
-        stats.incoming++;
-      }
-
-      // Count by status
-      if (doc.status) {
-        const status = doc.status.toLowerCase();
-        if (status === 'submitted' || status === 'under review' || status === 'processing') {
-          stats.active++;
-        } else if (status === 'pending') {
-          stats.pending++;
-        } else if (status === 'approved' || status === 'completed') {
-          stats.completed++;
-        }
-      } else {
-        // Default to active if no status
-        stats.active++;
-      }
-    });
-
-    setSummaryStats(stats);
-  };
+  // calculateSummaryStats moved above fetchDocuments (see above)
 
   // New functions for enhanced document management
   const handleDocumentClick = (document) => {
     setSelectedDocument(document);
+    
+    // Calculate the correct next office based on workflow (not from document.nextOffice which might be outdated)
+    // We need to temporarily set selectedDocument to calculate getNextOffice()
+    const tempSelectedDocument = document;
+    const docType = document.type?.toUpperCase() || '';
+    const docCategory = document.category?.toUpperCase() || '';
+    const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory.includes('REQUESTED SUBJECT');
+    
+    let calculatedNextOffice = document.nextOffice || '';
+    
+    // For Requested Subject, use the workflow function to get the correct next office
+    if (isRequestedSubject && employee) {
+      const nextOfficeFromWorkflow = getRequestedSubjectNextOffice(
+        document.currentOffice || employee.position,
+        document.routingHistory || [],
+        document.submittedBy
+      );
+      if (nextOfficeFromWorkflow) {
+        calculatedNextOffice = nextOfficeFromWorkflow;
+      }
+    }
+    // For other document types, getNextOffice() will be called when needed, but we can't call it here
+    // because selectedDocument isn't set yet. So we'll use document.nextOffice as fallback.
+    
     setReviewForm({
       status: document.status || '',
       comments: document.comments || '',
       reviewer: user?.username || employee?.name || '',
-      nextOffice: document.nextOffice || ''
+      nextOffice: calculatedNextOffice
     });
     setShowReviewModal(true);
   };
@@ -759,18 +1053,93 @@ function Edashboard({ onLogout }) {
   const positionMatchesOffice = (position, office) => {
     if (!position || !office) return false;
     
-    // Exact match
+    // Normalize by removing parenthetical abbreviations (e.g., "Program Head (PH)" -> "Program Head")
+    const normalizePosition = (str) => {
+      if (!str) return '';
+      // Remove anything in parentheses and trim
+      return str.replace(/\s*\([^)]*\)\s*/g, '').trim();
+    };
+    
+    const normalizedPosition = normalizePosition(position);
+    const normalizedOffice = normalizePosition(office);
+    
+    // Exact match (after normalization)
+    if (normalizedPosition === normalizedOffice) return true;
     if (position === office) return true;
     
+    // Handle HR / Human Resources variants
+    if ((position === 'HR' || position === 'Human Resources' || position.includes('Human Resources')) &&
+        (office === 'HR' || office === 'Human Resources' || office.includes('Human Resources'))) {
+      return true;
+    }
+    
+    // Handle Records Office / Records variants
+    if ((position === 'Records Office' || position === 'Records' || position.includes('Records')) &&
+        (office === 'Records Office' || office === 'Records' || office.includes('Records'))) {
+      return true;
+    }
+    
+    // Handle Executive Assistant variants
+    if ((position === 'Executive Assistant' || position === 'Executive Asst' || position.includes('Executive Assistant')) &&
+        (office === 'Executive Assistant' || office === 'Executive Asst' || office.includes('Executive Assistant'))) {
+      return true;
+    }
+    
     // Handle Academic VP / Academic Vice President variants
-    if ((position === 'Academic VP' || position === 'Academic Vice President') &&
-        (office === 'Academic VP' || office === 'Academic Vice President')) {
+    if ((normalizedPosition === 'Academic VP' || normalizedPosition === 'Academic Vice President' || position.includes('Academic VP') || position.includes('Academic Vice President')) &&
+        (normalizedOffice === 'Academic VP' || normalizedOffice === 'Academic Vice President' || office.includes('Academic VP') || office.includes('Academic Vice President'))) {
       return true;
     }
     
     // Handle VP / Vice President variants
-    if ((position === 'VP' || position === 'Vice President') &&
-        (office === 'VP' || office === 'Vice President')) {
+    if ((normalizedPosition === 'VP' || normalizedPosition === 'Vice President' || position.includes('Vice President')) &&
+        (normalizedOffice === 'VP' || normalizedOffice === 'Vice President' || office.includes('Vice President'))) {
+      return true;
+    }
+
+    // Handle Program Head / PH variants
+    if ((normalizedPosition === 'Program Head' || normalizedPosition === 'PH' || position.includes('Program Head')) &&
+        (normalizedOffice === 'Program Head' || normalizedOffice === 'PH' || office.includes('Program Head'))) {
+      return true;
+    }
+
+    // Handle Dean variants
+    if ((normalizedPosition === 'Dean' || position.includes('Dean')) &&
+        (normalizedOffice === 'Dean' || office.includes('Dean'))) {
+      return true;
+    }
+    
+    // Handle Academic Adviser variants
+    if ((normalizedPosition === 'Academic Adviser' || normalizedPosition === 'Academic Advisor' || position.includes('Academic Adviser') || position.includes('Academic Advisor')) &&
+        (normalizedOffice === 'Academic Adviser' || normalizedOffice === 'Academic Advisor' || office.includes('Academic Adviser') || office.includes('Academic Advisor'))) {
+      return true;
+    }
+    
+    // Handle Head variants
+    if ((normalizedPosition === 'Head' || normalizedPosition === 'Department Head' || position.includes('Department Head')) &&
+        (normalizedOffice === 'Head' || normalizedOffice === 'Department Head' || office.includes('Department Head'))) {
+      return true;
+    }
+    
+    // Handle Director of Instruction variants (including "Director For Instruction" which is stored in the database)
+    if ((normalizedPosition === 'Director of Instruction' || normalizedPosition === 'Director For Instruction' || 
+         position.includes('Director of Instruction') || position.includes('Director For Instruction') || 
+         position.includes('Director Instruction')) &&
+        (normalizedOffice === 'Director of Instruction' || normalizedOffice === 'Director For Instruction' || 
+         office.includes('Director of Instruction') || office.includes('Director For Instruction') || 
+         office.includes('Director Instruction'))) {
+      return true;
+    }
+    
+    // Handle VPAA / Vice President for Academic Affairs variants
+    if ((normalizedPosition === 'VPAA' || normalizedPosition === 'Vice President for Academic Affairs' || position.includes('VPAA') || position.includes('Vice President for Academic Affairs')) &&
+        (normalizedOffice === 'VPAA' || normalizedOffice === 'Vice President for Academic Affairs' || office.includes('VPAA') || office.includes('Vice President for Academic Affairs'))) {
+      return true;
+    }
+    
+    // Handle Encoder variants
+    if ((normalizedPosition === 'Encoder' || position.includes('Encoder')) &&
+        (normalizedOffice === 'Encoder' || office.includes('Encoder'))) {
       return true;
     }
 
@@ -781,8 +1150,8 @@ function Edashboard({ onLogout }) {
     }
 
     // Handle Office of the President variants
-    if ((position === 'Office of the President' || position === 'President' || position === 'OP') &&
-        (office === 'Office of the President' || office === 'President' || office === 'OP')) {
+    if ((position && (position.includes('Office of the President') || position.includes('President') || position.includes('OP'))) &&
+        (office && (office.includes('Office of the President') || office.includes('President') || office.includes('OP')))) {
       return true;
     }
 
@@ -792,7 +1161,7 @@ function Edashboard({ onLogout }) {
     }
 
     // Case-insensitive fallback comparison
-    if (position.toLowerCase() === office.toLowerCase()) {
+    if (normalizedPosition.toLowerCase() === normalizedOffice.toLowerCase()) {
       return true;
     }
     
@@ -821,10 +1190,16 @@ function Edashboard({ onLogout }) {
   const getDisplayStatus = (doc) => {
     if (!doc) return 'Submitted';
     
+    // If status is explicitly "Approved", show it regardless of nextOffice
+    // This handles cases where final approver approved but nextOffice wasn't cleared
+    if (doc.status === 'Approved') {
+      return 'Approved';
+    }
+    
     // If there's a nextOffice, document is still in workflow, so don't show as "Approved"
     if (doc.nextOffice && doc.nextOffice.trim() !== '') {
       // Show Processing or Under Review instead of Approved if still routing
-      if (doc.status === 'Approved' || doc.status === 'Processing') {
+      if (doc.status === 'Processing') {
         return 'Processing';
       }
       return doc.status || 'Processing';
@@ -837,6 +1212,51 @@ function Edashboard({ onLogout }) {
   // Get next office based on current position, maintaining department context
   const getNextOffice = () => {
     if (!employee || !selectedDocument) return null;
+    
+    // Check if this is a Travel Order document (uses HR workflow)
+    const docType = selectedDocument.type?.toUpperCase() || '';
+    const docCategory = selectedDocument.category?.toUpperCase() || '';
+    const isTravelOrder = docType.includes('TRAVEL ORDER') || docCategory.includes('TRAVEL ORDER');
+    
+    if (isTravelOrder) {
+      // Use the Travel Order workflow function
+      const nextOffice = getTravelOrderNextOffice(
+        selectedDocument.currentOffice || employee.position,
+        selectedDocument.routingHistory || [],
+        selectedDocument.submittedBy
+      );
+      // If workflow is complete, return null
+      if (nextOffice === null || nextOffice === 'COMPLETED') return null;
+      return nextOffice;
+    }
+    
+    // Check if this is a Faculty Loading document
+    const isFacultyLoading = docType.includes('FACULTY LOADING') || docCategory.includes('FACULTY LOADING');
+    if (isFacultyLoading) {
+      // Use the Faculty Loading workflow function
+      const nextOffice = getFacultyLoadingNextOffice(
+        selectedDocument.currentOffice || employee.position,
+        selectedDocument.routingHistory || [],
+        selectedDocument.submittedBy
+      );
+      // If workflow is complete, return null
+      if (nextOffice === null || nextOffice === 'COMPLETED') return null;
+      return nextOffice;
+    }
+    
+    // Check if this is a Requested Subject document
+    const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory.includes('REQUESTED SUBJECT');
+    if (isRequestedSubject) {
+      // Use the Requested Subject workflow function
+      const nextOffice = getRequestedSubjectNextOffice(
+        selectedDocument.currentOffice || employee.position,
+        selectedDocument.routingHistory || [],
+        selectedDocument.submittedBy
+      );
+      // If workflow is complete, return null
+      if (nextOffice === null || nextOffice === 'COMPLETED') return null;
+      return nextOffice;
+    }
     
     const position = employee.position;
     const employeeDepartment = employee.department;
@@ -885,11 +1305,11 @@ function Edashboard({ onLogout }) {
     if (position === 'Communication' || position === 'Communications' || position === 'Secretary') {
       nextPosition = 'Program Head';
     } else if (position === 'Program Head') {
-      nextPosition = endorsementFlow ? 'Vice President' : 'Dean';
+      nextPosition = 'Dean';
     } else if (position === 'Dean') {
-      nextPosition = requestedSubjectFlow ? 'Vice President' : 'Academic Vice President';
+      nextPosition = endorsementFlow ? 'Vice President' : (requestedSubjectFlow ? 'Vice President' : 'Academic Vice President');
     } else if (position === 'Academic VP' || position === 'Academic Vice President') {
-      return null; // Final approver for Faculty Loading and Travel Order
+      return null; // Final approver
     } else if (position === 'Vice President' || position === 'VP') {
       nextPosition = endorsementFlow ? 'Office of the President' : null;
     } else if (position === 'Office of the President' || position === 'President') {
@@ -950,10 +1370,41 @@ function Edashboard({ onLogout }) {
       // eslint-disable-next-line no-unused-vars
       const isSharedPosition = false; // No positions are shared anymore
       
-      const officeForHistory = isSharedPosition ? nextOffice : nextOffice;
+      // Get current office (where we're forwarding FROM)
+      // Use ONLY employee position, never selectedDocument.currentOffice
+      // because currentOffice is already updated to the DESTINATION by the time we read it
+      const currentOfficeForHistory = employee?.position || 'Unknown';
       const commentsWithDept = documentDepartment && !isSharedPosition
         ? (reviewForm.comments || `Approved and forwarded to ${nextOffice} of ${documentDepartment} by ${approverName}`)
         : (reviewForm.comments || `Approved and forwarded to ${nextOffice} by ${approverName}`);
+      
+      // Manually build routing history array
+      const currentRoutingHistory = selectedDocument.routingHistory || [];
+      const newRoutingHistory = Array.isArray(currentRoutingHistory) ? [...currentRoutingHistory] : [];
+      
+      // Add new entry
+      const newEntry = {
+        office: currentOfficeForHistory,  // Where we're forwarding FROM
+        toOffice: nextOffice,              // Where we're forwarding TO
+        action: 'approved',
+        performedBy: approverName,
+        handler: approverName,
+        date: new Date().toISOString(),
+        timestamp: new Date().toISOString(),
+        comments: commentsWithDept
+      };
+      newRoutingHistory.push(newEntry);
+      
+      console.log('📋 ROUTING HISTORY DEBUG:');
+      console.log('  employee?.position:', employee?.position);
+      console.log('  selectedDocument.currentOffice:', selectedDocument.currentOffice);
+      console.log('  currentOfficeForHistory:', currentOfficeForHistory);
+      console.log('  nextOffice:', nextOffice);
+      console.log('  Current history length:', currentRoutingHistory.length);
+      console.log('  Current history:', currentRoutingHistory);
+      console.log('  New entry:', newEntry);
+      console.log('  New history length:', newRoutingHistory.length);
+      console.log('  New history:', newRoutingHistory);
       
       const updateData = {
         status: 'Processing',
@@ -962,20 +1413,26 @@ function Edashboard({ onLogout }) {
         reviewDate: new Date().toISOString(),
         nextOffice: nextOffice,
         currentOffice: nextOffice,
-        $push: {
-          routingHistory: {
-            office: officeForHistory,
-            toOffice: nextOffice,
-            action: 'approved',
-            performedBy: approverName,
-            handler: approverName,
-            date: new Date().toISOString(),
-            comments: commentsWithDept
-          }
-        }
+        routingHistory: newRoutingHistory  // Send the complete array
       };
+      
+      console.log('📤 SENDING TO BACKEND:', {
+        docId: selectedDocument._id || selectedDocument.id || selectedDocument.documentId,
+        nextOffice: updateData.nextOffice,
+        currentOffice: updateData.currentOffice,
+        routingHistoryLength: updateData.routingHistory.length,
+        fullUpdateData: updateData
+      });
 
-      const response = await fetch(`${API_URL}/documents/${selectedDocument._id}`, {
+      // Use _id, id, or documentId - whichever is available
+      const docId = selectedDocument._id || selectedDocument.id || selectedDocument.documentId;
+      if (!docId) {
+        alert('Error: Document ID not found');
+        console.error('Selected document:', selectedDocument);
+        return;
+      }
+
+      const response = await fetch(`${API_URL}/documents/${docId}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -984,6 +1441,16 @@ function Edashboard({ onLogout }) {
       });
 
       if (response.ok) {
+        const responseData = await response.json();
+        console.log('✅ BACKEND RESPONSE:', {
+          status: response.status,
+          documentId: responseData.documentId,
+          currentOffice: responseData.currentOffice,
+          nextOffice: responseData.nextOffice,
+          routingHistoryLength: responseData.routingHistory ? responseData.routingHistory.length : 0,
+          routingHistory: responseData.routingHistory
+        });
+        
         showNotification('success', 'Document Accepted & Forwarded', `Document accepted and forwarded to ${nextOffice} successfully!`);
         handleCloseReviewModal();
         // Refresh documents immediately to update History Logs
@@ -996,7 +1463,7 @@ function Edashboard({ onLogout }) {
         }
       } else {
         const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
-        console.error('Error response:', errorData);
+        console.error('❌ ERROR RESPONSE:', errorData);
         alert(`Failed to approve and forward document: ${errorData.message || 'Unknown error'}`);
       }
     } catch (error) {
@@ -1071,12 +1538,12 @@ function Edashboard({ onLogout }) {
     }
   };
 
-  // Quick action: Reject & Return
-  const handleRejectAndReturn = async () => {
+  // Quick action: Return
+  const handleReturn = async () => {
     if (!selectedDocument) return;
 
     if (!reviewForm.comments) {
-      alert('Please provide comments explaining why the document is being rejected');
+      alert('Please provide comments explaining why the document is being returned');
       return;
     }
 
@@ -1098,27 +1565,40 @@ function Edashboard({ onLogout }) {
       const documentDepartment = getSubmitterDepartment(selectedDocument.submittedBy);
       const officeForHistory = documentDepartment ? `${currentPosition} of ${documentDepartment}` : currentPosition;
       
+      // Use documentId (string) if available, otherwise use _id or id
+      const documentIdToUse = selectedDocument.documentId || selectedDocument._id || selectedDocument.id;
+      
+      if (!documentIdToUse) {
+        alert('Error: Document ID is missing. Cannot return this document.');
+        return;
+      }
+      
+      // Get current routing history
+      const currentRoutingHistory = selectedDocument.routingHistory || [];
+      const updatedRoutingHistory = Array.isArray(currentRoutingHistory) ? [...currentRoutingHistory] : [];
+      
+      // Add return entry to routing history
+      updatedRoutingHistory.push({
+        office: officeForHistory,
+        action: 'returned',
+        handler: approverName,
+        timestamp: new Date().toISOString(),
+        comments: reviewForm.comments || `Document returned to submitter by ${approverName} for editing`,
+        processingTime: 0
+      });
+      
       const updateData = {
-        status: 'Rejected',
+        status: 'Returned',
         comments: reviewForm.comments,
         reviewer: approverName,
         reviewDate: new Date().toISOString(),
-        nextOffice: '', // Clear next office when rejected
-        currentOffice: '', // Clear current office when rejected
-        $push: {
-          routingHistory: {
-            office: officeForHistory,
-            toOffice: 'Returned to Submitter',
-            action: 'rejected', // Must be lowercase per schema enum
-            performedBy: approverName,
-            handler: approverName,
-            date: new Date().toISOString(),
-            comments: reviewForm.comments || `Document rejected by ${approverName}`
-          }
-        }
+        nextOffice: '', // Clear next office - document goes back to submitter
+        currentOffice: '', // Clear current office
+        currentHandlerId: null, // Clear handler assignment
+        routingHistory: updatedRoutingHistory
       };
 
-      const response = await fetch(`${API_URL}/documents/${selectedDocument._id}`, {
+      const response = await fetch(`${API_URL}/documents/${documentIdToUse}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -1127,7 +1607,27 @@ function Edashboard({ onLogout }) {
       });
 
       if (response.ok) {
-        showNotification('warning', 'Document Rejected', 'Document has been rejected and returned to submitter.');
+        await response.json();
+        
+        // Create notification for document owner
+        try {
+          await fetch(`${API_URL}/documents/${documentIdToUse}/routing-history`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              office: officeForHistory,
+              action: 'returned',
+              handler: approverName,
+              comments: reviewForm.comments || `Document returned to you for editing by ${approverName}`
+            })
+          });
+        } catch (notifError) {
+          console.error('Error adding routing history:', notifError);
+        }
+        
+        showNotification('info', 'Document Returned', 'Document has been returned to submitter for editing.');
         handleCloseReviewModal();
         // Refresh documents immediately to update History Logs
         await fetchDocuments();
@@ -1139,12 +1639,12 @@ function Edashboard({ onLogout }) {
         }
       } else {
         const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
-        console.error('Reject error:', errorData);
-        alert(`Failed to reject document: ${errorData.message || 'Unknown error'}`);
+        console.error('Return error:', errorData);
+        alert(`Failed to return document: ${errorData.message || 'Unknown error'}`);
       }
     } catch (error) {
-      console.error('Error rejecting:', error);
-      alert(`Error rejecting document: ${error.message || 'Unknown error'}`);
+      console.error('Error returning document:', error);
+      alert(`Error returning document: ${error.message || 'Network error'}`);
     }
   };
 
@@ -1156,16 +1656,31 @@ function Edashboard({ onLogout }) {
       const currentPosition = employee?.position || user?.username;
       const approverName = employee?.name || user?.username || 'Unknown';
       
+      // Get the correct document ID
+      const docId = selectedDocument._id || selectedDocument.id || selectedDocument.documentId;
+      
+      if (!docId) {
+        alert('Error: Cannot identify document');
+        return;
+      }
+      
+      // Check if this is a Faculty Loading document
+      const docType = selectedDocument.type?.toUpperCase() || '';
+      const docCategory = selectedDocument.category?.toUpperCase() || '';
+      const isFacultyLoading = docType.includes('FACULTY LOADING') || docCategory.includes('FACULTY LOADING');
+      
+      // For Faculty Loading, workflow is complete after final approval
+      // Clear nextOffice to indicate workflow is finished
       const updateData = {
         status: 'Approved',
-        comments: reviewForm.comments || `Final approval by ${approverName}`,
+        comments: reviewForm.comments || `Final approval by ${approverName}${isFacultyLoading ? ' - Workflow complete' : ''}`,
         reviewer: approverName,
         reviewDate: new Date().toISOString(),
-        nextOffice: '', // Clear next office - workflow complete
-        currentOffice: currentPosition // Keep at final office
+        nextOffice: '', // Clear nextOffice - workflow is complete
+        currentOffice: currentPosition // Keep at final approver's office
       };
 
-      const response = await fetch(`${API_URL}/documents/${selectedDocument._id}`, {
+      const response = await fetch(`${API_URL}/documents/${docId}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -1176,7 +1691,7 @@ function Edashboard({ onLogout }) {
       if (response.ok) {
         // Add routing history entry for final approval
         try {
-          await fetch(`${API_URL}/documents/${selectedDocument._id}/routing-history`, {
+          await fetch(`${API_URL}/documents/${docId}/routing-history`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -1193,7 +1708,15 @@ function Edashboard({ onLogout }) {
           // Don't fail the approval if history fails
         }
 
-        showNotification('success', 'Document Approved', `Document "${selectedDocument.name}" has received FINAL APPROVAL! Workflow complete.`);
+        const docType = selectedDocument.type?.toUpperCase() || '';
+        const docCategory = selectedDocument.category?.toUpperCase() || '';
+        const isFacultyLoading = docType.includes('FACULTY LOADING') || docCategory.includes('FACULTY LOADING');
+        
+        if (isFacultyLoading) {
+          showNotification('success', 'Document Approved', `Faculty Loading document "${selectedDocument.name}" has been APPROVED and RETURNED TO SENDER!`);
+        } else {
+          showNotification('success', 'Document Approved', `Document "${selectedDocument.name}" has received FINAL APPROVAL! Workflow complete.`);
+        }
         handleCloseReviewModal();
         // Refresh documents immediately to update History Logs
         await fetchDocuments();
@@ -1210,6 +1733,62 @@ function Edashboard({ onLogout }) {
     } catch (error) {
       console.error('Error approving:', error);
       alert('Error approving document');
+    }
+  };
+
+  // Reject document at final step
+  const handleReject = async () => {
+    if (!selectedDocument) return;
+
+    if (!reviewForm.comments) {
+      alert('Please provide comments explaining why the document is being rejected');
+      return;
+    }
+
+    try {
+      const approverName = employee?.name || user?.username || 'Unknown';
+      
+      // Get the correct document ID
+      const docId = selectedDocument._id || selectedDocument.id || selectedDocument.documentId;
+      
+      if (!docId) {
+        alert('Error: Cannot identify document');
+        return;
+      }
+      
+      const updateData = {
+        status: 'Rejected',
+        comments: reviewForm.comments || `Rejected by ${approverName}`,
+        reviewer: approverName,
+        reviewDate: new Date().toISOString(),
+        nextOffice: '', // Clear next office
+        currentOffice: employee?.position || 'Unknown'
+      };
+
+      const response = await fetch(`${API_URL}/documents/${docId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updateData),
+      });
+
+      if (response.ok) {
+        showNotification('error', 'Document Rejected', `Document "${selectedDocument.name}" has been rejected.`);
+        handleCloseReviewModal();
+        await fetchDocuments();
+        if (activeSidebarTab === 'history' || activeSidebarTab === 'forwarded') {
+          setTimeout(() => {
+            fetchDocuments();
+          }, 300);
+        }
+      } else {
+        const errorData = await response.json();
+        alert(`Failed to reject document: ${errorData.message || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error rejecting:', error);
+      alert('Error rejecting document');
     }
   };
 
@@ -1231,10 +1810,40 @@ function Edashboard({ onLogout }) {
 
       // If forwarding to next office, set nextOffice and currentOffice
       if (reviewForm.nextOffice) {
-        updateData.nextOffice = reviewForm.nextOffice;
-        updateData.currentOffice = reviewForm.nextOffice;
-        updateData.status = 'Processing'; // Update status when forwarding
-        updateData.forwardedBy = currentUserName; // Add forwardedBy when forwarding
+        // Check if Faculty Loading workflow is complete
+        if (reviewForm.nextOffice === 'COMPLETED') {
+          // Mark document as Approved and return to sender
+          updateData.status = 'Approved';
+          updateData.nextOffice = selectedDocument.submittedBy || 'Sender';
+          updateData.currentOffice = selectedDocument.submittedBy || 'Sender';
+          updateData.forwardedBy = currentUserName;
+        } else {
+          updateData.nextOffice = reviewForm.nextOffice;
+          updateData.currentOffice = reviewForm.nextOffice;
+          updateData.status = 'Processing'; // Update status when forwarding
+          updateData.forwardedBy = currentUserName; // Add forwardedBy when forwarding
+          
+          // Add routing history entry when forwarding (similar to handleApproveAndForward)
+          const currentRoutingHistory = selectedDocument.routingHistory || [];
+          const newRoutingHistory = Array.isArray(currentRoutingHistory) ? [...currentRoutingHistory] : [];
+          
+          // Get current office from document or employee position
+          const currentOfficeForHistory = selectedDocument.currentOffice || employee?.position || 'Unknown';
+          
+          // Add new routing history entry
+          const newEntry = {
+            office: currentOfficeForHistory,  // Where we're forwarding FROM
+            toOffice: reviewForm.nextOffice,  // Where we're forwarding TO
+            action: 'approved',  // Treating status update with forwarding as approval
+            performedBy: currentUserName,
+            handler: currentUserName,
+            date: new Date().toISOString(),
+            timestamp: new Date().toISOString(),
+            comments: reviewForm.comments || `Approved and forwarded to ${reviewForm.nextOffice} by ${currentUserName}`
+          };
+          newRoutingHistory.push(newEntry);
+          updateData.routingHistory = newRoutingHistory;
+        }
       }
 
       const response = await fetch(`${API_URL}/documents/${selectedDocument._id}`, {
@@ -1246,9 +1855,14 @@ function Edashboard({ onLogout }) {
       });
 
       if (response.ok) {
-        const message = reviewForm.nextOffice 
-          ? `Document forwarded to ${reviewForm.nextOffice} successfully!` 
-          : 'Document status updated successfully!';
+        let message = 'Document status updated successfully!';
+        if (reviewForm.nextOffice) {
+          if (reviewForm.nextOffice === 'COMPLETED') {
+            message = 'Faculty Loading workflow completed! Document has been approved and returned to sender.';
+          } else {
+            message = `Document forwarded to ${reviewForm.nextOffice} successfully!`;
+          }
+        }
         showNotification('success', 'Status Updated', message);
         handleCloseReviewModal();
         // Refresh documents immediately to update History Logs
@@ -1268,6 +1882,7 @@ function Edashboard({ onLogout }) {
     }
   };
 
+  // eslint-disable-next-line no-unused-vars
   const handleDeleteDocument = (documentId) => {
     if (!documentId) {
       console.error('Document ID is undefined');
@@ -1350,6 +1965,7 @@ function Edashboard({ onLogout }) {
       case 'Under Review': return '#ffc107';
       case 'Approved': return '#28a745';
       case 'Rejected': return '#dc3545';
+      case 'Returned': return '#ff9800';
       case 'Processing': return '#6f42c1';
       default: return '#6c757d';
     }
@@ -1361,6 +1977,7 @@ function Edashboard({ onLogout }) {
       case 'Under Review': return '';
       case 'Approved': return '';
       case 'Rejected': return '';
+      case 'Returned': return '↩';
       case 'Processing': return '';
       default: return '';
     }
@@ -1522,18 +2139,128 @@ function Edashboard({ onLogout }) {
     return steps;
   };
 
-  // Get unique submitters for filter dropdown
+  // Get documents for Document Management
+  const getDocumentManagementDocuments = () => {
+    if (!employee || !allDocuments.length) return [];
+    
+    const employeeDepartment = employee.department;
+    const employeeOfficeName = employee.office?.name;
+    const currentUserName = employee.name || user?.username;
+    const currentPosition = employee.position;
+    
+    // Helper function to get submitter's department
+    const getSubmitterDepartment = (submittedBy) => {
+      if (!submittedBy) return null;
+      const submitter = allEmployees.find(emp => 
+        emp.name?.toLowerCase() === submittedBy.toLowerCase() ||
+        emp.name?.toLowerCase().includes(submittedBy.toLowerCase()) ||
+        submittedBy.toLowerCase().includes(emp.name?.toLowerCase())
+      );
+      return submitter ? (submitter.office?.name || submitter.department) : null;
+    };
+    
+    // Enhanced department matching function
+    const isFromSameDepartment = (doc) => {
+      const submitterDept = getSubmitterDepartment(doc.submittedBy);
+      if (!submitterDept) return false;
+      
+      // Strict department matching: document must be from the same department/office as the employee
+      const docDeptLower = submitterDept.toLowerCase();
+      const empDeptLower = employeeDepartment?.toLowerCase() || '';
+      const empOfficeLower = employeeOfficeName?.toLowerCase() || '';
+      
+      // Check exact matches or if one contains the other (for variations like "Faculty of Agriculture and Life Sciences" vs "FALS")
+      const matchesDept = docDeptLower === empDeptLower || 
+                         docDeptLower === empOfficeLower ||
+                         empDeptLower === docDeptLower ||
+                         empOfficeLower === docDeptLower ||
+                         (docDeptLower.includes(empDeptLower) && empDeptLower.length > 0) ||
+                         (empDeptLower.includes(docDeptLower) && docDeptLower.length > 0) ||
+                         (docDeptLower.includes(empOfficeLower) && empOfficeLower.length > 0) ||
+                         (empOfficeLower.includes(docDeptLower) && docDeptLower.length > 0);
+      
+      return matchesDept;
+    };
+    
+    // Check if document is submitted by current user
+    const isSubmittedByCurrentUser = (doc) => {
+      if (!doc.submittedBy || !currentUserName) return false;
+      const docSubmitter = doc.submittedBy.toLowerCase();
+      const currentUser = currentUserName.toLowerCase();
+      return docSubmitter === currentUser || 
+             docSubmitter.includes(currentUser) || 
+             currentUser.includes(docSubmitter);
+    };
+    
+    // Check if document is routed to current user's position
+    const isRoutedToMyPosition = (doc) => {
+      if (!currentPosition) return false;
+      const nextOffice = doc.nextOffice || '';
+      const currentOffice = doc.currentOffice || '';
+      
+      // Use includes to handle position variations like "Records Office (RO)"
+      return (nextOffice && currentPosition.includes(nextOffice)) || 
+             (currentOffice && currentPosition.includes(currentOffice)) ||
+             (nextOffice && nextOffice.includes(currentPosition)) ||
+             (currentOffice && currentOffice.includes(currentPosition));
+    };
+    
+    return allDocuments.filter(doc => {
+      // Check if document is routed to current user's position (before department check)
+      const isRoutedToMe = isRoutedToMyPosition(doc);
+      
+      // University-wide document types - bypass department check
+      const isFacultyLoading = doc.type?.toUpperCase().includes('FACULTY LOADING');
+      const isTravelOrder = doc.type?.toUpperCase().includes('TRAVEL ORDER') || 
+                           doc.category?.toUpperCase().includes('TRAVEL ORDER');
+      
+      // Check if user is President/OP - they can see documents routed to them regardless of department
+      const isPresident = currentPosition?.includes('President') || 
+                         currentPosition === 'OP' || 
+                         currentPosition === 'Office of the President';
+      
+      // For President: Show documents routed to them regardless of department
+      // For university-wide documents (Faculty Loading, Travel Order): bypass department check
+      // For other documents: must be from same department
+      const bypassDepartmentCheck = isFacultyLoading || 
+                                    isTravelOrder || 
+                                    (isPresident && isRoutedToMe);
+      
+      if (!bypassDepartmentCheck && !isFromSameDepartment(doc)) {
+        return false;
+      }
+      
+      // IMPORTANT: If document is "Returned", ONLY show it to the original submitter
+      if (doc.status === 'Returned') {
+        return isSubmittedByCurrentUser(doc);
+      }
+      
+      // For other statuses, show documents that are:
+      // 1. Submitted by current user
+      // 2. Assigned to current user
+      // 3. Forwarded to current user
+      // 4. Routed to current user's position (nextOffice or currentOffice matches)
+      const isSubmitted = isSubmittedByCurrentUser(doc);
+      const isAssignedOrForwarded = isDocumentAssignedToEmployee(doc, employee._id);
+      
+      return isSubmitted || isAssignedOrForwarded || isRoutedToMe;
+    });
+  };
+
+  // Get unique submitters for filter dropdown (from document management documents)
   const getUniqueSubmitters = () => {
-    if (!Array.isArray(documents)) {
+    const docManagementDocs = getDocumentManagementDocuments();
+    if (!Array.isArray(docManagementDocs)) {
       return [];
     }
-    const submitters = [...new Set(documents.map(doc => doc.submittedBy).filter(Boolean))];
+    const submitters = [...new Set(docManagementDocs.map(doc => doc.submittedBy).filter(Boolean))];
     return submitters;
   };
 
   // Filter documents based on search and filters
-  // Only show documents assigned to the employee
-  const filteredDocuments = Array.isArray(documents) ? documents.filter(doc => {
+  // Show all documents from user's department history (same as History Logs)
+  const documentManagementDocs = getDocumentManagementDocuments();
+  const filteredDocuments = Array.isArray(documentManagementDocs) ? documentManagementDocs.filter(doc => {
     const matchesSearch = doc.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          doc.documentId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          doc.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -1544,6 +2271,17 @@ function Edashboard({ onLogout }) {
     
     return matchesSearch && matchesStatus && matchesSubmitter;
   }) : [];
+
+  // Recalculate Dashboard summary stats based on Document Management documents
+  useEffect(() => {
+    if (employee && allDocuments.length > 0) {
+      const docManagementDocs = getDocumentManagementDocuments();
+      if (docManagementDocs.length >= 0) {
+        calculateSummaryStats(docManagementDocs);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allDocuments, employee, allEmployees]);
 
   const handleLogout = () => {
     setShowLogoutModal(true);
@@ -1694,7 +2432,12 @@ function Edashboard({ onLogout }) {
               if (userData) {
                 const parsedUser = JSON.parse(userData);
                 if (parsedUser.employeeId) {
-                  const currentEmp = allEmployees.find(emp => emp.employeeId === parsedUser.employeeId);
+                  // Ensure employeeId comparison is done as strings to avoid type mismatch issues
+                  const userEmployeeId = String(parsedUser.employeeId).trim();
+                  const currentEmp = allEmployees.find(emp => {
+                    const empId = String(emp.employeeId || '').trim();
+                    return empId === userEmployeeId;
+                  });
                   if (currentEmp && currentEmp.department) {
                     userDepartment = currentEmp.department;
                   }
@@ -1791,16 +2534,444 @@ function Edashboard({ onLogout }) {
     }));
   };
 
-  const handleFileChange = (e) => {
+  const handleFileChange = (e, index = null) => {
     const file = e.target.files[0];
-    setDocumentForm(prev => ({
-      ...prev,
-      attachment: file
-    }));
+    
+    if (index !== null) {
+      // Handle individual file input for FACULTY LOADING
+      setDocumentForm(prev => {
+        const newAttachments = [...prev.attachments];
+        newAttachments[index] = file;
+        return {
+          ...prev,
+          attachments: newAttachments
+        };
+      });
+    } else {
+      // Handle single file for other document types
+      setDocumentForm(prev => ({
+        ...prev,
+        attachments: file ? [file] : []
+      }));
+    }
+  };
+
+  // Travel Order Workflow: Sender → Immediate Supervisor → HR → Records Office → Executive Assistant → President → Records Office → HR → Back to Sender
+  const getTravelOrderNextOffice = (currentOffice, routingHistory, submittedBy) => {
+    // Define the workflow sequence
+    const workflow = [
+      'Immediate Supervisor',
+      'HR',
+      'Records Office',
+      'Executive Assistant',
+      'President',
+      'Records Office', // Second visit
+      'HR' // Second visit, then back to sender
+    ];
+    
+    // If no current office, start at Immediate Supervisor
+    if (!currentOffice) {
+      return 'Immediate Supervisor';
+    }
+    
+    // Normalize office names for matching
+    const normalizeOfficeName = (name) => {
+      if (!name) return '';
+      const normalized = name.toLowerCase().trim();
+      if (normalized === 'im' || normalized.includes('immediate supervisor')) return 'Immediate Supervisor';
+      if (normalized.includes('hr') || normalized.includes('human resources')) return 'HR';
+      if (normalized.includes('records')) return 'Records Office';
+      if (normalized.includes('executive assistant')) return 'Executive Assistant';
+      if (normalized.includes('president') || normalized.includes('op')) return 'President';
+      return name;
+    };
+    
+    const normalizedCurrentOffice = normalizeOfficeName(currentOffice);
+    
+    // Count how many times each office has APPROVED/FORWARDED (not returned/resubmitted)
+    const visitCounts = {};
+    if (Array.isArray(routingHistory) && routingHistory.length > 0) {
+      routingHistory.forEach(entry => {
+        const action = entry.action?.toLowerCase() || '';
+        // Only count approvals/forwards, not returns or resubmissions
+        const isApprovalAction = action.includes('approved') || action.includes('forwarded');
+        if (isApprovalAction) {
+        const office = normalizeOfficeName(entry.office || entry.currentOffice || entry.toOffice);
+          if (office && office !== 'Submitted') {
+          visitCounts[office] = (visitCounts[office] || 0) + 1;
+          }
+        }
+      });
+    }
+    
+    // Current visit count = how many times this office has already approved + 1 (for current action)
+    const currentVisitCount = (visitCounts[normalizedCurrentOffice] || 0) + 1;
+    
+    // Find current position in workflow
+    let currentIndex = -1;
+    
+    // Find the current office in workflow, considering visit count
+    for (let i = 0; i < workflow.length; i++) {
+      if (workflow[i] === normalizedCurrentOffice) {
+        // Check if this is the right occurrence (first or second visit)
+        const occurrenceCount = workflow.slice(0, i + 1).filter(o => o === normalizedCurrentOffice).length;
+        if (occurrenceCount === currentVisitCount) {
+          currentIndex = i;
+          break;
+        }
+      }
+    }
+    
+    // If we couldn't find the position, try to determine it based on completed stages
+    // This handles cases where document was resubmitted and routing history might be incomplete
+    if (currentIndex === -1) {
+      const firstOccurrenceIndex = workflow.findIndex(o => o === normalizedCurrentOffice);
+      if (firstOccurrenceIndex !== -1) {
+        // Check which stages have been completed
+        const completedStages = [];
+        for (let i = 0; i < workflow.length; i++) {
+          const stage = workflow[i];
+          const stageVisitCount = visitCounts[stage] || 0;
+          const requiredCount = workflow.slice(0, i + 1).filter(s => s === stage).length;
+          if (stageVisitCount >= requiredCount) {
+            completedStages.push(i);
+          } else {
+            break; // Stop at first incomplete stage
+          }
+        }
+        
+        // If we're at HR and Stage 1 (Immediate Supervisor) is completed but Stage 3 (Records Office) is not,
+        // then we're at Stage 2 (HR first visit)
+        if (normalizedCurrentOffice === 'HR' && completedStages.includes(0) && !completedStages.includes(2)) {
+          currentIndex = 1; // Stage 2: HR first visit
+        }
+        // If all stages 0-5 (up to and including Stage 6: Records Office 2nd visit) are completed,
+        // then we're at Stage 7 (HR second visit - final stage)
+        else if (normalizedCurrentOffice === 'HR' && 
+                 completedStages.includes(0) && // Immediate Supervisor
+                 completedStages.includes(1) && // HR (first visit)
+                 completedStages.includes(2) && // Records Office (first visit)
+                 completedStages.includes(3) && // Executive Assistant
+                 completedStages.includes(4) && // President
+                 completedStages.includes(5)) { // Records Office (second visit)
+          currentIndex = 6; // Stage 7: HR second visit (FINAL STAGE)
+        }
+        // For other offices, use first occurrence if not visited, or check based on completed stages
+        else if ((visitCounts[normalizedCurrentOffice] || 0) === 0) {
+          currentIndex = firstOccurrenceIndex;
+        }
+        else {
+          // Find second occurrence if it exists
+          const secondOccurrenceIndex = workflow.findIndex((o, idx) => 
+            o === normalizedCurrentOffice && idx > firstOccurrenceIndex
+          );
+          if (secondOccurrenceIndex !== -1) {
+            currentIndex = secondOccurrenceIndex;
+          } else {
+            currentIndex = firstOccurrenceIndex;
+          }
+        }
+      }
+    }
+    
+    // Move to next office in workflow
+    if (currentIndex >= 0 && currentIndex < workflow.length - 1) {
+      return workflow[currentIndex + 1];
+    }
+    
+    // If at the end of workflow (completed at second HR visit), return null
+    // HR will have final decision buttons: Approve, Return, or On Hold
+    if (currentIndex === workflow.length - 1) {
+      return null; // null means end of workflow, HR makes final decision
+    }
+    
+    // Default to HR if something went wrong
+    return 'HR';
+  };
+
+  // Requested Subject Workflow: Sender → Academic Adviser → Program Head → Dean → Director of Instruction → VPAA → Dean → Encoder
+  const getRequestedSubjectNextOffice = (currentOffice, routingHistory, submittedBy) => {
+    // Define the workflow sequence
+    const workflow = [
+      'Academic Adviser',
+      'Program Head',
+      'Dean', // First visit
+      'Director of Instruction',
+      'VPAA',
+      'Dean', // Second visit
+      'Encoder'
+    ];
+    
+    // If no current office, start at Academic Adviser
+    if (!currentOffice) {
+      return 'Academic Adviser';
+    }
+    
+    // Normalize office names for matching (remove abbreviations in parentheses)
+    const normalizeOfficeName = (name) => {
+      if (!name) return '';
+      // Remove parenthetical abbreviations
+      const withoutParens = name.replace(/\s*\([^)]*\)\s*/g, '').trim();
+      const normalized = withoutParens.toLowerCase().trim();
+      
+      if (normalized.includes('academic adviser') || normalized.includes('academic advisor')) return 'Academic Adviser';
+      if (normalized.includes('program head') || normalized === 'ph') return 'Program Head';
+      if (normalized.includes('director of instruction') || normalized.includes('director for instruction') || normalized.includes('director instruction')) return 'Director of Instruction';
+      if (normalized.includes('vpaa') || normalized.includes('vice president for academic affairs') || 
+          (normalized.includes('academic') && (normalized.includes('vp') || normalized.includes('vice president')))) return 'VPAA';
+      if (normalized.includes('dean')) return 'Dean';
+      if (normalized.includes('encoder')) return 'Encoder';
+      
+      return withoutParens;
+    };
+    
+    const normalizedCurrentOffice = normalizeOfficeName(currentOffice);
+    
+    // Count how many times each office has APPROVED/FORWARDED (not returned/resubmitted)
+    const visitCounts = {};
+    let lastApprovingOffice = null; // Track the last office that approved/forwarded
+    if (Array.isArray(routingHistory) && routingHistory.length > 0) {
+      routingHistory.forEach(entry => {
+        const action = entry.action?.toLowerCase() || '';
+        // Only count approvals/forwards, not returns or resubmissions
+        const isApprovalAction = action.includes('approved') || action.includes('forwarded');
+        if (isApprovalAction) {
+          const office = normalizeOfficeName(entry.office || entry.currentOffice || entry.toOffice);
+          if (office && office !== 'Submitted') {
+            visitCounts[office] = (visitCounts[office] || 0) + 1;
+            lastApprovingOffice = office; // Track the last office that took action
+          }
+        }
+      });
+    }
+    
+    // If currentOffice is not clearly VPAA but routing history shows VPAA just approved,
+    // we should treat currentOffice as VPAA for the purpose of determining next office
+    let effectiveCurrentOffice = normalizedCurrentOffice;
+    if (lastApprovingOffice === 'VPAA' && normalizedCurrentOffice !== 'VPAA') {
+      // VPAA just approved, so we're effectively at VPAA stage
+      effectiveCurrentOffice = 'VPAA';
+      console.log('🔍 VPAA just approved in routing history, treating current office as VPAA');
+    }
+    
+    // Current visit count = how many times this office has already approved + 1 (for current action)
+    const currentVisitCount = (visitCounts[effectiveCurrentOffice] || 0) + 1;
+    
+    // Check which stages have been completed (calculate this early so we can use it)
+    const completedStages = [];
+    for (let i = 0; i < workflow.length; i++) {
+      const stage = workflow[i];
+      const stageVisitCount = visitCounts[normalizeOfficeName(stage)] || 0;
+      const requiredCount = workflow.slice(0, i + 1).filter(s => normalizeOfficeName(s) === normalizeOfficeName(stage)).length;
+      if (stageVisitCount >= requiredCount) {
+        completedStages.push(i);
+      } else {
+        break; // Stop at first incomplete stage
+      }
+    }
+    
+    console.log('🔍 Requested Subject Next Office Check:', {
+      originalCurrentOffice: currentOffice,
+      normalizedCurrentOffice: normalizedCurrentOffice,
+      workflow: workflow,
+      visitCounts: visitCounts,
+      currentVisitCount: currentVisitCount,
+      completedStages: completedStages
+    });
+    
+    // Find current position in workflow, considering visit count for duplicate stages (Dean)
+    let currentIndex = -1;
+    
+    // Special case: If we're at Program Head, we should be at index 1, and next is Dean (index 2)
+    // This handles the case where Program Head is reviewing/approving
+    if (effectiveCurrentOffice === 'Program Head') {
+      const deanFirstVisitCompleted = completedStages.includes(2); // Dean at index 2
+      
+      // If Dean (first visit) hasn't been completed yet, we're at Program Head (index 1)
+      // This ensures that after Program Head approves, it goes to Dean, not Director
+      if (!deanFirstVisitCompleted) {
+        currentIndex = 1; // Program Head position (index 1), next will be Dean (index 2)
+        console.log('✅ Special case: At Program Head, Dean not completed, setting index to 1 (next will be Dean)');
+      } else {
+        // Dean has been completed, so if we're still at Program Head, use normal logic
+        // This shouldn't happen in normal flow, but handle it anyway
+        currentIndex = 1;
+      }
+    }
+    
+    // Special case: If we're at VPAA, we should be at index 4, and next is Dean (index 5)
+    // This handles the case where VPAA is reviewing/approving
+    if (effectiveCurrentOffice === 'VPAA') {
+      const vpaaVisitCount = visitCounts['VPAA'] || 0;
+      
+      // If VPAA hasn't approved yet (visitCount = 0), we're at VPAA (index 4)
+      // After VPAA approves, it should go to Dean (second visit, index 5)
+      if (vpaaVisitCount === 0) {
+        currentIndex = 4; // VPAA position (index 4), next will be Dean (index 5)
+        console.log('✅ Special case: At VPAA, VPAA not yet approved, setting index to 4 (next will be Dean second visit)');
+      } else {
+        // VPAA has already approved, so we should be past VPAA
+        // This means we should be at Dean (second visit, index 5)
+        currentIndex = 5;
+        console.log('✅ Special case: At VPAA, but VPAA already approved, setting index to 5 (Dean second visit)');
+      }
+    }
+    
+    // Additional check: If currentOffice doesn't match VPAA but routing history shows VPAA just approved,
+    // we need to determine the next office based on completed stages
+    if (currentIndex === -1 && completedStages.includes(4)) {
+      // VPAA has completed (index 4), so next should be Dean (index 5)
+      // This handles cases where currentOffice might not be set correctly
+      const vpaaVisitCount = visitCounts['VPAA'] || 0;
+      if (vpaaVisitCount >= 1 && !completedStages.includes(5)) {
+        // VPAA has approved, but Dean (second visit) hasn't been completed yet
+        // So we should be at Dean (second visit, index 5)
+        currentIndex = 5;
+        console.log('✅ Fallback: VPAA completed, setting current index to 5 (Dean second visit)');
+      }
+    }
+    
+    // Find the current office in workflow, considering visit count
+    if (currentIndex === -1) {
+      for (let i = 0; i < workflow.length; i++) {
+        if (normalizeOfficeName(workflow[i]) === effectiveCurrentOffice) {
+          // Check if this is the right occurrence (first or second visit for Dean)
+          const occurrenceCount = workflow.slice(0, i + 1).filter(o => normalizeOfficeName(o) === effectiveCurrentOffice).length;
+          if (occurrenceCount === currentVisitCount) {
+            currentIndex = i;
+            break;
+          }
+        }
+      }
+    }
+    
+    // If we couldn't find the position, try to determine it based on completed stages
+    if (currentIndex === -1) {
+      const firstOccurrenceIndex = workflow.findIndex(o => normalizeOfficeName(o) === effectiveCurrentOffice);
+      if (firstOccurrenceIndex !== -1) {
+        // If we're at Dean and Stage 2 (Program Head) is completed but Stage 4 (Director) is not,
+        // then we're at Stage 3 (Dean first visit)
+        if (effectiveCurrentOffice === 'Dean' && completedStages.includes(1) && !completedStages.includes(3)) {
+          currentIndex = 2; // Stage 3: Dean first visit
+        }
+        // If all stages 0-4 (up to and including Stage 5: VPAA) are completed,
+        // then we're at Stage 6 (Dean second visit)
+        else if (effectiveCurrentOffice === 'Dean' && 
+                 completedStages.includes(0) && // Academic Adviser
+                 completedStages.includes(1) && // Program Head
+                 completedStages.includes(2) && // Dean (first visit)
+                 completedStages.includes(3) && // Director of Instruction
+                 completedStages.includes(4)) { // VPAA
+          currentIndex = 5; // Stage 6: Dean second visit
+        }
+        // For other offices, use first occurrence if not visited, or check based on completed stages
+        else if ((visitCounts[effectiveCurrentOffice] || 0) === 0) {
+          currentIndex = firstOccurrenceIndex;
+        }
+        else {
+          // Find second occurrence if it exists
+          const secondOccurrenceIndex = workflow.findIndex((o, idx) => 
+            normalizeOfficeName(o) === effectiveCurrentOffice && idx > firstOccurrenceIndex
+          );
+          if (secondOccurrenceIndex !== -1) {
+            currentIndex = secondOccurrenceIndex;
+          } else {
+            currentIndex = firstOccurrenceIndex;
+          }
+        }
+      }
+    }
+    
+    console.log('📍 Current Index:', currentIndex, 'Workflow Length:', workflow.length);
+    
+    // Move to next office in workflow
+    if (currentIndex >= 0 && currentIndex < workflow.length - 1) {
+      const nextOffice = workflow[currentIndex + 1];
+      console.log('➡️ Returning next office:', nextOffice);
+      return nextOffice;
+    }
+    
+    // If at the end of workflow (completed at Encoder), return null
+    // Encoder will have final decision buttons
+    if (currentIndex === workflow.length - 1) {
+      console.log('✅ At final stage (Encoder), returning null');
+      return null; // null means end of workflow, Encoder makes final decision
+    }
+    
+    // Default to Academic Adviser if something went wrong
+    console.log('⚠️ No match found, defaulting to Academic Adviser');
+    return 'Academic Adviser';
+  };
+
+  // Faculty Loading Workflow: Sender → Program Head → Dean → Academic VP → Back to Sender
+  const getFacultyLoadingNextOffice = (currentOffice, routingHistory, submittedBy) => {
+    // Define the workflow sequence
+    const workflow = [
+      'Program Head',
+      'Dean',
+      'Academic Vice President'
+    ];
+    
+    // If no current office, start at Program Head
+    if (!currentOffice) {
+      return 'Program Head';
+    }
+    
+    // Normalize office names for matching (remove abbreviations in parentheses)
+    const normalizeOfficeName = (name) => {
+      if (!name) return '';
+      // Remove parenthetical abbreviations like (PH), (ACP), etc.
+      const withoutParens = name.replace(/\s*\([^)]*\)\s*/g, '').trim();
+      const normalized = withoutParens.toLowerCase().trim();
+      
+      if (normalized.includes('program head') || normalized === 'ph') return 'Program Head';
+      if (normalized.includes('dean')) return 'Dean';
+      if (normalized.includes('academic') && (normalized.includes('vp') || normalized.includes('vice president'))) return 'Academic Vice President';
+      if (normalized === 'academic vp' || normalized === 'avp' || normalized === 'acp') return 'Academic Vice President';
+      
+      return withoutParens;
+    };
+    
+    const normalizedCurrentOffice = normalizeOfficeName(currentOffice);
+    
+    console.log('🔍 Faculty Loading Next Office Check:', {
+      originalCurrentOffice: currentOffice,
+      normalizedCurrentOffice: normalizedCurrentOffice,
+      workflow: workflow
+    });
+    
+    // Find current position in workflow
+    const currentIndex = workflow.findIndex(office => normalizeOfficeName(office) === normalizedCurrentOffice);
+    
+    console.log('📍 Current Index:', currentIndex, 'Workflow Length:', workflow.length);
+    
+    // Move to next office in workflow
+    if (currentIndex >= 0 && currentIndex < workflow.length - 1) {
+      const nextOffice = workflow[currentIndex + 1];
+      console.log('➡️ Returning next office:', nextOffice);
+      return nextOffice;
+    }
+    
+    // If at the end of workflow (completed at Academic VP), return null
+    // Academic VP will have final decision buttons: Approve, Return, or On Hold
+    if (currentIndex === workflow.length - 1) {
+      console.log('✅ At final stage, returning null');
+      return null; // null means end of workflow, Academic VP makes final decision
+    }
+    
+    // Default to Program Head if something went wrong
+    console.log('⚠️ No match found, defaulting to Program Head');
+    return 'Program Head';
   };
 
   const handleSubmitDocument = async () => {
     try {
+      // Validate: Document Type is required
+      if (!documentForm.type || documentForm.type.trim() === '') {
+        alert('Please select a Document Type before submitting.');
+        return;
+      }
+      
       // Generate unique document ID
       const generateDocumentId = () => {
         const timestamp = Date.now();
@@ -1833,107 +3004,155 @@ function Edashboard({ onLogout }) {
       // Prepare FormData for file upload
       const formData = new FormData();
       
-      // Add file if attachment exists
-      if (documentForm.attachment) {
-        formData.append('attachment', documentForm.attachment);
+      // Add files if attachments exist
+      if (documentForm.attachments && documentForm.attachments.length > 0) {
+        documentForm.attachments.forEach((file, index) => {
+          formData.append('attachments', file);
+        });
       }
       
+      // Check if editing a returned document
+      const isEditing = editingDocument && editingDocument.status === 'Returned';
+      
+      // Check if this is a Travel Order or Requested Subject resubmission (needed before status setting)
+      const docType = (documentForm.type?.toUpperCase() || '');
+      const docCategory = documentForm.category || '';
+      const isTravelOrder = docType.includes('TRAVEL ORDER') || docCategory === 'Travel Order';
+      const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory === 'Requested Subject';
+      const isReturnedResubmission = isEditing && editingDocument && editingDocument.status === 'Returned' && (isTravelOrder || isRequestedSubject);
+      
       // Add all document fields
-      formData.append('documentId', generateDocumentId());
-      formData.append('name', documentForm.attachment ? documentForm.attachment.name : `Document_${new Date().toISOString().split('T')[0]}`);
+      if (!isEditing) {
+        formData.append('documentId', generateDocumentId());
+        formData.append('dateUploaded', new Date().toISOString());
+      }
+      formData.append('name', documentForm.attachments && documentForm.attachments.length > 0 ? documentForm.attachments[0].name : (isEditing ? editingDocument.name : `Document_${new Date().toISOString().split('T')[0]}`));
       formData.append('type', documentForm.type || 'Report');
       formData.append('description', documentForm.notes || '');
       // Use the sender from the form (which should be the logged-in user's name)
       // Fallback to employee name, then username, then 'Unknown User'
       formData.append('submittedBy', documentForm.sender || employee?.name || user?.username || 'Unknown User');
-      formData.append('status', selectedEmployee ? 'Under Review' : 'Submitted');
-      formData.append('dateUploaded', new Date().toISOString());
-      formData.append('reviewer', '');
-      formData.append('comments', '');
+      // Status will be set later for Travel Order or Requested Subject resubmissions, otherwise set it here
+      if (!isReturnedResubmission) {
+      formData.append('status', isEditing ? 'Submitted' : (selectedEmployee ? 'Under Review' : 'Submitted'));
+      }
       
       // Determine nextOffice based on document type and routing workflow
       let nextOffice = '';
+      
+      // Universal resubmission logic: When ANY document is returned and resubmitted, 
+      // go back to the office that returned it (works for all document types)
+      if (isReturnedResubmission && editingDocument.routingHistory) {
+        // Find the last office that returned the document
+        const routingHistory = Array.isArray(editingDocument.routingHistory) 
+          ? editingDocument.routingHistory 
+          : [];
+        
+        // Find the last return entry - this is the office that returned it
+        const lastReturnEntry = [...routingHistory]
+          .reverse()
+          .find(entry => {
+            const action = entry.action?.toLowerCase() || '';
+            return action.includes('returned');
+          });
+        
+        if (lastReturnEntry && lastReturnEntry.office) {
+          // Normalize office name - extract base office name (e.g., "Immediate Supervisor" from "Immediate Supervisor of FACET")
+          let returnOffice = lastReturnEntry.office;
+          
+          // Extract base office name by removing department suffixes
+          if (returnOffice.includes(' of ')) {
+            // Split on " of " and take the first part
+            returnOffice = returnOffice.split(' of ')[0].trim();
+          }
+          
+          // Normalize common variations for all office types
+          const officeLower = returnOffice.toLowerCase();
+          if (officeLower.includes('immediate supervisor') || officeLower === 'im') {
+            nextOffice = 'Immediate Supervisor';
+          } else if (officeLower.includes('hr') || officeLower.includes('human resources')) {
+            nextOffice = 'HR';
+          } else if (officeLower.includes('records')) {
+            nextOffice = 'Records Office';
+          } else if (officeLower.includes('executive assistant')) {
+            nextOffice = 'Executive Assistant';
+          } else if (officeLower.includes('president') || officeLower.includes('op')) {
+            nextOffice = 'President';
+          } else if (officeLower.includes('program head') || officeLower === 'ph') {
+            nextOffice = 'Program Head';
+          } else if (officeLower.includes('dean')) {
+            nextOffice = 'Dean';
+          } else if (officeLower.includes('academic vice president') || officeLower.includes('academic vp') || officeLower === 'avp') {
+            nextOffice = 'Academic Vice President';
+          } else if (officeLower.includes('vice president') || officeLower.includes('vp') && !officeLower.includes('academic')) {
+            nextOffice = 'Vice President';
+          } else if (officeLower.includes('secretary')) {
+            nextOffice = 'Secretary';
+          } else if (officeLower.includes('academic adviser') || officeLower.includes('academic advisor')) {
+            nextOffice = 'Academic Adviser';
+          } else if (officeLower.includes('head') && !officeLower.includes('program')) {
+            nextOffice = 'Head';
+          } else if (officeLower.includes('director of instruction') || officeLower.includes('director for instruction')) {
+            nextOffice = 'Director of Instruction';
+          } else if (officeLower.includes('vpaa')) {
+            nextOffice = 'VPAA';
+          } else if (officeLower.includes('encoder')) {
+            nextOffice = 'Encoder';
+          } else {
+            // Use the normalized base name
+            nextOffice = returnOffice;
+          }
+          
+          // Set status to "Under Review" so it appears in the office's queue
+          formData.set('status', 'Under Review');
+        } else {
+          // No return entry found, determine nextOffice based on document type (default workflow)
+          // This will be handled in the else block below
+        }
+      }
+      
+      // If not a resubmission or no return entry found, determine nextOffice normally
+      if (!nextOffice) {
       if (selectedEmployee) {
         // If employee is selected, use their position
         nextOffice = selectedEmployee.position;
       } else {
-        // Check document types and get submitter's position
-        const docType = documentForm.type?.toUpperCase() || '';
-        const docCategory = documentForm.category || '';
-        const submitterPosition = employee?.position;
-        
-        // Check for Faculty Loading
+          // Check for other document types
         const isFacultyLoading = docType.includes('FACULTY LOADING') || docCategory === 'Faculty Loading';
-        
-        // Check for Travel Order
-        const isTravelOrder = docType.includes('TRAVEL ORDER') || docCategory === 'Travel Order';
-        
-        // Check for Endorsement Form
         const isEndorsementForm = docType.includes('ENDORSEMENT') || docCategory === 'Endorsement Form';
-        
-        // Check for Requested Subject
         const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory === 'Requested Subject';
         
-        // Faculty Loading routing
-        if (isFacultyLoading && submitterPosition === 'Program Head') {
-          // If Faculty Loading is submitted by Program Head, go directly to Dean → ACP
-          nextOffice = 'Dean';
-        } else if (isFacultyLoading && submitterPosition === 'Dean') {
-          // If Faculty Loading is submitted by Dean, go directly to ACP (Academic VP)
-          nextOffice = 'Academic Vice President';
-        } else if (isFacultyLoading) {
-          // For Faculty Loading from other positions, start with Program Head → Dean → ACP
-          nextOffice = 'Program Head';
-        } 
-        // Travel Order routing
-        else if (isTravelOrder && submitterPosition === 'Program Head') {
-          // If Travel Order is submitted by Program Head (PH), go directly to Dean → AVP
-          nextOffice = 'Dean';
-        } else if (isTravelOrder && submitterPosition === 'Dean') {
-          // If Travel Order is submitted by Dean, go directly to AVP (Academic VP)
-          nextOffice = 'Academic Vice President';
-        } else if (isTravelOrder) {
-          // For Travel Order from other positions, start with Program Head → Dean → AVP
+        // Faculty Loading routing - routes to Academic VP: Sender → Program Head → Dean → Academic VP → Back to Sender
+        if (isFacultyLoading) {
+          // Faculty Loading always starts at Program Head
           nextOffice = 'Program Head';
         }
-        // Endorsement Form routing
+          // Travel Order routing - HR workflow: Sender → Immediate Supervisor → HR → Records Office → Executive Assistant → President → Records Office → HR → Back to Sender
+        else if (isTravelOrder) {
+          // Travel Order always starts at Immediate Supervisor
+          nextOffice = 'Immediate Supervisor';
+        }
+        // Endorsement Form routing: Sender → Program Head → Dean → Vice President → Office of the President → Back to Sender
         else if (isEndorsementForm) {
-          // Endorsement Form: Communication → Program Head → Vice President → Office of the President
-          // If submitter is Vice President (VP), go directly to OP
-          if (submitterPosition === 'Vice President' || submitterPosition === 'VP') {
-            nextOffice = 'Office of the President';
-          }
-          // If submitter is Program Head (PH), go directly to Vice President → OP
-          else if (submitterPosition === 'Program Head') {
-            nextOffice = 'Vice President';
-          } 
-          // If submitter is Communication/Secretary, go to Program Head
-          else if (submitterPosition === 'Communication' || submitterPosition === 'Communications' || submitterPosition === 'Secretary') {
-            nextOffice = 'Program Head';
-          } else {
-            // Default: start with Communication if coming from elsewhere
-            nextOffice = 'Communication';
-          }
+          // Endorsement Form always starts at Program Head
+          nextOffice = 'Program Head';
         }
-        // Requested Subject routing
+        // Requested Subject routing: Academic Adviser → Program Head → Dean → Director of Instruction → VPAA → Dean → Encoder
         else if (isRequestedSubject) {
-          // Requested Subject: Program Head → Dean → Vice President
-          // If submitter is Dean, go directly to Vice President
-          if (submitterPosition === 'Dean') {
-            nextOffice = 'Vice President';
-          }
-          // If submitter is Program Head, go directly to Dean
-          else if (submitterPosition === 'Program Head') {
-            nextOffice = 'Dean';
-          } else {
-            // Default: start with Program Head
-            nextOffice = 'Program Head';
+          // Requested Subject always starts at Academic Adviser
+          nextOffice = 'Academic Adviser';
           }
         }
       }
       
+      // Set nextOffice - for resubmissions, this goes back to the office that returned it
       formData.append('nextOffice', nextOffice);
       formData.append('currentOffice', nextOffice); // Set currentOffice to match nextOffice initially
+      
+      // Clear reviewer, reviewDate, and comments when resubmitting
+      formData.append('reviewer', '');
+      formData.append('reviewDate', ''); // Backend will convert empty string to null
+      formData.append('comments', '');
       formData.append('category', '');
       
       // Assign to employee if selected
@@ -1942,7 +3161,8 @@ function Edashboard({ onLogout }) {
         formData.append('currentHandler', selectedEmployee._id);
       } else {
         formData.append('assignedTo', JSON.stringify([]));
-        formData.append('currentHandler', '');
+        // Don't send currentHandler if empty - backend will handle as null
+        // formData.append('currentHandler', '');
       }
       
       formData.append('forwardedBy', user?.username || 'Unknown User');
@@ -1960,33 +3180,77 @@ function Edashboard({ onLogout }) {
       }
       formData.append('travelOrderReturnTime', documentForm.travelOrderReturnTime || '');
 
-      console.log('Submitting document with file:', documentForm.attachment ? documentForm.attachment.name : 'No file');
+      // Handle routing history for new submissions and resubmissions
+      if (isReturnedResubmission && (isTravelOrder || isRequestedSubject) && editingDocument.routingHistory) {
+        // For Travel Order or Requested Subject resubmissions: preserve existing routing history and add resubmission entry
+        const existingHistory = Array.isArray(editingDocument.routingHistory) 
+          ? [...editingDocument.routingHistory] 
+          : [];
+        
+        // Add resubmission entry
+        existingHistory.push({
+          office: 'Submitted',
+          toOffice: nextOffice,
+          action: 'resubmitted',
+          performedBy: documentForm.sender || employee?.name || user?.username || 'Unknown User',
+          handler: documentForm.sender || employee?.name || user?.username || 'Unknown User',
+          timestamp: new Date().toISOString(),
+          date: new Date().toISOString(),
+          comments: `Document resubmitted and forwarded to ${nextOffice}`
+        });
+        
+        formData.append('routingHistory', JSON.stringify(existingHistory));
+        console.log('📋 Routing history preserved and resubmission entry added:', existingHistory);
+      } else if ((!isEditing || isReturnedResubmission) && nextOffice) {
+        // For new submissions or non-Travel Order/Requested Subject resubmissions: create initial routing history
+        const initialRoutingHistory = [{
+          office: 'Submitted',
+          toOffice: nextOffice,
+          action: 'submitted',
+          performedBy: documentForm.sender || employee?.name || user?.username || 'Unknown User',
+          handler: documentForm.sender || employee?.name || user?.username || 'Unknown User',
+          date: new Date().toISOString(),
+          comments: `Document submitted to ${nextOffice}`
+        }];
+        formData.append('routingHistory', JSON.stringify(initialRoutingHistory));
+        console.log('📋 Initial routing history created:', initialRoutingHistory);
+      }
 
-      const response = await fetch(`${API_URL}/documents`, {
-        method: 'POST',
+      console.log('Submitting document with files:', documentForm.attachments.length > 0 ? documentForm.attachments.map(f => f.name).join(', ') : 'No files');
+
+      const url = isEditing ? `${API_URL}/documents/${editingDocument._id || editingDocument.id}` : `${API_URL}/documents`;
+      const method = isEditing ? 'PATCH' : 'POST';
+
+      const response = await fetch(url, {
+        method: method,
         // Don't set Content-Type header - browser will set it automatically with boundary for FormData
         body: formData,
       });
 
       if (response.ok) {
-        const createdDoc = await response.json();
-        console.log('Document created:', createdDoc);
+        const updatedDoc = await response.json();
+        console.log(isEditing ? 'Document updated:' : 'Document created:', updatedDoc);
         
         // If document was assigned to an employee, add to routing history
         if (selectedEmployee) {
-          showNotification('success', 'Document Added', `Document added and forwarded to ${selectedEmployee.name} successfully!`);
+          showNotification('success', isEditing ? 'Document Updated' : 'Document Added', `Document ${isEditing ? 'updated' : 'added'} and forwarded to ${selectedEmployee.name} successfully!`);
         } else {
-          showNotification('success', 'Document Added', 'Document added successfully!');
+          showNotification('success', isEditing ? 'Document Updated' : 'Document Added', `Document ${isEditing ? 'updated' : 'added'} successfully!`);
         }
         
         setShowDocumentModal(false);
+        setShowTravelOrderModal(false);
+        setShowRequestedSubjectModal(false);
+        setShowEndorsementModal(false);
+        setShowFacultyLoadingModal(false);
+        setEditingDocument(null);
         setDocumentForm({
           sender: '',
           type: '',
           date: '',
           time: '',
           notes: '',
-          attachment: null,
+          attachments: [],
           receiver: '',
           travelOrderDepartureDate: '',
           travelOrderDepartureTime: '',
@@ -1995,6 +3259,7 @@ function Edashboard({ onLogout }) {
         });
         setSelectedOffice('');
         setEmployees([]);
+        setSelectedDocumentType('');
         fetchDocuments(); // Refresh the documents list
       } else {
         const errorData = await response.json();
@@ -2009,13 +3274,14 @@ function Edashboard({ onLogout }) {
 
   const handleCloseDocumentModal = () => {
     setShowDocumentModal(false);
+    setEditingDocument(null); // Clear editing document
     setDocumentForm({
       sender: '',
       type: '',
       date: '',
       time: '',
       notes: '',
-      attachment: null,
+      attachments: [],
       receiver: '',
       travelOrderDepartureDate: '',
       travelOrderDepartureTime: '',
@@ -2023,10 +3289,192 @@ function Edashboard({ onLogout }) {
       travelOrderReturnTime: ''
     });
     setSelectedOffice('');
-    setEmployees([]);
+    setEmployees([]); // Clear dropdown employees list
   };
 
+  const handleCloseTravelOrderModal = () => {
+    setShowTravelOrderModal(false);
+    setDocumentForm(prev => ({
+      ...prev,
+      travelOrderDepartureDate: '',
+      travelOrderDepartureTime: '',
+      travelOrderReturnDate: '',
+      travelOrderReturnTime: '',
+      attachments: [],
+      notes: ''
+    }));
+    setSelectedDocumentType('');
+  };
+
+  const handleCloseRequestedSubjectModal = () => {
+    setShowRequestedSubjectModal(false);
+    setDocumentForm(prev => ({
+      ...prev,
+      attachments: [],
+      notes: ''
+    }));
+    setSelectedDocumentType('');
+  };
+
+  const handleCloseEndorsementModal = () => {
+    setShowEndorsementModal(false);
+    setDocumentForm(prev => ({
+      ...prev,
+      attachments: [],
+      notes: ''
+    }));
+    setSelectedDocumentType('');
+  };
+
+  const handleCloseFacultyLoadingModal = () => {
+    setShowFacultyLoadingModal(false);
+    setDocumentForm(prev => ({
+      ...prev,
+      attachments: [],
+      notes: ''
+    }));
+    setSelectedDocumentType('');
+  };
+
+  const handleOpenDocumentTypeModal = () => {
+    setSelectedDocumentType('');
+    setShowDocumentTypeModal(true);
+  };
+
+  const handleCloseDocumentTypeModal = () => {
+    setShowDocumentTypeModal(false);
+    setSelectedDocumentType('');
+  };
+
+  const handleProceedToDocumentForm = async () => {
+    if (!selectedDocumentType) {
+      alert('Please select a document type');
+      return;
+    }
+    
+    setShowDocumentTypeModal(false);
+    
+    // Auto-populate sender from logged-in user
+    const userData = localStorage.getItem('userData');
+    let senderName = '';
+    
+    if (userData) {
+      const parsedUser = JSON.parse(userData);
+      const userEmployeeId = String(parsedUser.employeeId || '').trim();
+      const currentEmployeeId = employee ? String(employee.employeeId || '').trim() : '';
+      if (employee && currentEmployeeId === userEmployeeId && employee.name) {
+        senderName = employee.name;
+      } else if (parsedUser.employeeId) {
+        try {
+          const response = await fetch(`${API_URL}/employees`);
+          if (response.ok) {
+            const allEmployees = await response.json();
+            const currentEmployee = allEmployees.find(emp => {
+              const empId = String(emp.employeeId || '').trim();
+              return empId === userEmployeeId;
+            });
+            if (currentEmployee && currentEmployee.name) {
+              senderName = currentEmployee.name;
+              setEmployee(currentEmployee);
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching employee data:', error);
+        }
+      }
+      if (!senderName) {
+        senderName = parsedUser.username || parsedUser.name || '';
+      }
+    } else if (employee && employee.name) {
+      senderName = employee.name;
+    } else if (user) {
+      senderName = user.username || user.name || '';
+    }
+    
+    // Check if Travel Order was selected - show dedicated Travel Order modal
+    const isTravelOrder = selectedDocumentType.toUpperCase().includes('TRAVEL ORDER');
+    if (isTravelOrder) {
+      setShowTravelOrderModal(true);
+      setDocumentForm(prev => ({
+        ...prev,
+        sender: senderName,
+        type: selectedDocumentType,
+        attachments: [],
+        notes: '',
+        travelOrderDepartureDate: '',
+        travelOrderDepartureTime: '',
+        travelOrderReturnDate: '',
+        travelOrderReturnTime: ''
+      }));
+      return;
+    }
+    
+    // Check if Requested Subject was selected - show dedicated Requested Subject modal
+    const isRequestedSubject = selectedDocumentType.toUpperCase().includes('REQUESTED SUBJECT');
+    if (isRequestedSubject) {
+      setShowRequestedSubjectModal(true);
+      setDocumentForm(prev => ({
+        ...prev,
+        sender: senderName,
+        type: selectedDocumentType,
+        attachments: [],
+        notes: ''
+      }));
+      return;
+    }
+    
+    // Check if Endorsement Form was selected - show dedicated Endorsement modal
+    const isEndorsement = selectedDocumentType.toUpperCase().includes('ENDORSEMENT');
+    if (isEndorsement) {
+      setShowEndorsementModal(true);
+      setDocumentForm(prev => ({
+        ...prev,
+        sender: senderName,
+        type: selectedDocumentType,
+        attachments: [],
+        notes: ''
+      }));
+      return;
+    }
+    
+    // Check if Faculty Loading was selected - show dedicated Faculty Loading modal
+    const isFacultyLoading = selectedDocumentType.toUpperCase().includes('FACULTY LOADING');
+    if (isFacultyLoading) {
+      setShowFacultyLoadingModal(true);
+      setDocumentForm(prev => ({
+        ...prev,
+        sender: senderName,
+        type: selectedDocumentType,
+        attachments: [],
+        notes: ''
+      }));
+      return;
+    }
+    
+    // For other document types, show regular document modal
+    setShowDocumentModal(true);
+    
+    // Auto-set current date and time
+    const now = new Date();
+    const currentDate = now.toISOString().split('T')[0]; // YYYY-MM-DD format
+    const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`; // HH:MM format
+    
+    setDocumentForm(prev => ({
+      ...prev,
+      sender: senderName,
+      type: selectedDocumentType,
+      date: currentDate,
+      time: currentTime
+    }));
+    // Reset office and employee selections
+    setSelectedOffice('');
+    setEmployees([]); // Clear dropdown employees list
+    setEditingDocument(null); // Clear editing document when opening new modal
+  };
+
+  // eslint-disable-next-line no-unused-vars
   const handleOpenDocumentModal = async () => {
+    // This is for editing mode - open directly
     setShowDocumentModal(true);
     // Auto-populate sender with logged-in user's name
     // Fetch current user data from localStorage
@@ -2037,7 +3485,9 @@ function Edashboard({ onLogout }) {
       const parsedUser = JSON.parse(userData);
       
       // First check if we already have the correct employee in state
-      if (employee && employee.employeeId === parsedUser.employeeId && employee.name) {
+      const userEmployeeId = String(parsedUser.employeeId || '').trim();
+      const currentEmployeeId = employee ? String(employee.employeeId || '').trim() : '';
+      if (employee && currentEmployeeId === userEmployeeId && employee.name) {
         senderName = employee.name;
       } else if (parsedUser.employeeId) {
         // Fetch employee data if not in state or doesn't match
@@ -2045,7 +3495,10 @@ function Edashboard({ onLogout }) {
           const response = await fetch(`${API_URL}/employees`);
           if (response.ok) {
             const allEmployees = await response.json();
-            const currentEmployee = allEmployees.find(emp => emp.employeeId === parsedUser.employeeId);
+            const currentEmployee = allEmployees.find(emp => {
+              const empId = String(emp.employeeId || '').trim();
+              return empId === userEmployeeId;
+            });
             if (currentEmployee && currentEmployee.name) {
               senderName = currentEmployee.name;
               // Update the employee state
@@ -2082,7 +3535,69 @@ function Edashboard({ onLogout }) {
     }));
     // Reset office and employee selections
     setSelectedOffice('');
-    setEmployees([]);
+    setEmployees([]); // Clear dropdown employees list
+    setEditingDocument(null); // Clear editing document when opening new modal
+  };
+
+  // Handle editing a returned document
+  const handleEditReturnedDocument = async (document) => {
+    if (document.status !== 'Returned') return;
+    
+    setEditingDocument(document);
+    // Open the SAME modal used for adding, based on document type
+    const docTypeUpper = (document.type || '').toUpperCase();
+    const isTravelOrder = docTypeUpper.includes('TRAVEL ORDER');
+    const isRequestedSubject = docTypeUpper.includes('REQUESTED SUBJECT');
+    const isEndorsement = docTypeUpper.includes('ENDORSEMENT');
+    const isFacultyLoading = docTypeUpper.includes('FACULTY LOADING');
+
+    // Close all modals first, then open the right one
+    setShowDocumentModal(false);
+    setShowTravelOrderModal(false);
+    setShowRequestedSubjectModal(false);
+    setShowEndorsementModal(false);
+    setShowFacultyLoadingModal(false);
+
+    if (isTravelOrder) {
+      setShowTravelOrderModal(true);
+    } else if (isRequestedSubject) {
+      setShowRequestedSubjectModal(true);
+    } else if (isEndorsement) {
+      setShowEndorsementModal(true);
+    } else if (isFacultyLoading) {
+      setShowFacultyLoadingModal(true);
+    } else {
+      setShowDocumentModal(true);
+    }
+    
+    // Populate form with document data
+    const uploadDate = document.dateUploaded ? new Date(document.dateUploaded) : new Date();
+    const currentDate = uploadDate.toISOString().split('T')[0];
+    const currentTime = `${String(uploadDate.getHours()).padStart(2, '0')}:${String(uploadDate.getMinutes()).padStart(2, '0')}`;
+
+    // Prefill Travel Order fields if present on the document
+    const depDateObj = document.travelOrderDepartureDate ? new Date(document.travelOrderDepartureDate) : null;
+    const retDateObj = document.travelOrderReturnDate ? new Date(document.travelOrderReturnDate) : null;
+    const depDate = depDateObj ? depDateObj.toISOString().split('T')[0] : '';
+    const retDate = retDateObj ? retDateObj.toISOString().split('T')[0] : '';
+    
+    setDocumentForm({
+      sender: document.submittedBy || employee?.name || user?.username || '',
+      type: document.type || '',
+      date: currentDate,
+      time: currentTime,
+      notes: document.description || '',
+      attachments: [], // User can upload new files
+      receiver: '',
+      travelOrderDepartureDate: depDate,
+      travelOrderDepartureTime: document.travelOrderDepartureTime || '',
+      travelOrderReturnDate: retDate,
+      travelOrderReturnTime: document.travelOrderReturnTime || ''
+    });
+    
+    // Reset office selection
+    setSelectedOffice('');
+    setEmployees([]); // Clear dropdown employees list
   };
 
   return (
@@ -2584,7 +4099,7 @@ function Edashboard({ onLogout }) {
                 </h3>
                 <div style={{ display: 'grid', gap: '10px' }}>
                   <button
-                    onClick={handleOpenDocumentModal}
+                    onClick={handleOpenDocumentTypeModal}
                     style={{
                       width: '100%',
                       padding: '12px',
@@ -2702,7 +4217,7 @@ function Edashboard({ onLogout }) {
                 Document Management
               </h2>
               <button
-                onClick={handleOpenDocumentModal}
+                onClick={handleOpenDocumentTypeModal}
                 style={{
                   padding: '8px 16px',
                   backgroundColor: '#27ae60',
@@ -2777,6 +4292,7 @@ function Edashboard({ onLogout }) {
                 <option value="Under Review">Under Review</option>
                 <option value="Approved">Approved</option>
                 <option value="Rejected">Rejected</option>
+                <option value="Returned">Returned</option>
                 <option value="Processing">Processing</option>
               </select>
               <select
@@ -3106,16 +4622,11 @@ function Edashboard({ onLogout }) {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  const docId = document._id || document.id || document.documentId;
-                                  if (docId) {
-                                    handleDeleteDocument(docId);
-                                  } else {
-                                    console.error('Document ID is missing:', document);
-                                    alert('Error: Document ID is missing. Cannot delete this document.');
-                                  }
+                                  setViewFilesDocument(document);
+                                  setShowViewFilesModal(true);
                                 }}
                                 style={{
-                                  backgroundColor: '#e74c3c',
+                                  backgroundColor: '#16a085',
                                   color: 'white',
                                   border: 'none',
                                   padding: '5px 10px',
@@ -3126,14 +4637,41 @@ function Edashboard({ onLogout }) {
                                   transition: 'background-color 0.3s ease'
                                 }}
                                 onMouseEnter={(e) => {
-                                  e.target.style.backgroundColor = '#c0392b';
+                                  e.target.style.backgroundColor = '#138d75';
                                 }}
                                 onMouseLeave={(e) => {
-                                  e.target.style.backgroundColor = '#e74c3c';
+                                  e.target.style.backgroundColor = '#16a085';
                                 }}
                               >
-                                Delete
+                                View Files
                               </button>
+                              {document.status === 'Returned' && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleEditReturnedDocument(document);
+                                  }}
+                                  style={{
+                                    backgroundColor: '#27ae60',
+                                    color: 'white',
+                                    border: 'none',
+                                    padding: '5px 10px',
+                                    borderRadius: '4px',
+                                    fontSize: '11px',
+                                    fontWeight: '500',
+                                    cursor: 'pointer',
+                                    transition: 'background-color 0.3s ease'
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.target.style.backgroundColor = '#229954';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.target.style.backgroundColor = '#27ae60';
+                                  }}
+                                >
+                                  Edit
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -3356,13 +4894,39 @@ function Edashboard({ onLogout }) {
                         return matchesDept;
                       };
                       
+                      // Check if user is President/OP - they can see all documents regardless of department
+                      const isPresident = employeePosition?.includes('President') || 
+                                         employeePosition === 'OP' || 
+                                         employeePosition === 'Office of the President';
+                      
+                      // University-wide document types - bypass department check
+                      const isFacultyLoading = (doc) => doc.type?.toUpperCase().includes('FACULTY LOADING');
+                      const isTravelOrder = (doc) => doc.type?.toUpperCase().includes('TRAVEL ORDER') || 
+                                                   doc.category?.toUpperCase().includes('TRAVEL ORDER');
+                      
                       return allDocuments.filter(doc => {
-                        // STRICT: ALL positions are department-specific - only show documents from same department
-                        if (!isFromSameDepartment(doc)) {
+                        // For President: Show all documents regardless of department
+                        // For university-wide documents (Faculty Loading, Travel Order): bypass department check
+                        const bypassDepartmentCheck = isPresident || 
+                                                      isFacultyLoading(doc) || 
+                                                      isTravelOrder(doc);
+                        
+                        if (!bypassDepartmentCheck && !isFromSameDepartment(doc)) {
                           return false;
                         }
                         
-                        return true;
+                        // IMPORTANT: History Logs should only show documents with actions taken
+                        // Check if document has routing history with actions (forwarded, approved, rejected, returned, etc.)
+                        const hasRoutingHistory = doc.routingHistory && Array.isArray(doc.routingHistory) && doc.routingHistory.length > 0;
+                        const hasActions = hasRoutingHistory && doc.routingHistory.some(entry => 
+                          entry.action && ['forwarded', 'approved', 'rejected', 'returned', 'received', 'on hold'].includes(entry.action.toLowerCase())
+                        );
+                        
+                        // Also show if document has been reviewed (has reviewer and review date)
+                        const hasBeenReviewed = doc.reviewer && doc.reviewDate;
+                        
+                        // Show documents that have either actions in routing history or have been reviewed
+                        return hasActions || hasBeenReviewed;
                       });
                     };
                     
@@ -4356,37 +5920,6 @@ function Edashboard({ onLogout }) {
                                   >
                                     Track
                                   </button>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const docId = doc._id || doc.id || doc.documentId;
-                                      if (docId) {
-                                        handleDeleteDocument(docId);
-                                      } else {
-                                        console.error('Document ID is missing:', doc);
-                                        alert('Error: Document ID is missing. Cannot delete this document.');
-                                      }
-                                    }}
-                                    style={{
-                                      padding: '6px 12px',
-                                      backgroundColor: '#e74c3c',
-                                      color: 'white',
-                                      border: 'none',
-                                      borderRadius: '4px',
-                                      fontSize: '11px',
-                                      fontWeight: '600',
-                                      cursor: 'pointer',
-                                      transition: 'background-color 0.3s ease'
-                                    }}
-                                    onMouseEnter={(e) => {
-                                      e.target.style.backgroundColor = '#c0392b';
-                                    }}
-                                    onMouseLeave={(e) => {
-                                      e.target.style.backgroundColor = '#e74c3c';
-                                    }}
-                                  >
-                                    Delete
-                                  </button>
                                 </div>
                         </td>
                       </tr>
@@ -4844,6 +6377,1458 @@ function Edashboard({ onLogout }) {
         </div>
       )}
 
+      {/* Document Type Selection Modal */}
+      {showDocumentTypeModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '15px',
+            padding: '30px',
+            maxWidth: '500px',
+            width: '90%',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+            position: 'relative'
+          }}>
+            <button
+              onClick={handleCloseDocumentTypeModal}
+              style={{
+                position: 'absolute',
+                top: '15px',
+                right: '15px',
+                background: 'none',
+                border: 'none',
+                fontSize: '24px',
+                cursor: 'pointer',
+                color: '#7f8c8d',
+                padding: '5px',
+                borderRadius: '50%',
+                width: '35px',
+                height: '35px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.3s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = '#f8f9fa';
+                e.target.style.color = '#e74c3c';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = 'transparent';
+                e.target.style.color = '#7f8c8d';
+              }}
+            >
+              ×
+            </button>
+            <div style={{
+              textAlign: 'center',
+              marginBottom: '30px',
+              paddingBottom: '20px',
+              borderBottom: '2px solid #ecf0f1'
+            }}>
+              <h2 style={{
+                margin: '0 0 5px 0',
+                fontSize: '24px',
+                fontWeight: '600',
+                color: '#2c3e50'
+              }}>
+                Select Document Type
+              </h2>
+              <p style={{
+                margin: 0,
+                fontSize: '14px',
+                color: '#7f8c8d'
+              }}>
+                Choose the type of document you want to create
+              </p>
+            </div>
+            <div style={{ marginBottom: '30px' }}>
+              <label style={{
+                display: 'block',
+                marginBottom: '8px',
+                fontSize: '14px',
+                fontWeight: '600',
+                color: '#2c3e50'
+              }}>
+                Type of Document *
+              </label>
+              <select
+                value={selectedDocumentType}
+                onChange={(e) => setSelectedDocumentType(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '1px solid #ddd',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  boxSizing: 'border-box',
+                  backgroundColor: 'white'
+                }}
+              >
+                <option value="">Select document type</option>
+                {documentTypes.map(type => (
+                  <option key={type._id || type} value={type.name || type}>
+                    {type.name || type}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'center',
+              gap: '15px',
+              paddingTop: '20px',
+              borderTop: '2px solid #ecf0f1'
+            }}>
+              <button
+                onClick={handleProceedToDocumentForm}
+                disabled={!selectedDocumentType}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: selectedDocumentType ? '#27ae60' : '#95a5a6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: selectedDocumentType ? 'pointer' : 'not-allowed',
+                  transition: 'background-color 0.3s ease'
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedDocumentType) {
+                    e.target.style.backgroundColor = '#229954';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedDocumentType) {
+                    e.target.style.backgroundColor = '#27ae60';
+                  }
+                }}
+              >
+                Continue
+              </button>
+              <button
+                onClick={handleCloseDocumentTypeModal}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#95a5a6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.3s ease'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#7f8c8d';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#95a5a6';
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Travel Order Modal */}
+      {showTravelOrderModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '15px',
+            padding: '30px',
+            maxWidth: '600px',
+            width: '90%',
+            maxHeight: '90vh',
+            overflow: 'auto',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+            position: 'relative'
+          }}>
+            {/* Close Button */}
+            <button
+              onClick={handleCloseTravelOrderModal}
+              style={{
+                position: 'absolute',
+                top: '15px',
+                right: '15px',
+                background: '#e74c3c',
+                border: 'none',
+                fontSize: '20px',
+                cursor: 'pointer',
+                color: 'white',
+                padding: '8px 10px',
+                borderRadius: '4px',
+                width: '35px',
+                height: '35px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 'bold',
+                transition: 'background-color 0.3s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = '#c0392b';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = '#e74c3c';
+              }}
+            >
+              ×
+            </button>
+
+            {/* Modal Title */}
+            <h2 style={{
+              textAlign: 'center',
+              margin: '0 0 30px 0',
+              fontSize: '28px',
+              fontWeight: '600',
+              color: '#2c3e50',
+              textTransform: 'uppercase',
+              letterSpacing: '1px'
+            }}>
+              TRAVEL ORDER
+            </h2>
+
+            {/* Date and Time Fields - Two rows */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '20px' }}>
+              {/* Row 1: Departure Date and Time */}
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  Date
+                </label>
+                <input
+                  type="date"
+                  value={documentForm.travelOrderDepartureDate}
+                  onChange={(e) => handleDocumentInputChange('travelOrderDepartureDate', e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: '1px solid #ddd',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  Time
+                </label>
+                <input
+                  type="time"
+                  value={documentForm.travelOrderDepartureTime}
+                  onChange={(e) => handleDocumentInputChange('travelOrderDepartureTime', e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: '1px solid #ddd',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '20px' }}>
+              {/* Row 2: Return Date and Time */}
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  Date
+                </label>
+                <input
+                  type="date"
+                  value={documentForm.travelOrderReturnDate}
+                  onChange={(e) => handleDocumentInputChange('travelOrderReturnDate', e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: '1px solid #ddd',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: '#2c3e50'
+                }}>
+                  Time
+                </label>
+                <input
+                  type="time"
+                  value={documentForm.travelOrderReturnTime}
+                  onChange={(e) => handleDocumentInputChange('travelOrderReturnTime', e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: '1px solid #ddd',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Attachment Fields - 3 separate file inputs */}
+            <div style={{ marginBottom: '20px' }}>
+              {/* TRAVEL ORDER FORM */}
+              <div style={{ marginBottom: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const newAttachments = [...(documentForm.attachments || [])];
+                        newAttachments[0] = file;
+                        setDocumentForm(prev => ({ ...prev, attachments: newAttachments }));
+                      }
+                    }}
+                    accept=".pdf,.doc,.docx,.txt"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <label style={{
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#2c3e50',
+                    minWidth: '150px',
+                    textTransform: 'uppercase'
+                  }}>
+                    TRAVEL ORDER FORM
+                  </label>
+                </div>
+                {documentForm.attachments && documentForm.attachments[0] && (
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#27ae60' }}>
+                    ✓ {documentForm.attachments[0].name}
+                  </p>
+                )}
+              </div>
+
+              {/* INVITATION LETTER */}
+              <div style={{ marginBottom: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const newAttachments = [...(documentForm.attachments || [])];
+                        newAttachments[1] = file;
+                        setDocumentForm(prev => ({ ...prev, attachments: newAttachments }));
+                      }
+                    }}
+                    accept=".pdf,.doc,.docx,.txt"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <label style={{
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#2c3e50',
+                    minWidth: '150px',
+                    textTransform: 'uppercase'
+                  }}>
+                    INVITATION LETTER
+                  </label>
+                </div>
+                {documentForm.attachments && documentForm.attachments[1] && (
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#27ae60' }}>
+                    ✓ {documentForm.attachments[1].name}
+                  </p>
+                )}
+              </div>
+
+              {/* OTHER ATTACHMENT */}
+              <div style={{ marginBottom: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const newAttachments = [...(documentForm.attachments || [])];
+                        newAttachments[2] = file;
+                        setDocumentForm(prev => ({ ...prev, attachments: newAttachments }));
+                      }
+                    }}
+                    accept=".pdf,.doc,.docx,.txt"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <label style={{
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#2c3e50',
+                    minWidth: '150px',
+                    textTransform: 'uppercase'
+                  }}>
+                    OTHER ATTACHMENT
+                  </label>
+                </div>
+                {documentForm.attachments && documentForm.attachments[2] && (
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#27ae60' }}>
+                    ✓ {documentForm.attachments[2].name}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: '15px',
+              marginTop: '30px',
+              paddingTop: '20px',
+              borderTop: '2px solid #ecf0f1'
+            }}>
+              <button
+                onClick={handleSubmitDocument}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#27ae60',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.3s ease',
+                  textTransform: 'uppercase'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#229954';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#27ae60';
+                }}
+              >
+                {editingDocument ? 'UPDATE' : 'ADD'}
+              </button>
+              <button
+                onClick={handleCloseTravelOrderModal}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#95a5a6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.3s ease',
+                  textTransform: 'uppercase'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#7f8c8d';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#95a5a6';
+                }}
+              >
+                CANCEL
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Requested Subject Modal */}
+      {showRequestedSubjectModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '15px',
+            padding: '30px',
+            maxWidth: '600px',
+            width: '90%',
+            maxHeight: '90vh',
+            overflow: 'auto',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+            position: 'relative'
+          }}>
+            {/* Close Button */}
+            <button
+              onClick={handleCloseRequestedSubjectModal}
+              style={{
+                position: 'absolute',
+                top: '15px',
+                right: '15px',
+                background: '#e74c3c',
+                border: 'none',
+                fontSize: '20px',
+                cursor: 'pointer',
+                color: 'white',
+                padding: '8px 10px',
+                borderRadius: '4px',
+                width: '35px',
+                height: '35px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 'bold',
+                transition: 'background-color 0.3s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = '#c0392b';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = '#e74c3c';
+              }}
+            >
+              ×
+            </button>
+
+            {/* Modal Title */}
+            <h2 style={{
+              textAlign: 'center',
+              margin: '0 0 30px 0',
+              fontSize: '28px',
+              fontWeight: '600',
+              color: '#2c3e50',
+              textTransform: 'uppercase',
+              letterSpacing: '1px'
+            }}>
+              REQUESTED SUBJECT
+            </h2>
+
+            {/* File Upload Fields - 5 separate file inputs */}
+            <div style={{ marginBottom: '20px' }}>
+              {/* FACULTY WORKLOAD */}
+              <div style={{ marginBottom: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const newAttachments = [...(documentForm.attachments || [])];
+                        newAttachments[0] = file;
+                        setDocumentForm(prev => ({ ...prev, attachments: newAttachments }));
+                      }
+                    }}
+                    accept=".pdf,.doc,.docx,.txt"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <label style={{
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#2c3e50',
+                    minWidth: '200px',
+                    textTransform: 'uppercase'
+                  }}>
+                    FACULTY WORKLOAD
+                  </label>
+                </div>
+                {documentForm.attachments && documentForm.attachments[0] && (
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#27ae60' }}>
+                    ✓ {documentForm.attachments[0].name}
+                  </p>
+                )}
+              </div>
+
+              {/* STUDY PLAN */}
+              <div style={{ marginBottom: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const newAttachments = [...(documentForm.attachments || [])];
+                        newAttachments[1] = file;
+                        setDocumentForm(prev => ({ ...prev, attachments: newAttachments }));
+                      }
+                    }}
+                    accept=".pdf,.doc,.docx,.txt"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <label style={{
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#2c3e50',
+                    minWidth: '200px',
+                    textTransform: 'uppercase'
+                  }}>
+                    STUDY PLAN
+                  </label>
+                </div>
+                {documentForm.attachments && documentForm.attachments[1] && (
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#27ae60' }}>
+                    ✓ {documentForm.attachments[1].name}
+                  </p>
+                )}
+              </div>
+
+              {/* SUBJECT OFFERING FORM */}
+              <div style={{ marginBottom: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const newAttachments = [...(documentForm.attachments || [])];
+                        newAttachments[2] = file;
+                        setDocumentForm(prev => ({ ...prev, attachments: newAttachments }));
+                      }
+                    }}
+                    accept=".pdf,.doc,.docx,.txt"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <label style={{
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#2c3e50',
+                    minWidth: '200px',
+                    textTransform: 'uppercase'
+                  }}>
+                    SUBJECT OFFERING FORM
+                  </label>
+                </div>
+                {documentForm.attachments && documentForm.attachments[2] && (
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#27ae60' }}>
+                    ✓ {documentForm.attachments[2].name}
+                  </p>
+                )}
+              </div>
+
+              {/* REQUEST LETTER */}
+              <div style={{ marginBottom: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const newAttachments = [...(documentForm.attachments || [])];
+                        newAttachments[3] = file;
+                        setDocumentForm(prev => ({ ...prev, attachments: newAttachments }));
+                      }
+                    }}
+                    accept=".pdf,.doc,.docx,.txt"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <label style={{
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#2c3e50',
+                    minWidth: '200px',
+                    textTransform: 'uppercase'
+                  }}>
+                    REQUEST LETTER
+                  </label>
+                </div>
+                {documentForm.attachments && documentForm.attachments[3] && (
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#27ae60' }}>
+                    ✓ {documentForm.attachments[3].name}
+                  </p>
+                )}
+              </div>
+
+              {/* STUDENT EVALUATION RECORD */}
+              <div style={{ marginBottom: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const newAttachments = [...(documentForm.attachments || [])];
+                        newAttachments[4] = file;
+                        setDocumentForm(prev => ({ ...prev, attachments: newAttachments }));
+                      }
+                    }}
+                    accept=".pdf,.doc,.docx,.txt"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <label style={{
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#2c3e50',
+                    minWidth: '200px',
+                    textTransform: 'uppercase'
+                  }}>
+                    STUDENT EVALUATION RECORD
+                  </label>
+                </div>
+                {documentForm.attachments && documentForm.attachments[4] && (
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#27ae60' }}>
+                    ✓ {documentForm.attachments[4].name}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Notes Section */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{
+                display: 'block',
+                marginBottom: '8px',
+                fontSize: '14px',
+                fontWeight: '600',
+                color: '#2c3e50',
+                textTransform: 'uppercase'
+              }}>
+                NOTES
+              </label>
+              <textarea
+                value={documentForm.notes}
+                onChange={(e) => handleDocumentInputChange('notes', e.target.value)}
+                placeholder="Enter any additional notes or comments"
+                rows="4"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '1px solid #ddd',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  boxSizing: 'border-box',
+                  resize: 'vertical'
+                }}
+              />
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: '15px',
+              marginTop: '30px',
+              paddingTop: '20px',
+              borderTop: '2px solid #ecf0f1'
+            }}>
+              <button
+                onClick={handleSubmitDocument}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#27ae60',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.3s ease',
+                  textTransform: 'uppercase'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#229954';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#27ae60';
+                }}
+              >
+                ADD
+              </button>
+              <button
+                onClick={handleCloseRequestedSubjectModal}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#95a5a6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.3s ease',
+                  textTransform: 'uppercase'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#7f8c8d';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#95a5a6';
+                }}
+              >
+                CANCEL
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Endorsement Form Modal */}
+      {showEndorsementModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '15px',
+            padding: '30px',
+            maxWidth: '600px',
+            width: '90%',
+            maxHeight: '90vh',
+            overflow: 'auto',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+            position: 'relative'
+          }}>
+            {/* Close Button */}
+            <button
+              onClick={handleCloseEndorsementModal}
+              style={{
+                position: 'absolute',
+                top: '15px',
+                right: '15px',
+                background: '#e74c3c',
+                border: 'none',
+                fontSize: '20px',
+                cursor: 'pointer',
+                color: 'white',
+                padding: '8px 10px',
+                borderRadius: '4px',
+                width: '35px',
+                height: '35px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 'bold',
+                transition: 'background-color 0.3s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = '#c0392b';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = '#e74c3c';
+              }}
+            >
+              ×
+            </button>
+
+            {/* Modal Title */}
+            <h2 style={{
+              textAlign: 'center',
+              margin: '0 0 30px 0',
+              fontSize: '28px',
+              fontWeight: '600',
+              color: '#2c3e50',
+              textTransform: 'uppercase',
+              letterSpacing: '1px'
+            }}>
+              ENDORSEMENT FORM
+            </h2>
+
+            {/* File Upload Fields - 3 separate file inputs */}
+            <div style={{ marginBottom: '20px' }}>
+              {/* ATTACHMENT 1 */}
+              <div style={{ marginBottom: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const newAttachments = [...(documentForm.attachments || [])];
+                        newAttachments[0] = file;
+                        setDocumentForm(prev => ({ ...prev, attachments: newAttachments }));
+                      }
+                    }}
+                    accept=".pdf,.doc,.docx,.txt"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <label style={{
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#2c3e50',
+                    minWidth: '150px',
+                    textTransform: 'uppercase'
+                  }}>
+                    ATTACHMENTS
+                  </label>
+                </div>
+                {documentForm.attachments && documentForm.attachments[0] && (
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#27ae60' }}>
+                    ✓ {documentForm.attachments[0].name}
+                  </p>
+                )}
+              </div>
+
+              {/* ATTACHMENT 2 */}
+              <div style={{ marginBottom: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const newAttachments = [...(documentForm.attachments || [])];
+                        newAttachments[1] = file;
+                        setDocumentForm(prev => ({ ...prev, attachments: newAttachments }));
+                      }
+                    }}
+                    accept=".pdf,.doc,.docx,.txt"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <label style={{
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#2c3e50',
+                    minWidth: '150px',
+                    textTransform: 'uppercase'
+                  }}>
+                    ATTACHMENTS
+                  </label>
+                </div>
+                {documentForm.attachments && documentForm.attachments[1] && (
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#27ae60' }}>
+                    ✓ {documentForm.attachments[1].name}
+                  </p>
+                )}
+              </div>
+
+              {/* ATTACHMENT 3 */}
+              <div style={{ marginBottom: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const newAttachments = [...(documentForm.attachments || [])];
+                        newAttachments[2] = file;
+                        setDocumentForm(prev => ({ ...prev, attachments: newAttachments }));
+                      }
+                    }}
+                    accept=".pdf,.doc,.docx,.txt"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <label style={{
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#2c3e50',
+                    minWidth: '150px',
+                    textTransform: 'uppercase'
+                  }}>
+                    ATTACHMENTS
+                  </label>
+                </div>
+                {documentForm.attachments && documentForm.attachments[2] && (
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#27ae60' }}>
+                    ✓ {documentForm.attachments[2].name}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Notes Section */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{
+                display: 'block',
+                marginBottom: '8px',
+                fontSize: '14px',
+                fontWeight: '600',
+                color: '#2c3e50',
+                textTransform: 'uppercase'
+              }}>
+                NOTES
+              </label>
+              <textarea
+                value={documentForm.notes}
+                onChange={(e) => handleDocumentInputChange('notes', e.target.value)}
+                placeholder="Enter any additional notes or comments"
+                rows="4"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '1px solid #ddd',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  boxSizing: 'border-box',
+                  resize: 'vertical'
+                }}
+              />
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: '15px',
+              marginTop: '30px',
+              paddingTop: '20px',
+              borderTop: '2px solid #ecf0f1'
+            }}>
+              <button
+                onClick={handleSubmitDocument}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#27ae60',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.3s ease',
+                  textTransform: 'uppercase'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#229954';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#27ae60';
+                }}
+              >
+                ADD
+              </button>
+              <button
+                onClick={handleCloseEndorsementModal}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#95a5a6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.3s ease',
+                  textTransform: 'uppercase'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#7f8c8d';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#95a5a6';
+                }}
+              >
+                CANCEL
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Faculty Loading Modal */}
+      {showFacultyLoadingModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '15px',
+            padding: '30px',
+            maxWidth: '600px',
+            width: '90%',
+            maxHeight: '90vh',
+            overflow: 'auto',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+            position: 'relative'
+          }}>
+            {/* Close Button */}
+            <button
+              onClick={handleCloseFacultyLoadingModal}
+              style={{
+                position: 'absolute',
+                top: '15px',
+                right: '15px',
+                background: '#e74c3c',
+                border: 'none',
+                fontSize: '20px',
+                cursor: 'pointer',
+                color: 'white',
+                padding: '8px 10px',
+                borderRadius: '4px',
+                width: '35px',
+                height: '35px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 'bold',
+                transition: 'background-color 0.3s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = '#c0392b';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = '#e74c3c';
+              }}
+            >
+              ×
+            </button>
+
+            {/* Modal Title */}
+            <h2 style={{
+              textAlign: 'center',
+              margin: '0 0 30px 0',
+              fontSize: '28px',
+              fontWeight: '600',
+              color: '#2c3e50',
+              textTransform: 'uppercase',
+              letterSpacing: '1px'
+            }}>
+              FACULTY LOADING
+            </h2>
+
+            {/* File Upload Fields - 3 separate file inputs */}
+            <div style={{ marginBottom: '20px' }}>
+              {/* ATTACHMENT 1 */}
+              <div style={{ marginBottom: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const newAttachments = [...(documentForm.attachments || [])];
+                        newAttachments[0] = file;
+                        setDocumentForm(prev => ({ ...prev, attachments: newAttachments }));
+                      }
+                    }}
+                    accept=".pdf,.doc,.docx,.txt"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <label style={{
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#2c3e50',
+                    minWidth: '150px',
+                    textTransform: 'uppercase'
+                  }}>
+                    ATTACHMENTS
+                  </label>
+                </div>
+                {documentForm.attachments && documentForm.attachments[0] && (
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#27ae60' }}>
+                    ✓ {documentForm.attachments[0].name}
+                  </p>
+                )}
+              </div>
+
+              {/* ATTACHMENT 2 */}
+              <div style={{ marginBottom: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const newAttachments = [...(documentForm.attachments || [])];
+                        newAttachments[1] = file;
+                        setDocumentForm(prev => ({ ...prev, attachments: newAttachments }));
+                      }
+                    }}
+                    accept=".pdf,.doc,.docx,.txt"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <label style={{
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#2c3e50',
+                    minWidth: '150px',
+                    textTransform: 'uppercase'
+                  }}>
+                    ATTACHMENTS
+                  </label>
+                </div>
+                {documentForm.attachments && documentForm.attachments[1] && (
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#27ae60' }}>
+                    ✓ {documentForm.attachments[1].name}
+                  </p>
+                )}
+              </div>
+
+              {/* ATTACHMENT 3 */}
+              <div style={{ marginBottom: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const newAttachments = [...(documentForm.attachments || [])];
+                        newAttachments[2] = file;
+                        setDocumentForm(prev => ({ ...prev, attachments: newAttachments }));
+                      }
+                    }}
+                    accept=".pdf,.doc,.docx,.txt"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <label style={{
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#2c3e50',
+                    minWidth: '150px',
+                    textTransform: 'uppercase'
+                  }}>
+                    ATTACHMENTS
+                  </label>
+                </div>
+                {documentForm.attachments && documentForm.attachments[2] && (
+                  <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#27ae60' }}>
+                    ✓ {documentForm.attachments[2].name}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Notes Section */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{
+                display: 'block',
+                marginBottom: '8px',
+                fontSize: '14px',
+                fontWeight: '600',
+                color: '#2c3e50',
+                textTransform: 'uppercase'
+              }}>
+                NOTES
+              </label>
+              <textarea
+                value={documentForm.notes}
+                onChange={(e) => handleDocumentInputChange('notes', e.target.value)}
+                placeholder="Enter any additional notes or comments"
+                rows="4"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '1px solid #ddd',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  boxSizing: 'border-box',
+                  resize: 'vertical'
+                }}
+              />
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: '15px',
+              marginTop: '30px',
+              paddingTop: '20px',
+              borderTop: '2px solid #ecf0f1'
+            }}>
+              <button
+                onClick={handleSubmitDocument}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#27ae60',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.3s ease',
+                  textTransform: 'uppercase'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#229954';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#27ae60';
+                }}
+              >
+                ADD
+              </button>
+              <button
+                onClick={handleCloseFacultyLoadingModal}
+                style={{
+                  padding: '12px 24px',
+                  backgroundColor: '#95a5a6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.3s ease',
+                  textTransform: 'uppercase'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#7f8c8d';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#95a5a6';
+                }}
+              >
+                CANCEL
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add Document Modal */}
       {showDocumentModal && (
         <div style={{
@@ -4915,7 +7900,7 @@ function Edashboard({ onLogout }) {
                 fontWeight: '600',
                 color: '#2c3e50'
               }}>
-                Add New Document
+                {editingDocument ? 'Edit Document' : 'Add New Document'}
               </h2>
               <p style={{
                 margin: 0,
@@ -4928,7 +7913,8 @@ function Edashboard({ onLogout }) {
 
             {/* Form Fields */}
             <div style={{ display: 'grid', gap: '20px' }}>
-              {/* Sender */}
+              {/* Sender - Hidden for new documents, shown for editing */}
+              {editingDocument && (
               <div>
                 <label style={{
                   display: 'block',
@@ -4957,8 +7943,9 @@ function Edashboard({ onLogout }) {
                   }}
                 />
               </div>
+              )}
 
-              {/* Type of Document */}
+              {/* Type of Document - Show as read-only if not editing */}
               <div>
                 <label style={{
                   display: 'block',
@@ -4991,8 +7978,8 @@ function Edashboard({ onLogout }) {
                 </select>
               </div>
 
-              {/* Date and Time - Hide by default and for TRAVEL ORDER */}
-              {documentForm.type && !(documentForm.type.toUpperCase().includes('TRAVEL ORDER')) && (
+              {/* Date and Time - Hide by default and for TRAVEL ORDER and FACULTY LOADING */}
+              {documentForm.type && !(documentForm.type.toUpperCase().includes('TRAVEL ORDER')) && !(documentForm.type.toUpperCase().includes('FACULTY LOADING')) && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
                 <div>
                   <label style={{
@@ -5293,7 +8280,8 @@ function Edashboard({ onLogout }) {
                 );
               })()}
 
-              {/* Notes */}
+              {/* Notes - Hidden for new documents */}
+              {editingDocument && (
               <div>
                 <label style={{
                   display: 'block',
@@ -5320,41 +8308,101 @@ function Edashboard({ onLogout }) {
                   }}
                 />
               </div>
+              )}
 
-              {/* Attachment */}
-              <div>
-                <label style={{
-                  display: 'block',
-                  marginBottom: '8px',
-                  fontSize: '14px',
-                  fontWeight: '600',
-                  color: '#2c3e50'
-                }}>
-                  Attachment
-                </label>
-                <input
-                  type="file"
-                  onChange={handleFileChange}
-                  accept=".pdf,.doc,.docx,.txt"
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    border: '1px solid #ddd',
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                    boxSizing: 'border-box'
-                  }}
-                />
-                {documentForm.attachment && (
-                  <p style={{
-                    margin: '8px 0 0 0',
-                    fontSize: '12px',
-                    color: '#27ae60'
+              {/* Attachment - Hidden for new documents */}
+              {editingDocument && (
+              <>
+              {documentForm.type && documentForm.type.toUpperCase().includes('FACULTY LOADING') ? (
+                // Show 3 separate file inputs for FACULTY LOADING
+                <div>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    color: '#2c3e50'
                   }}>
-                    Selected: {documentForm.attachment.name}
-                  </p>
-                )}
-              </div>
+                    Attachments (3 files required)
+                  </label>
+                  {[0, 1, 2].map((index) => {
+                    const fileLabels = ['Travel Order Form', 'Invitation Letter', 'Others'];
+                    return (
+                    <div key={index} style={{ marginBottom: '8px' }}>
+                      <label style={{
+                        display: 'block',
+                        marginBottom: '3px',
+                        fontSize: '11px',
+                        fontWeight: '500',
+                        color: '#666'
+                      }}>
+                        {fileLabels[index]}
+                      </label>
+                      <input
+                        type="file"
+                        onChange={(e) => handleFileChange(e, index)}
+                        accept=".pdf,.doc,.docx,.txt"
+                        style={{
+                          width: '100%',
+                          padding: '6px 8px',
+                          border: '1px solid #ddd',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                          boxSizing: 'border-box',
+                          marginBottom: '2px'
+                        }}
+                      />
+                      {documentForm.attachments[index] && (
+                        <p style={{
+                          margin: '2px 0 0 0',
+                          fontSize: '10px',
+                          color: '#27ae60',
+                          fontWeight: '500'
+                        }}>
+                          ✓ {documentForm.attachments[index].name}
+                        </p>
+                      )}
+                    </div>
+                  )})}
+                </div>
+              ) : (
+                // Show single file input for other document types
+                <div>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    color: '#2c3e50'
+                  }}>
+                    Attachment
+                  </label>
+                  <input
+                    type="file"
+                    onChange={handleFileChange}
+                    accept=".pdf,.doc,.docx,.txt"
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      border: '1px solid #ddd',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  {documentForm.attachments && documentForm.attachments.length > 0 && documentForm.attachments[0] && (
+                    <p style={{
+                      margin: '8px 0 0 0',
+                      fontSize: '12px',
+                      color: '#27ae60'
+                    }}>
+                      Selected: {documentForm.attachments[0].name}
+                    </p>
+                  )}
+                </div>
+              )}
+              </>
+              )}
             </div>
 
             {/* Modal Footer */}
@@ -5503,25 +8551,31 @@ function Edashboard({ onLogout }) {
                   docType.includes('ENDORSEMENT FORM') ||
                   category === 'Endorsement Form'
                 ) {
-                  return ['Communication', 'Program Head', 'Vice President', 'Office of the President'];
+                  return ['Program Head', 'Dean', 'Vice President', 'Office of the President'];
                 }
 
-                // For Requested Subject - routes to VP
+                // For Requested Subject - 7-stage workflow
                 if (
                   docType.includes('REQUESTED SUBJECT') || 
                   category === 'Requested Subject'
                 ) {
-                  return ['Program Head', 'Dean', 'Vice President'];
+                  return ['Academic Adviser', 'Program Head', 'Dean', 'Director of Instruction', 'VPAA', 'Dean', 'Encoder'];
                 }
 
-                // For Faculty Loading and Travel Order - routes to Academic VP
+                // For Faculty Loading - routes to Academic VP
                 if (
                   docType.includes('FACULTY LOADING') || 
-                  docType.includes('TRAVEL ORDER') ||
-                  category === 'Faculty Loading' || 
-                  category === 'Travel Order'
+                  category === 'Faculty Loading'
                 ) {
                   return ['Program Head', 'Dean', 'Academic Vice President'];
+                }
+                
+                // For Travel Order - HR route workflow
+                if (
+                  docType.includes('TRAVEL ORDER') ||
+                  category === 'Travel Order'
+                ) {
+                  return ['Immediate Supervisor', 'HR', 'Records Office', 'Executive Assistant', 'President', 'Records Office', 'HR'];
                 }
                 
                 // Default workflow
@@ -5529,9 +8583,105 @@ function Edashboard({ onLogout }) {
               };
 
               const stages = getWorkflowStages();
-              const isWorkflowComplete = isDocumentWorkflowComplete(selectedDocument);
               
-              // Helper function to match office name to stage
+              // Check if workflow is complete (matching admin dashboard logic)
+              const checkWorkflowComplete = (doc) => {
+                if (!doc.routingHistory || !Array.isArray(doc.routingHistory) || doc.routingHistory.length === 0) return false;
+                // IMPORTANT: Returned documents should NOT show as fully completed/approved in the progress bar
+                if (doc.status === 'Returned') return false;
+                
+                // Special handling for Travel Order (has duplicate stages)
+                const docType = doc.type?.toUpperCase() || '';
+                const isTravelOrder = docType.includes('TRAVEL ORDER');
+                
+                if (isTravelOrder) {
+                  // For Travel Order, workflow is complete only if ALL 7 stages have been completed IN ORDER
+                  // We need to track which stage occurrence we're on (since Records Office and HR appear twice)
+                  const routingHistory = Array.isArray(doc.routingHistory) ? doc.routingHistory : [];
+                  
+                  // Track completed visits to each stage
+                  const stageVisits = {};
+                  routingHistory.forEach(entry => {
+                    const isApprovalAction = entry.action && (
+                      entry.action.toLowerCase().includes('approved') || 
+                      entry.action.toLowerCase().includes('forwarded')
+                    );
+                    
+                    if (isApprovalAction && entry.office && entry.office !== 'Submitted') {
+                      // Normalize office name
+                      let normalizedOffice = entry.office;
+                      const officeLower = entry.office.toLowerCase();
+                      if (officeLower.includes('hr') || officeLower.includes('human resources')) {
+                        normalizedOffice = 'HR';
+                      } else if (officeLower === 'im' || officeLower.includes('immediate supervisor')) {
+                        normalizedOffice = 'Immediate Supervisor';
+                      } else if (officeLower.includes('records')) {
+                        normalizedOffice = 'Records Office';
+                      } else if (officeLower.includes('executive assistant')) {
+                        normalizedOffice = 'Executive Assistant';
+                      } else if (officeLower.includes('president') || officeLower.includes('op')) {
+                        normalizedOffice = 'President';
+                      }
+                      
+                      stageVisits[normalizedOffice] = (stageVisits[normalizedOffice] || 0) + 1;
+                    }
+                  });
+                  
+                  // Check if each stage has been visited the required number of times
+                  // stages = ['Immediate Supervisor', 'HR', 'Records Office', 'Executive Assistant', 'Office of the President', 'Records Office', 'HR']
+                  // We need to check each occurrence in order
+                  let completedStages = 0;
+                  const requiredVisits = {};
+                  
+                  // Count how many times each stage should be visited
+                  stages.forEach(stage => {
+                    requiredVisits[stage] = (requiredVisits[stage] || 0) + 1;
+                  });
+                  
+                  // Check if each stage has been visited the correct number of times
+                  for (let i = 0; i < stages.length; i++) {
+                    const stage = stages[i];
+                    const requiredCount = stages.slice(0, i + 1).filter(s => s === stage).length;
+                    const actualCount = stageVisits[stage] || 0;
+                    
+                    if (actualCount >= requiredCount) {
+                      completedStages++;
+                    } else {
+                      // Stop checking if a stage hasn't been completed
+                      break;
+                    }
+                  }
+                  
+                  // Workflow is complete only if ALL 7 stages have been completed
+                  // AND document status is Approved/Completed OR nextOffice is empty
+                  return completedStages === stages.length && (
+                         doc.status === 'Completed' || 
+                         doc.status === 'Approved' || 
+                         !doc.nextOffice || 
+                    doc.nextOffice === ''
+                  );
+                }
+                
+                // For other workflows (no duplicate stages)
+                const finalStage = stages[stages.length - 1];
+                
+                // Check if document has been approved BY the final stage (not just forwarded TO it)
+                // The action must be performed FROM the final stage (entry.office), not TO it (entry.toOffice)
+                const finalApproval = doc.routingHistory.find(entry => 
+                  (entry.action === 'approved' || entry.action === 'Approved and Forwarded') &&
+                  (entry.office === finalStage || 
+                   entry.office?.includes(finalStage))
+                );
+                
+                return finalApproval !== undefined || doc.status === 'Approved' || doc.status === 'Completed';
+              };
+
+              const currentOffice = selectedDocument.currentOffice || selectedDocument.nextOffice || 'Program Head';
+              
+              const isWorkflowComplete = checkWorkflowComplete(selectedDocument);
+
+              // Helper function to match office name to stage (improved matching)
+              // MUST be defined before it's used
               const matchOfficeToStage = (officeName, stageName) => {
                 if (!officeName || !stageName) return false;
                 const officeLower = officeName.toLowerCase();
@@ -5542,6 +8692,26 @@ function Edashboard({ onLogout }) {
                 
                 // Partial match
                 if (officeLower.includes(stageLower) || stageLower.includes(officeLower)) return true;
+                
+                // Handle HR / Human Resources
+                if (stageLower.includes('hr') || stageLower.includes('human resources')) {
+                  return officeLower.includes('hr') || officeLower.includes('human resources');
+                }
+
+                // Handle Immediate Supervisor / IM
+                if (stageLower.includes('immediate supervisor')) {
+                  return officeLower === 'im' || officeLower.includes('immediate supervisor');
+                }
+                
+                // Handle Records Office
+                if (stageLower.includes('records office') || stageLower.includes('records')) {
+                  return officeLower.includes('records');
+                }
+                
+                // Handle Executive Assistant
+                if (stageLower.includes('executive assistant')) {
+                  return officeLower.includes('executive assistant') || officeLower.includes('executive asst');
+                }
                 
                 // Handle abbreviations for Office of the President
                 if (stageLower.includes('office of the president')) {
@@ -5577,81 +8747,345 @@ function Edashboard({ onLogout }) {
                 return false;
               };
 
-              // Determine current stage index
+              // Helper function to format duration
+              const formatDuration = (milliseconds) => {
+                if (!milliseconds || milliseconds < 0) return '';
+                
+                const seconds = Math.floor(milliseconds / 1000);
+                const minutes = Math.floor(seconds / 60);
+                const hours = Math.floor(minutes / 60);
+                const days = Math.floor(hours / 24);
+                
+                if (days > 0) {
+                  const remainingHours = hours % 24;
+                  if (remainingHours > 0) {
+                    return `${days}d ${remainingHours}h`;
+                  }
+                  return `${days} day${days > 1 ? 's' : ''}`;
+                }
+                if (hours > 0) {
+                  const remainingMinutes = minutes % 60;
+                  if (remainingMinutes > 0) {
+                    return `${hours}h ${remainingMinutes}m`;
+                  }
+                  return `${hours} hour${hours > 1 ? 's' : ''}`;
+                }
+                if (minutes > 0) {
+                  return `${minutes} min${minutes > 1 ? 's' : ''}`;
+                }
+                return `${seconds} sec${seconds !== 1 ? 's' : ''}`;
+              };
+
+              // Helper function to calculate duration for a specific stage
+              const getStageDuration = (stage, stageIndex) => {
+                if (!Array.isArray(selectedDocument.routingHistory) || selectedDocument.routingHistory.length === 0) {
+                  return null;
+                }
+
+                // For duplicate stages (e.g., HR appears twice), determine which occurrence
+                const stageOccurrence = stages.slice(0, stageIndex + 1).filter(s => s === stage).length;
+
+                // Find arrival and action times for this specific occurrence
+                let arrivalTime = null;
+                let actionTime = null;
+                let occurrencesSeen = 0;
+
+                // Special handling for the first stage - use document submission time
+                if (stageIndex === 0) {
+                  // Find the initial submission entry
+                  const submissionEntry = selectedDocument.routingHistory.find(entry => 
+                    entry.action?.toLowerCase().includes('submitted')
+                  );
+                  if (submissionEntry && submissionEntry.timestamp) {
+                    arrivalTime = new Date(submissionEntry.timestamp);
+                  }
+                }
+
+                for (let i = 0; i < selectedDocument.routingHistory.length; i++) {
+                  const entry = selectedDocument.routingHistory[i];
+                  const action = entry.action?.toLowerCase() || '';
+                  
+                  // For stages after the first, check if document was forwarded TO this stage
+                  if (stageIndex > 0) {
+                    // Check both toOffice and office fields for arrival detection
+                    const entryToOffice = entry.toOffice || '';
+                    const entryOffice = entry.office || '';
+                    const isForwardedToStage = matchOfficeToStage(entryToOffice, stage) || 
+                                              matchOfficeToStage(entryOffice, stage) ||
+                                              (action.includes('forwarded') && (matchOfficeToStage(entryToOffice, stage) || matchOfficeToStage(entryOffice, stage)));
+                    
+                    if (isForwardedToStage && occurrencesSeen < stageOccurrence) {
+                      occurrencesSeen++;
+                      if (occurrencesSeen === stageOccurrence) {
+                        // Use the timestamp from the entry that forwarded TO this stage
+                        arrivalTime = entry.timestamp ? new Date(entry.timestamp) : null;
+                      }
+                    }
+                  }
+
+                  // Check if this stage took an action (after arrival)
+                  if (arrivalTime) {
+                    // Use more flexible matching for office names - check both office and toOffice
+                    const entryOffice = entry.office || '';
+                    const entryToOffice = entry.toOffice || '';
+                    const isFromStage = matchOfficeToStage(entryOffice, stage) || 
+                                       matchOfficeToStage(entryToOffice, stage) ||
+                                       entryOffice.toLowerCase().includes(stage.toLowerCase()) ||
+                                       entryToOffice.toLowerCase().includes(stage.toLowerCase());
+                    const isAction = action.includes('approved') || action.includes('returned') || 
+                                   action.includes('rejected') || action.includes('forwarded');
+                    
+                    // For first stage, any action from the stage counts
+                    // For other stages, only count actions for the correct occurrence
+                    const isCorrectOccurrence = stageIndex === 0 || occurrencesSeen === stageOccurrence;
+                    
+                    if (isFromStage && isAction && isCorrectOccurrence) {
+                      const entryTimestamp = entry.timestamp ? new Date(entry.timestamp) : null;
+                      // Make sure this action happened AFTER arrival (or at least not equal)
+                      if (entryTimestamp && entryTimestamp >= arrivalTime) {
+                        actionTime = entryTimestamp;
+                        // For first stage, use the first matching action
+                        if (stageIndex === 0) {
+                          break;
+                        }
+                      }
+                    }
+                  }
+                }
+
+                // Calculate duration
+                if (arrivalTime && actionTime) {
+                  const duration = actionTime - arrivalTime;
+                  return duration > 0 ? duration : null;
+                }
+
+                return null;
+              };
+
+              // Define document type early for use in multiple places
+              const docType = selectedDocument.type?.toUpperCase() || '';
+              const docCategory = selectedDocument.category || '';
+              const isTravelOrder = docType.includes('TRAVEL ORDER') || docCategory === 'Travel Order';
+              const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory === 'Requested Subject';
+
+              // If document was returned, show "RETURNED" in the progress bar at the returning stage
+              // BUT only if there's no later approval/forward from that same stage
+              const lastReturnEntry = selectedDocument?.routingHistory && Array.isArray(selectedDocument.routingHistory)
+                ? [...selectedDocument.routingHistory].reverse().find(e =>
+                    e?.action && e.action.toLowerCase().includes('returned')
+                  )
+                : null;
+              
+              // Check if there's a later approval/forward from the same stage that returned it
+              let shouldShowReturned = false;
+              
+              // If document is finally approved/completed, don't show any stage as RETURNED
+              const isFinallyApproved = selectedDocument.status === 'Approved' || 
+                                       selectedDocument.status === 'Completed' ||
+                                       isWorkflowComplete;
+              
+              if (lastReturnEntry && lastReturnEntry.office && !isFinallyApproved) {
+                const returnOffice = lastReturnEntry.office;
+                const returnTimestamp = lastReturnEntry.timestamp ? new Date(lastReturnEntry.timestamp) : null;
+                
+                // Find any approval/forward actions from the same office AFTER the return
+                const laterActions = Array.isArray(selectedDocument.routingHistory)
+                  ? selectedDocument.routingHistory.filter(entry => {
+                  if (!entry.action || !entry.office) return false;
+                  const isApprovalOrForward = entry.action.toLowerCase().includes('approved') || 
+                                             entry.action.toLowerCase().includes('forwarded');
+                  const isSameOffice = matchOfficeToStage(entry.office, returnOffice) || 
+                                      matchOfficeToStage(returnOffice, entry.office);
+                  
+                  if (isApprovalOrForward && isSameOffice && returnTimestamp) {
+                    const entryTimestamp = entry.timestamp ? new Date(entry.timestamp) : null;
+                    return entryTimestamp && entryTimestamp > returnTimestamp;
+                  }
+                  return false;
+                    })
+                  : [];
+                
+                // Only show "RETURNED" if there's NO later approval/forward from that stage
+                shouldShowReturned = laterActions.length === 0;
+              }
+
+              // Determine which stage should display as "RETURNED" (orange)
+              // For duplicate stages (HR, Records Office), we need to find the correct occurrence
+              let returnedStageIndex = -1;
+              if (lastReturnEntry?.office && isTravelOrder) {
+                // For Travel Order, determine which specific occurrence returned the document
+                const returnOffice = lastReturnEntry.office;
+                const returnTimestamp = lastReturnEntry.timestamp ? new Date(lastReturnEntry.timestamp) : null;
+                
+                // Count how many times this office APPROVED/FORWARDED before the return
+                let approvalsBeforeReturn = 0;
+                if (returnTimestamp && Array.isArray(selectedDocument.routingHistory)) {
+                  selectedDocument.routingHistory.forEach(entry => {
+                    const action = entry.action?.toLowerCase() || '';
+                    const isApproval = action.includes('approved') || action.includes('forwarded');
+                    const entryOffice = entry.office || '';
+                    const isSameOffice = matchOfficeToStage(entryOffice, returnOffice) || 
+                                        matchOfficeToStage(returnOffice, entryOffice);
+                    
+                    if (isApproval && isSameOffice) {
+                      const entryTimestamp = entry.timestamp ? new Date(entry.timestamp) : null;
+                      if (entryTimestamp && entryTimestamp < returnTimestamp) {
+                        approvalsBeforeReturn++;
+                      }
+                    }
+                  });
+                }
+                
+                // Find the correct stage index based on approval count
+                // If 0 approvals before return = first occurrence (Stage 2 for HR, Stage 3 for Records Office)
+                // If 1 approval before return = second occurrence (Stage 7 for HR, Stage 6 for Records Office)
+                let foundCount = 0;
+                for (let i = 0; i < stages.length; i++) {
+                  if (matchOfficeToStage(stages[i], returnOffice)) {
+                    if (foundCount === approvalsBeforeReturn) {
+                      returnedStageIndex = i;
+                      break;
+                    }
+                    foundCount++;
+                  }
+                }
+              } else if (lastReturnEntry?.office) {
+                // For non-Travel Order or if above logic didn't find it, use first match
+                returnedStageIndex = stages.findIndex(stage => matchOfficeToStage(lastReturnEntry.office, stage));
+              }
+
+              // Find current stage index (improved logic for workflows with duplicate stages)
               let currentStageIndex = -1;
               
-              // Priority 1: Check if currentOffice matches a stage
-              if (selectedDocument.currentOffice) {
-                currentStageIndex = stages.findIndex(stage => 
-                  matchOfficeToStage(selectedDocument.currentOffice, stage)
-                );
-              }
+              // Declare stageVisits outside the if block so it's accessible in the map function below
+              let stageVisits = {};
               
-              // Priority 2: If nextOffice is set, document is at the stage BEFORE nextOffice
-              if (currentStageIndex === -1 && selectedDocument.nextOffice) {
-                const nextOfficeIndex = stages.findIndex(stage => 
-                  matchOfficeToStage(selectedDocument.nextOffice, stage)
-                );
-                if (nextOfficeIndex !== -1 && nextOfficeIndex > 0) {
-                  // Document is at the stage before the nextOffice
-                  currentStageIndex = nextOfficeIndex - 1;
-                } else if (nextOfficeIndex === 0) {
-                  // If nextOffice is the first stage, document hasn't started yet
-                  currentStageIndex = 0;
-                }
-              }
+              // Special handling for Travel Order and Requested Subject (both have duplicate stages)
+              // Travel Order: Records Office × 2, HR × 2
+              // Requested Subject: Dean × 2
+              // docType, isTravelOrder, and isRequestedSubject already defined above
               
-              // Priority 3: Check routing history for the last office
-              if (currentStageIndex === -1 && selectedDocument.routingHistory && selectedDocument.routingHistory.length > 0) {
-                const lastEntry = selectedDocument.routingHistory[selectedDocument.routingHistory.length - 1];
-                const lastOffice = lastEntry.toOffice || lastEntry.office;
-                if (lastOffice) {
-                  const lastOfficeIndex = stages.findIndex(stage => 
-                    matchOfficeToStage(lastOffice, stage)
+              if ((isTravelOrder || isRequestedSubject) && Array.isArray(selectedDocument.routingHistory) && selectedDocument.routingHistory.length > 0) {
+                // Count COMPLETED visits to each stage in routing history
+                // A stage is completed only when it has approved/forwarded the document
+                stageVisits = {};
+                
+                selectedDocument.routingHistory.forEach(entry => {
+                  // Only count if this entry represents an approval/forward action FROM this office
+                  const isApprovalAction = entry.action && (
+                    entry.action.toLowerCase().includes('approved') || 
+                    entry.action.toLowerCase().includes('forwarded')
                   );
-                  if (lastOfficeIndex !== -1) {
-                    currentStageIndex = lastOfficeIndex;
+                  
+                  if (isApprovalAction) {
+                    // Use the 'office' field (where the action was performed)
+                    const entryOffice = entry.office || '';
+                    if (entryOffice && entryOffice !== 'Submitted') {
+                      // Normalize office names
+                      let normalizedOffice = entryOffice;
+                      if (entryOffice.toLowerCase().includes('hr') || entryOffice.toLowerCase().includes('human resources')) {
+                        normalizedOffice = 'HR';
+                      } else if (entryOffice.toLowerCase() === 'im' || entryOffice.toLowerCase().includes('immediate supervisor')) {
+                        normalizedOffice = 'Immediate Supervisor';
+                      } else if (entryOffice.toLowerCase().includes('records')) {
+                        normalizedOffice = 'Records Office';
+                      } else if (entryOffice.toLowerCase().includes('executive assistant')) {
+                        normalizedOffice = 'Executive Assistant';
+                      } else if (entryOffice.toLowerCase().includes('president') || entryOffice.toLowerCase().includes('op')) {
+                        normalizedOffice = 'President';
+                      } else if (entryOffice.toLowerCase().includes('academic adviser') || entryOffice.toLowerCase().includes('academic advisor')) {
+                        normalizedOffice = 'Academic Adviser';
+                      } else if (entryOffice.toLowerCase().includes('program head') || entryOffice.toLowerCase() === 'ph') {
+                        normalizedOffice = 'Program Head';
+                      } else if (entryOffice.toLowerCase().includes('dean')) {
+                        normalizedOffice = 'Dean';
+                      } else if (entryOffice.toLowerCase().includes('director of instruction') || entryOffice.toLowerCase().includes('director for instruction')) {
+                        normalizedOffice = 'Director of Instruction';
+                      } else if (entryOffice.toLowerCase().includes('vpaa') || entryOffice.toLowerCase().includes('vice president for academic affairs')) {
+                        normalizedOffice = 'VPAA';
+                      } else if (entryOffice.toLowerCase().includes('encoder')) {
+                        normalizedOffice = 'Encoder';
+                      }
+                      
+                      stageVisits[normalizedOffice] = (stageVisits[normalizedOffice] || 0) + 1;
+                    }
+                  }
+                });
+                
+                // Find the current stage index by matching visits with workflow order
+                let visitCounts = {};
+                for (let i = 0; i < stages.length; i++) {
+                  const stage = stages[i];
+                  visitCounts[stage] = (visitCounts[stage] || 0) + 1;
+                  
+                  // Check if this is where we are (visit count matches)
+                  const actualVisits = stageVisits[stage] || 0;
+                  const expectedVisitsUpToHere = visitCounts[stage];
+                  
+                  // If we haven't completed this occurrence yet, this is our current stage
+                  if (actualVisits < expectedVisitsUpToHere) {
+                    currentStageIndex = i;
+                    break;
                   }
                 }
+                
+                // If all stages visited, we're at the end
+                if (currentStageIndex === -1) {
+                  currentStageIndex = stages.length - 1;
+                }
+              } else {
+                // Standard workflow logic (no duplicate stages)
+                // First, try exact match
+                currentStageIndex = stages.indexOf(currentOffice);
+                
+                // If no exact match, try partial string matching
+                if (currentStageIndex === -1) {
+                  currentStageIndex = stages.findIndex(stage => 
+                    currentOffice.includes(stage) || stage.includes(currentOffice)
+                  );
+                }
+                
+                // If still no match, try improved matching function
+                if (currentStageIndex === -1) {
+                  currentStageIndex = stages.findIndex(stage => 
+                    matchOfficeToStage(currentOffice, stage)
+                  );
+                }
+                
+                // If still no match, check routing history to find the highest stage visited
+                if (currentStageIndex === -1 && Array.isArray(selectedDocument.routingHistory) && selectedDocument.routingHistory.length > 0) {
+                  // Find the highest stage index that matches any entry in routing history
+                  let highestStageIndex = -1;
+                  
+                  selectedDocument.routingHistory.forEach(entry => {
+                    const entryOffice = entry.toOffice || entry.office || '';
+                    if (entryOffice) {
+                      const matchedIndex = stages.findIndex(stage => 
+                        matchOfficeToStage(entryOffice, stage)
+                      );
+                      if (matchedIndex !== -1 && matchedIndex > highestStageIndex) {
+                        highestStageIndex = matchedIndex;
+                      }
+                    }
+                  });
+                  
+                  if (highestStageIndex !== -1) {
+                    currentStageIndex = highestStageIndex;
+                  }
+                }
+                
+                // Default to first stage if still no match
+                if (currentStageIndex === -1) currentStageIndex = 0;
               }
               
-              // If still no match, check if document is at the last stage
-              if (currentStageIndex === -1) {
-                // Check if status is Approved and no nextOffice - means it's at the last stage
-                if (isWorkflowComplete || (selectedDocument.status === 'Approved' && !selectedDocument.nextOffice)) {
+              // If workflow is complete, show last stage (all approved)
+              if (isWorkflowComplete) {
                   currentStageIndex = stages.length - 1;
-                } else {
-                  // Default to last stage if document seems to be at the end
-                  const lastHistoryEntry = selectedDocument.routingHistory?.[selectedDocument.routingHistory.length - 1];
-                  if (lastHistoryEntry) {
-                    const lastOffice = lastHistoryEntry.office || lastHistoryEntry.toOffice || '';
-                    const isAtLastStage = stages.some(stage => {
-                      const stageLower = stage.toLowerCase();
-                      const lastLower = lastOffice.toLowerCase();
-                      return lastLower.includes(stageLower) || stageLower.includes(lastLower) ||
-                             (stageLower.includes('office of the president') && (lastLower.includes('op') || lastLower.includes('president'))) ||
-                             (stageLower.includes('vice president') && (lastLower.includes('vp') || lastLower.includes('vice president'))) ||
-                             (stageLower.includes('academic vice president') && (lastLower.includes('avp') || lastLower.includes('academic')));
-                    });
-                    if (isAtLastStage) {
-                      currentStageIndex = stages.length - 1;
-                    } else {
-                      currentStageIndex = 0; // Default to first stage
-                    }
-                  } else {
-                    currentStageIndex = 0; // Default to first stage
-                  }
-                }
               }
               
               // Ensure index is within bounds
               if (currentStageIndex < 0) currentStageIndex = 0;
               if (currentStageIndex >= stages.length) currentStageIndex = stages.length - 1;
-              
-              // If workflow is complete, show last stage
-              if (isWorkflowComplete) {
-                currentStageIndex = stages.length - 1;
-              }
 
               return (
                 <div style={{
@@ -5680,11 +9114,73 @@ function Edashboard({ onLogout }) {
                     position: 'relative'
                   }}>
                     {stages.map((stage, index) => {
-                      const isCompleted = index < currentStageIndex || (isWorkflowComplete && index === currentStageIndex);
-                      const isCurrent = !isWorkflowComplete && index === currentStageIndex;
+                      // Only show "RETURNED" if shouldShowReturned is true AND this is the returned stage
+                      const isReturned = shouldShowReturned && lastReturnEntry && index === (returnedStageIndex >= 0 ? returnedStageIndex : -1);
+                      
+                      // Mark stages as completed if they've been approved/forwarded (check routing history)
+                      let isCompleted = false;
+                      
+                      // If document is approved/completed, mark all stages as completed
+                      if (isWorkflowComplete || selectedDocument.status === 'Approved' || selectedDocument.status === 'Completed') {
+                        isCompleted = true;
+                      } else if ((isTravelOrder || isRequestedSubject) && typeof stageVisits !== 'undefined') {
+                        // For workflows with duplicate stages, use the stageVisits object calculated above
+                        const stageOccurrence = stages.slice(0, index + 1).filter(s => s === stage).length;
+                        const actualVisits = stageVisits[stage] || 0;
+                        // Stage is completed if it has been visited at least as many times as required for this occurrence
+                        isCompleted = actualVisits >= stageOccurrence;
+                      } else if (Array.isArray(selectedDocument.routingHistory) && selectedDocument.routingHistory.length > 0) {
+                        // Helper function to normalize office name for matching (same as in stageVisits calculation)
+                        const normalizeOfficeForMatching = (officeName) => {
+                          if (!officeName) return '';
+                          const normalized = officeName.toLowerCase().trim();
+                          if (normalized.includes('academic adviser') || normalized.includes('academic advisor')) return 'Academic Adviser';
+                          if (normalized.includes('program head') || normalized === 'ph') return 'Program Head';
+                          if (normalized.includes('dean')) return 'Dean';
+                          if (normalized.includes('director of instruction') || normalized.includes('director for instruction')) return 'Director of Instruction';
+                          if (normalized.includes('vpaa') || normalized.includes('vice president for academic affairs')) return 'VPAA';
+                          if (normalized.includes('encoder')) return 'Encoder';
+                          return officeName;
+                        };
+                        
+                        // Check if this stage has been approved/forwarded
+                        const stageApprovals = selectedDocument.routingHistory.filter(entry => {
+                          if (!entry.action || !entry.office) return false;
+                          const isApprovalOrForward = entry.action.toLowerCase().includes('approved') || 
+                                                     entry.action.toLowerCase().includes('forwarded');
+                          // Normalize office names for better matching
+                          const normalizedEntryOffice = normalizeOfficeForMatching(entry.office);
+                          const normalizedStage = normalizeOfficeForMatching(stage);
+                          // Check both office and toOffice fields for matching
+                          const officeMatch = normalizedEntryOffice === normalizedStage || 
+                                            matchOfficeToStage(entry.office, stage);
+                          const toOfficeMatch = entry.toOffice && (normalizeOfficeForMatching(entry.toOffice) === normalizedStage || 
+                                            matchOfficeToStage(entry.toOffice, stage));
+                          return isApprovalOrForward && (officeMatch || toOfficeMatch);
+                        });
+                        // Stage is completed if:
+                        // 1. It has at least one approval/forward, AND
+                        // 2. Either it's before the current stage, OR we're past it in the workflow
+                        // For Travel Order and Requested Subject with duplicate stages, we need to check visit counts
+                        if (stageApprovals.length > 0) {
+                          if (isTravelOrder || isRequestedSubject) {
+                            // For Travel Order or Requested Subject, check if we've completed this occurrence of the stage
+                            const stageOccurrence = stages.slice(0, index + 1).filter(s => s === stage).length;
+                            const visitsToThisStage = stageApprovals.length;
+                            // A stage is completed if we've visited it at least as many times as required for this occurrence
+                            // This ensures VPAA (1 visit needed) and Dean 2nd visit (2 visits needed) show as completed after they approve
+                            isCompleted = visitsToThisStage >= stageOccurrence;
+                          } else {
+                            // For non-duplicate workflows, stage is completed if it's before current
+                            isCompleted = index < currentStageIndex;
+                          }
+                        }
+                      }
+                      
+                      const isCurrent = !isWorkflowComplete && !shouldShowReturned && index === currentStageIndex;
                       
                       return (
-                        <React.Fragment key={stage}>
+                        <React.Fragment key={`stage-${index}-${stage}`}>
                           {/* Stage Node */}
                           <div style={{
                             display: 'flex',
@@ -5699,26 +9195,26 @@ function Edashboard({ onLogout }) {
                               width: '28px',
                               height: '28px',
                               borderRadius: '50%',
-                              backgroundColor: isCompleted ? '#27ae60' : isCurrent ? '#3498db' : '#e9ecef',
-                              border: `2px solid ${isCompleted ? '#27ae60' : isCurrent ? '#3498db' : '#dee2e6'}`,
+                              backgroundColor: isReturned ? '#ff9800' : isCompleted ? '#27ae60' : isCurrent ? '#3498db' : '#e9ecef',
+                              border: `2px solid ${isReturned ? '#ff9800' : isCompleted ? '#27ae60' : isCurrent ? '#3498db' : '#dee2e6'}`,
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
                               fontWeight: 'bold',
-                              color: isCompleted || isCurrent ? 'white' : '#adb5bd',
+                              color: isCompleted || isCurrent || isReturned ? 'white' : '#adb5bd',
                               fontSize: '12px',
                               marginBottom: '5px',
                               transition: 'all 0.3s ease',
-                              boxShadow: isCurrent ? '0 0 10px rgba(52, 152, 219, 0.3)' : 'none'
+                              boxShadow: isReturned ? '0 0 10px rgba(255, 152, 0, 0.25)' : isCurrent ? '0 0 10px rgba(52, 152, 219, 0.3)' : 'none'
                             }}>
-                              {isCompleted ? '✓' : isCurrent ? '●' : (index + 1)}
+                              {isReturned ? '↩' : isCompleted ? '✓' : isCurrent ? '●' : (index + 1)}
                             </div>
                             
                             {/* Stage Label */}
                             <div style={{
                               fontSize: '9px',
                               fontWeight: isCurrent ? '700' : '600',
-                              color: isCompleted ? '#27ae60' : isCurrent ? '#3498db' : '#adb5bd',
+                              color: isReturned ? '#ff9800' : isCompleted ? '#27ae60' : isCurrent ? '#3498db' : '#adb5bd',
                               textAlign: 'center',
                               maxWidth: '80px',
                               lineHeight: '1.1',
@@ -5728,11 +9224,33 @@ function Edashboard({ onLogout }) {
                               {stage}
                             </div>
                             
+                            {/* Duration Display */}
+                            {(() => {
+                              const duration = getStageDuration(stage, index);
+                              if (duration) {
+                                return (
+                                  <div style={{
+                                    marginTop: '3px',
+                                    fontSize: '10px',
+                                    color: '#495057',
+                                    fontWeight: '600',
+                                    textAlign: 'center',
+                                    backgroundColor: '#e9ecef',
+                                    padding: '2px 6px',
+                                    borderRadius: '3px'
+                                  }}>
+                                    ⏱ {formatDuration(duration)}
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
+                            
                             {/* Status Badge */}
-                            {isCurrent && (
+                            {isReturned && (
                               <div style={{
                                 marginTop: '2px',
-                                backgroundColor: '#3498db',
+                                backgroundColor: '#ff9800',
                                 color: 'white',
                                 fontSize: '7px',
                                 padding: '1px 4px',
@@ -5741,7 +9259,7 @@ function Edashboard({ onLogout }) {
                                 textTransform: 'uppercase',
                                 letterSpacing: '0.2px'
                               }}>
-                                Now
+                                Returned
                               </div>
                             )}
                             {isCompleted && (
@@ -5766,7 +9284,8 @@ function Edashboard({ onLogout }) {
                             <div style={{
                               flex: 1,
                               height: '2px',
-                              backgroundColor: index < currentStageIndex ? '#27ae60' : '#e9ecef',
+                              // Show green if this stage is completed OR if workflow is complete
+                              backgroundColor: (isCompleted || isWorkflowComplete) ? '#27ae60' : '#e9ecef',
                               margin: '0 -6px',
                               marginBottom: '24px',
                               position: 'relative',
@@ -5801,7 +9320,7 @@ function Edashboard({ onLogout }) {
                       fontWeight: '700',
                       marginLeft: '3px'
                     }}>
-                      {currentStageIndex >= 0 && currentStageIndex < stages.length ? stages[currentStageIndex] : (selectedDocument.currentOffice || selectedDocument.nextOffice || 'Unknown')}
+                      {currentOffice}
                     </span>
                   </div>
                 </div>
@@ -5885,6 +9404,30 @@ function Edashboard({ onLogout }) {
 
             {/* Review Form */}
             <div style={{ display: 'grid', gap: '10px' }}>
+              {/* Hide manual form fields when at final step (Quick Actions shown instead) */}
+              {(() => {
+                const nextOffice = getNextOffice();
+                // Update reviewForm.nextOffice with the calculated next office if it's different
+                // This ensures the form shows the correct next office based on workflow, not outdated document.nextOffice
+                if (nextOffice && nextOffice !== reviewForm.nextOffice && selectedDocument) {
+                  const docType = selectedDocument.type?.toUpperCase() || '';
+                  const docCategory = selectedDocument.category?.toUpperCase() || '';
+                  const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory.includes('REQUESTED SUBJECT');
+                  const isTravelOrder = docType.includes('TRAVEL ORDER') || docCategory.includes('TRAVEL ORDER');
+                  const isFacultyLoading = docType.includes('FACULTY LOADING') || docCategory.includes('FACULTY LOADING');
+                  
+                  // Only auto-update for documents with specific workflows to avoid overriding manual selections
+                  if (isRequestedSubject || isTravelOrder || isFacultyLoading) {
+                    setReviewForm(prev => ({
+                      ...prev,
+                      nextOffice: nextOffice
+                    }));
+                  }
+                }
+                // Only show these fields if NOT at final step
+                return nextOffice !== null;
+              })() && (
+                <>
               {/* Status Update */}
               <div>
                 <label style={{
@@ -5961,45 +9504,95 @@ function Edashboard({ onLogout }) {
                   fontWeight: '600',
                   color: '#2c3e50'
                 }}>
-                  Forward to Next Office (Optional)
+                  Forward to Next Office {(() => {
+                    const isFacultyLoading = selectedDocument && selectedDocument.type && selectedDocument.type.toUpperCase().includes('FACULTY LOADING');
+                    return isFacultyLoading ? '(Auto-routed)' : '(Optional)';
+                  })()}
                 </label>
-                <select
-                  value={reviewForm.nextOffice}
-                  onChange={(e) => handleReviewInputChange('nextOffice', e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '7px 8px',
-                    border: '2px solid #e1e8ed',
-                    borderRadius: '5px',
-                    fontSize: '12px',
-                    backgroundColor: 'white',
-                    outline: 'none',
-                    boxSizing: 'border-box',
-                    transition: 'border-color 0.3s ease'
-                  }}
-                  onFocus={(e) => e.target.style.borderColor = '#3498db'}
-                  onBlur={(e) => e.target.style.borderColor = '#e1e8ed'}
-                >
-                  <option value="">-- Don't Forward --</option>
-                  {offices.map(office => (
-                    <option key={office._id} value={office.name}>
-                      {office.name}
-                    </option>
-                  ))}
-                </select>
-                {reviewForm.nextOffice && (
-                  <p style={{
-                    margin: '8px 0 0 0',
-                    fontSize: '12px',
-                    color: '#27ae60',
-                    fontStyle: 'italic'
-                  }}>
-                    ✓ Document will be forwarded to {reviewForm.nextOffice}
-                  </p>
-                )}
+                {(() => {
+                  const isFacultyLoading = selectedDocument && selectedDocument.type && selectedDocument.type.toUpperCase().includes('FACULTY LOADING');
+                  
+                  if (isFacultyLoading) {
+                    // Show read-only field for Faculty Loading with workflow info
+                    return (
+                      <>
+                        <input
+                          type="text"
+                          value={reviewForm.nextOffice}
+                          readOnly
+                          style={{
+                            width: '100%',
+                            padding: '7px 8px',
+                            border: '2px solid #e1e8ed',
+                            borderRadius: '5px',
+                            fontSize: '12px',
+                            backgroundColor: '#f8f9fa',
+                            outline: 'none',
+                            boxSizing: 'border-box',
+                            cursor: 'not-allowed',
+                            color: '#495057',
+                            fontWeight: '600'
+                          }}
+                        />
+                        <p style={{
+                          margin: '8px 0 0 0',
+                          fontSize: '11px',
+                          color: '#16a085',
+                          fontStyle: 'italic',
+                          lineHeight: '1.4'
+                        }}>
+                          📋 Faculty Loading follows a fixed workflow:<br/>
+                          HR → Records Office → Executive Assistant → Office of the President → Records Office → HR → Back to Sender
+                        </p>
+                      </>
+                    );
+                  }
+                  
+                  // Show normal dropdown for other document types
+                  return (
+                    <>
+                      <select
+                        value={reviewForm.nextOffice}
+                        onChange={(e) => handleReviewInputChange('nextOffice', e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '7px 8px',
+                          border: '2px solid #e1e8ed',
+                          borderRadius: '5px',
+                          fontSize: '12px',
+                          backgroundColor: 'white',
+                          outline: 'none',
+                          boxSizing: 'border-box',
+                          transition: 'border-color 0.3s ease'
+                        }}
+                        onFocus={(e) => e.target.style.borderColor = '#3498db'}
+                        onBlur={(e) => e.target.style.borderColor = '#e1e8ed'}
+                      >
+                        <option value="">-- Don't Forward --</option>
+                        {offices.map(office => (
+                          <option key={office._id} value={office.name}>
+                            {office.name}
+                          </option>
+                        ))}
+                      </select>
+                      {reviewForm.nextOffice && (
+                        <p style={{
+                          margin: '8px 0 0 0',
+                          fontSize: '12px',
+                          color: '#27ae60',
+                          fontStyle: 'italic'
+                        }}>
+                          ✓ Document will be forwarded to {reviewForm.nextOffice}
+                        </p>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
+              </>
+              )}
 
-              {/* Comments */}
+              {/* Comments - Always visible */}
               <div>
                 <label style={{
                   display: 'block',
@@ -6113,19 +9706,68 @@ function Edashboard({ onLogout }) {
 
             {/* Quick Actions - Show if document is at current user's office (even if already approved) */}
             {(() => {
+              // Hide all actions if document is in final state
+              const isFinalState = selectedDocument?.status === 'Approved' || 
+                                   selectedDocument?.status === 'Rejected' || 
+                                   selectedDocument?.status === 'Returned';
+              
+              if (isFinalState) {
+                return false; // Don't show any actions for completed/rejected/returned documents
+              }
+              
               // Show approval buttons if document is at user's office, regardless of approval status
               // This allows users to approve/update documents even if they're already marked as approved
               const isAtUserOffice = positionMatchesOffice(employee?.position, selectedDocument?.currentOffice) || 
                                      positionMatchesOffice(employee?.position, selectedDocument?.nextOffice);
               
-              // Also show for final approvers (VP, Academic VP, OP) if document is at their position
+              // Also check if document's currentOffice or nextOffice matches employee position (case-insensitive)
+              const docCurrentOffice = selectedDocument?.currentOffice || '';
+              const docNextOffice = selectedDocument?.nextOffice || '';
+              const empPosition = employee?.position || '';
+              
+              // Additional check: direct string matching (case-insensitive) for Director of Instruction and other positions
+              // This handles cases where positionMatchesOffice might not catch all variations
+              const directMatch = (
+                (docCurrentOffice && empPosition && 
+                 (docCurrentOffice.toLowerCase().includes(empPosition.toLowerCase()) || 
+                  empPosition.toLowerCase().includes(docCurrentOffice.toLowerCase()))) ||
+                (docNextOffice && empPosition && 
+                 (docNextOffice.toLowerCase().includes(empPosition.toLowerCase()) || 
+                  empPosition.toLowerCase().includes(docNextOffice.toLowerCase())))
+              );
+              
+              // Special check for Requested Subject workflow positions (Director of Instruction, Academic Adviser, VPAA, Encoder)
+              // Check if employee position contains these keywords and document is routed to them
+              // Handle both "Director of Instruction" and "Director For Instruction" (as stored in database)
+              const isDirectorOfInstruction = empPosition && (empPosition.includes('Director of Instruction') || empPosition.includes('Director For Instruction') || empPosition.includes('Director Instruction'));
+              const isAcademicAdviser = empPosition && (empPosition.includes('Academic Adviser') || empPosition.includes('Academic Advisor'));
+              const isVPAA = empPosition && (empPosition.includes('VPAA') || empPosition.includes('Vice President for Academic Affairs'));
+              const isEncoder = empPosition && empPosition.includes('Encoder');
+              
+              const isRequestedSubjectPosition = isDirectorOfInstruction || isAcademicAdviser || isVPAA || isEncoder;
+              const docRoutedToPosition = (docCurrentOffice && (
+                (isDirectorOfInstruction && (docCurrentOffice.includes('Director of Instruction') || docCurrentOffice.includes('Director For Instruction') || docCurrentOffice.includes('Director Instruction'))) ||
+                (isAcademicAdviser && (docCurrentOffice.includes('Academic Adviser') || docCurrentOffice.includes('Academic Advisor'))) ||
+                (isVPAA && (docCurrentOffice.includes('VPAA') || docCurrentOffice.includes('Vice President for Academic Affairs'))) ||
+                (isEncoder && docCurrentOffice.includes('Encoder'))
+              )) || (docNextOffice && (
+                (isDirectorOfInstruction && (docNextOffice.includes('Director of Instruction') || docNextOffice.includes('Director For Instruction') || docNextOffice.includes('Director Instruction'))) ||
+                (isAcademicAdviser && (docNextOffice.includes('Academic Adviser') || docNextOffice.includes('Academic Advisor'))) ||
+                (isVPAA && (docNextOffice.includes('VPAA') || docNextOffice.includes('Vice President for Academic Affairs'))) ||
+                (isEncoder && docNextOffice.includes('Encoder'))
+              ));
+              
+              const isAtRequestedSubjectPosition = isRequestedSubjectPosition && docRoutedToPosition;
+              
+              // Also show for final approvers (VP, Academic VP, OP, Encoder) if document is at their position
               const isFinalApprover = positionMatchesOffice(employee?.position, 'Academic Vice President') ||
                                       positionMatchesOffice(employee?.position, 'Academic VP') ||
                                       positionMatchesOffice(employee?.position, 'Vice President') ||
                                       positionMatchesOffice(employee?.position, 'VP') ||
                                       positionMatchesOffice(employee?.position, 'Office of the President') ||
                                       positionMatchesOffice(employee?.position, 'President') ||
-                                      positionMatchesOffice(employee?.position, 'OP');
+                                      positionMatchesOffice(employee?.position, 'OP') ||
+                                      positionMatchesOffice(employee?.position, 'Encoder');
               
               const isAtFinalApproverOffice = isFinalApprover && 
                 (selectedDocument?.currentOffice === employee?.position || 
@@ -6135,7 +9777,20 @@ function Edashboard({ onLogout }) {
                  selectedDocument?.nextOffice === 'VP' ||
                  selectedDocument?.nextOffice === 'Vice President');
               
-              return employee && (isAtUserOffice || isAtFinalApproverOffice);
+              const shouldShowButtons = employee && (isAtUserOffice || isAtFinalApproverOffice || directMatch || isAtRequestedSubjectPosition);
+              console.log('🔍 Final decision:', {
+                shouldShowButtons,
+                hasEmployee: !!employee,
+                isAtUserOffice,
+                isAtFinalApproverOffice,
+                directMatch,
+                isAtRequestedSubjectPosition,
+                empPosition,
+                docCurrentOffice,
+                docNextOffice
+              });
+              
+              return shouldShowButtons;
             })() && (
               <div style={{
                 marginTop: '12px',
@@ -6222,15 +9877,82 @@ function Edashboard({ onLogout }) {
                       </button>
                     </>
                   )}
-                  {(!getNextOffice() && (
+                  {(() => {
+                    // Check if this is a Travel Order at final stage (HR - 2nd visit)
+                    const docType = selectedDocument?.type?.toUpperCase() || '';
+                    const docCategory = selectedDocument?.category || '';
+                    const isTravelOrder = docType.includes('TRAVEL ORDER') || docCategory === 'Travel Order';
+                    const isHR = positionMatchesOffice(employee?.position, 'HR') || 
+                                positionMatchesOffice(employee?.position, 'Human Resources');
+                    
+                    // For Travel Order HR: Only show Final Approve at Stage 7 (second visit), not Stage 2
+                    if (isTravelOrder && isHR && !getNextOffice()) {
+                      const routingHistory = Array.isArray(selectedDocument?.routingHistory) 
+                        ? selectedDocument.routingHistory 
+                        : [];
+                      
+                      // Check if all previous stages (0-5) have been completed
+                      // If all are completed, we're at Stage 7 (final stage)
+                      const stages = ['Immediate Supervisor', 'HR', 'Records Office', 'Executive Assistant', 'President', 'Records Office', 'HR'];
+                      
+                      // Count approvals for each stage
+                      const stageVisits = {};
+                      routingHistory.forEach(entry => {
+                        const action = entry.action?.toLowerCase() || '';
+                        const isApproval = action.includes('approved') || action.includes('forwarded');
+                        if (isApproval && entry.office && entry.office !== 'Submitted') {
+                          let normalizedOffice = entry.office;
+                          const officeLower = entry.office.toLowerCase();
+                          if (officeLower.includes('hr') || officeLower.includes('human resources')) {
+                            normalizedOffice = 'HR';
+                          } else if (officeLower === 'im' || officeLower.includes('immediate supervisor')) {
+                            normalizedOffice = 'Immediate Supervisor';
+                          } else if (officeLower.includes('records')) {
+                            normalizedOffice = 'Records Office';
+                          } else if (officeLower.includes('executive assistant')) {
+                            normalizedOffice = 'Executive Assistant';
+                          } else if (officeLower.includes('president') || officeLower.includes('op')) {
+                            normalizedOffice = 'President';
+                          }
+                          stageVisits[normalizedOffice] = (stageVisits[normalizedOffice] || 0) + 1;
+                        }
+                      });
+                      
+                      // Check if all stages 0-5 are completed
+                      let allPreviousStagesCompleted = true;
+                      for (let i = 0; i <= 5; i++) {
+                        const stage = stages[i];
+                        const requiredCount = stages.slice(0, i + 1).filter(s => s === stage).length;
+                        const actualCount = stageVisits[stage] || 0;
+                        if (actualCount < requiredCount) {
+                          allPreviousStagesCompleted = false;
+                          break;
+                        }
+                      }
+                      
+                      // Only show Final Approve if all previous stages (0-5) are completed
+                      // This means we're at Stage 7 (HR final visit)
+                      if (!allPreviousStagesCompleted) {
+                        return false; // Don't show Final Approve - not at final stage yet
+                      }
+                    }
+                    
+                    // Show Final Approve button for final approvers when workflow is complete
+                    // OR for Travel Order HR at their second visit
+                    const shouldShowFinalApprove = !getNextOffice() && (
                     positionMatchesOffice(employee?.position, 'Academic Vice President') ||
                     positionMatchesOffice(employee?.position, 'Academic VP') ||
                     positionMatchesOffice(employee?.position, 'Vice President') ||
                     positionMatchesOffice(employee?.position, 'VP') ||
                     positionMatchesOffice(employee?.position, 'Office of the President') ||
                     positionMatchesOffice(employee?.position, 'President') ||
-                    positionMatchesOffice(employee?.position, 'OP')
-                  )) && (
+                    positionMatchesOffice(employee?.position, 'OP') ||
+                      (isHR && (!isTravelOrder || !getNextOffice())) ||
+                    positionMatchesOffice(employee?.position, 'Encoder')
+                    );
+                    
+                    return shouldShowFinalApprove;
+                  })() && (
                     <button
                       onClick={handleFinalApprove}
                       style={{
@@ -6263,9 +9985,54 @@ function Edashboard({ onLogout }) {
                       Final Approve
                     </button>
                   )}
-                  {/* Show Reject & Return button for all positions */}
+                  {/* Show Reject button for final approver */}
+                  {(!getNextOffice() && (
+                    positionMatchesOffice(employee?.position, 'Academic Vice President') ||
+                    positionMatchesOffice(employee?.position, 'Academic VP') ||
+                    positionMatchesOffice(employee?.position, 'Vice President') ||
+                    positionMatchesOffice(employee?.position, 'VP') ||
+                    positionMatchesOffice(employee?.position, 'Office of the President') ||
+                    positionMatchesOffice(employee?.position, 'President') ||
+                    positionMatchesOffice(employee?.position, 'OP') ||
+                    positionMatchesOffice(employee?.position, 'HR') ||
+                    positionMatchesOffice(employee?.position, 'Human Resources') ||
+                    positionMatchesOffice(employee?.position, 'Encoder')
+                  )) && (
+                    <button
+                      onClick={handleReject}
+                      style={{
+                        padding: '14px 20px',
+                        backgroundColor: '#e67e22',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        cursor: 'pointer',
+                        transition: 'all 0.3s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.backgroundColor = '#d35400';
+                        e.target.style.transform = 'translateY(-2px)';
+                        e.target.style.boxShadow = '0 4px 8px rgba(230,126,34,0.3)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.backgroundColor = '#e67e22';
+                        e.target.style.transform = 'translateY(0)';
+                        e.target.style.boxShadow = 'none';
+                      }}
+                    >
+                      <span style={{ fontSize: '16px' }}>✗</span>
+                      Reject
+                    </button>
+                  )}
+                  {/* Show Return button for all positions */}
                   <button
-                    onClick={handleRejectAndReturn}
+                    onClick={handleReturn}
                       style={{
                         padding: '14px 20px',
                         backgroundColor: '#e74c3c',
@@ -6292,8 +10059,8 @@ function Edashboard({ onLogout }) {
                         e.target.style.boxShadow = 'none';
                       }}
                     >
-                      <span style={{ fontSize: '16px' }}>✗</span>
-                      Reject
+                      <span style={{ fontSize: '16px' }}>↩</span>
+                      Return
                     </button>
                 </div>
                 <p style={{
@@ -6310,6 +10077,12 @@ function Edashboard({ onLogout }) {
 
             {/* Advanced Options - Show if document is at current user's office */}
             {(() => {
+              // Hide Advanced Options if at final step (Quick Actions are shown instead)
+              const nextOffice = getNextOffice();
+              if (!nextOffice) {
+                return false; // At final step, only show Quick Actions above
+              }
+              
               // Allow approval if document is at user's office, even if already approved
               // This allows users to update/change approval status
               return employee && (
@@ -6373,37 +10146,6 @@ function Edashboard({ onLogout }) {
                     }}
                   >
                     Manual Update
-                  </button>
-                  <button
-                    onClick={() => {
-                        const docId = selectedDocument._id || selectedDocument.id || selectedDocument.documentId;
-                        if (docId) {
-                          handleDeleteDocument(docId);
-                          handleCloseReviewModal();
-                        } else {
-                          console.error('Document ID is missing:', selectedDocument);
-                          alert('Error: Document ID is missing. Cannot delete this document.');
-                        }
-                    }}
-                    style={{
-                      padding: '10px 20px',
-                      backgroundColor: '#95a5a6',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '6px',
-                      fontSize: '12px',
-                      fontWeight: '600',
-                      cursor: 'pointer',
-                      transition: 'background-color 0.3s ease'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.backgroundColor = '#7f8c8d';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.backgroundColor = '#95a5a6';
-                    }}
-                  >
-                    Delete
                   </button>
                   <button
                     onClick={handleCloseReviewModal}
@@ -7050,121 +10792,307 @@ function Edashboard({ onLogout }) {
                 </div>
               </div>
 
-              {/* Progress Bar */}
+              {/* Workflow Progress Bar */}
+              {(() => {
+                // Define workflow stages based on document type
+                const getWorkflowStages = () => {
+                  const docType = approvalTimeDocument.type?.toUpperCase() || '';
+                  const category = approvalTimeDocument.category || '';
+                  
+                  // For Endorsement Form
+                  if (
+                    docType.includes('ENDORSEMENT FORM') ||
+                    category === 'Endorsement Form'
+                  ) {
+                    return ['Program Head', 'Dean', 'Vice President', 'Office of the President'];
+                  }
+
+                  // For Requested Subject - routes to VP
+                  if (
+                    docType.includes('REQUESTED SUBJECT') || 
+                    category === 'Requested Subject'
+                  ) {
+                    return ['Program Head', 'Dean', 'Vice President'];
+                  }
+
+                  // For Faculty Loading - routes to Academic VP
+                  if (
+                    docType.includes('FACULTY LOADING') || 
+                    category === 'Faculty Loading'
+                  ) {
+                    return ['Program Head', 'Dean', 'Academic Vice President'];
+                  }
+                  
+                  // For Travel Order - HR route workflow
+                  if (
+                    docType.includes('TRAVEL ORDER') ||
+                    category === 'Travel Order'
+                  ) {
+                    return ['HR', 'Records Office', 'Executive Assistant', 'President', 'Records Office', 'HR'];
+                  }
+                  
+                  // Default workflow
+                  return ['Program Head', 'Dean', 'Academic Vice President'];
+                };
+
+                const stages = getWorkflowStages();
+                const isWorkflowComplete = isDocumentWorkflowComplete(approvalTimeDocument);
+                const currentOffice = approvalTimeDocument.currentOffice || approvalTimeDocument.nextOffice || '';
+
+                // Helper function to match office name to stage
+                const matchOfficeToStage = (officeName, stageName) => {
+                  if (!officeName || !stageName) return false;
+                  const officeLower = officeName.toLowerCase();
+                  const stageLower = stageName.toLowerCase();
+                  
+                  // Exact match
+                  if (officeLower === stageLower) return true;
+                  
+                  // Partial match
+                  if (officeLower.includes(stageLower) || stageLower.includes(officeLower)) return true;
+                  
+                  // Handle HR / Human Resources
+                  if (stageLower.includes('hr') || stageLower.includes('human resources')) {
+                    return officeLower.includes('hr') || officeLower.includes('human resources');
+                  }
+                  
+                  // Handle Records Office
+                  if (stageLower.includes('records office') || stageLower.includes('records')) {
+                    return officeLower.includes('records');
+                  }
+                  
+                  // Handle Executive Assistant
+                  if (stageLower.includes('executive assistant')) {
+                    return officeLower.includes('executive assistant') || officeLower.includes('executive asst');
+                  }
+                  
+                  // Handle abbreviations for Office of the President
+                  if (stageLower.includes('office of the president')) {
+                    return officeLower.includes('op') || officeLower.includes('president') || officeLower.includes('office of the president');
+                  }
+                  
+                  // Handle abbreviations for Vice President
+                  if (stageLower.includes('vice president') && !stageLower.includes('academic')) {
+                    return officeLower.includes('vp') || officeLower.includes('vice president');
+                  }
+                  
+                  // Handle Academic Vice President
+                  if (stageLower.includes('academic vice president')) {
+                    return officeLower.includes('avp') || officeLower.includes('academic vice president') || 
+                           (officeLower.includes('academic') && officeLower.includes('vp'));
+                  }
+                  
+                  // Handle Program Head
+                  if (stageLower.includes('program head')) {
+                    return officeLower.includes('ph') || officeLower.includes('program head');
+                  }
+                  
+                  // Handle Dean
+                  if (stageLower.includes('dean')) {
+                    return officeLower.includes('dean');
+                  }
+                  
+                  // Handle Communication
+                  if (stageLower.includes('communication')) {
+                    return officeLower.includes('communication');
+                  }
+                  
+                  return false;
+                };
+
+                // Determine current stage index
+                let currentStageIndex = -1;
+                
+                // Check if currentOffice matches a stage
+                if (approvalTimeDocument.currentOffice) {
+                  currentStageIndex = stages.findIndex(stage => 
+                    matchOfficeToStage(approvalTimeDocument.currentOffice, stage)
+                  );
+                }
+                
+                // If nextOffice is set, document is at the stage BEFORE nextOffice
+                if (currentStageIndex === -1 && approvalTimeDocument.nextOffice) {
+                  const nextOfficeIndex = stages.findIndex(stage => 
+                    matchOfficeToStage(approvalTimeDocument.nextOffice, stage)
+                  );
+                  if (nextOfficeIndex !== -1 && nextOfficeIndex > 0) {
+                    currentStageIndex = nextOfficeIndex - 1;
+                  } else if (nextOfficeIndex === 0) {
+                    currentStageIndex = 0;
+                  }
+                }
+                
+                // Check routing history for the last office
+                if (currentStageIndex === -1 && approvalTimeDocument.routingHistory && approvalTimeDocument.routingHistory.length > 0) {
+                  const lastEntry = approvalTimeDocument.routingHistory[approvalTimeDocument.routingHistory.length - 1];
+                  const lastOffice = lastEntry.toOffice || lastEntry.office;
+                  if (lastOffice) {
+                    const lastOfficeIndex = stages.findIndex(stage => 
+                      matchOfficeToStage(lastOffice, stage)
+                    );
+                    if (lastOfficeIndex !== -1) {
+                      currentStageIndex = lastOfficeIndex;
+                    }
+                  }
+                }
+                
+                // If still no match, check if document is at the last stage
+                if (currentStageIndex === -1) {
+                  if (isWorkflowComplete || (approvalTimeDocument.status === 'Approved' && !approvalTimeDocument.nextOffice)) {
+                    currentStageIndex = stages.length - 1;
+                  } else {
+                    currentStageIndex = 0;
+                  }
+                }
+                
+                // Ensure index is within bounds
+                if (currentStageIndex < 0) currentStageIndex = 0;
+                if (currentStageIndex >= stages.length) currentStageIndex = stages.length - 1;
+                
+                // If workflow is complete, show last stage
+                if (isWorkflowComplete) {
+                  currentStageIndex = stages.length - 1;
+                }
+
+                return (
               <div style={{
-                marginBottom: '20px'
-              }}>
+                    backgroundColor: '#f8f9fa',
+                    padding: '10px 12px',
+                    borderRadius: '6px',
+                    marginBottom: '12px',
+                    border: '1px solid #e9ecef'
+                  }}>
+                    <h4 style={{
+                      margin: '0 0 8px 0',
+                      fontSize: '10px',
+                      fontWeight: '700',
+                      color: '#495057',
+                      textAlign: 'center',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.3px'
+                    }}>
+                      Progress
+                    </h4>
+                    
                 <div style={{
                   display: 'flex',
-                  justifyContent: 'space-between',
                   alignItems: 'center',
-                  marginBottom: '8px'
-                }}>
-                  <span style={{
-                    fontSize: '13px',
-                    fontWeight: '600',
-                    color: '#2c3e50'
-                  }}>
-                    {timeInfo.isApproved ? 'Final Processing Progress' : 
-                     timeInfo.isRejected ? 'Final Processing Progress' : 
-                     'Processing Progress'}
-                  </span>
-                  <span style={{
-                    fontSize: '13px',
-                    fontWeight: '600',
-                    color: timeInfo.isApproved ? '#28a745' : 
-                           timeInfo.isRejected ? '#dc3545' : 
-                           (timeInfo.isExceeded ? '#d32f2f' : '#388e3c')
-                  }}>
-                    {timeInfo.percentage.toFixed(1)}%
-                    {timeInfo.isApproved && ' ✓'}
-                    {timeInfo.isRejected && ' ✗'}
-                  </span>
-                </div>
+                      justifyContent: 'space-between',
+                      position: 'relative'
+                    }}>
+                      {stages.map((stage, index) => {
+                        const isCompleted = index < currentStageIndex || (isWorkflowComplete && index === currentStageIndex);
+                        const isCurrent = !isWorkflowComplete && index === currentStageIndex;
+                        
+                        return (
+                          <React.Fragment key={`${stage}-${index}`}>
+                            {/* Stage Node */}
                 <div style={{
-                  width: '100%',
-                  height: '25px',
-                  backgroundColor: '#e9ecef',
-                  borderRadius: '12px',
-                  overflow: 'hidden',
-                  position: 'relative'
-                }}>
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              flex: 1,
+                              position: 'relative',
+                              zIndex: 2
+                            }}>
+                              {/* Circle */}
                   <div style={{
-                    width: `${Math.min(timeInfo.percentage, 100)}%`,
-                    height: '100%',
-                    backgroundColor: timeInfo.isApproved ? '#28a745' : 
-                                   timeInfo.isRejected ? '#dc3545' : 
-                                   (timeInfo.isExceeded ? '#dc3545' : '#28a745'),
-                    transition: 'width 0.3s ease',
+                                width: '28px',
+                                height: '28px',
+                                borderRadius: '50%',
+                                backgroundColor: isCompleted ? '#27ae60' : isCurrent ? '#3498db' : '#e9ecef',
+                                border: `2px solid ${isCompleted ? '#27ae60' : isCurrent ? '#3498db' : '#dee2e6'}`,
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'flex-end',
-                    paddingRight: '8px'
-                  }}>
+                                justifyContent: 'center',
+                                fontWeight: 'bold',
+                                color: isCompleted || isCurrent ? 'white' : '#adb5bd',
+                                fontSize: '12px',
+                                marginBottom: '5px',
+                                transition: 'all 0.3s ease',
+                                boxShadow: isCurrent ? '0 0 10px rgba(52, 152, 219, 0.3)' : 'none'
+                              }}>
+                                {isCompleted ? '✓' : isCurrent ? '●' : (index + 1)}
                   </div>
-                  {timeInfo.isApproved && (
+                              
+                              {/* Stage Label */}
                     <div style={{
-                      position: 'absolute',
-                      top: '50%',
-                      left: '50%',
-                      transform: 'translate(-50%, -50%)',
-                      fontSize: '11px',
-                      fontWeight: '600',
-                      color: 'white'
-                    }}>
-                      ✓ Approved
+                                fontSize: '9px',
+                                fontWeight: isCurrent ? '700' : '600',
+                                color: isCompleted ? '#27ae60' : isCurrent ? '#3498db' : '#adb5bd',
+                                textAlign: 'center',
+                                maxWidth: '80px',
+                                lineHeight: '1.1',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.1px'
+                              }}>
+                                {stage}
                     </div>
-                  )}
-                  {timeInfo.isRejected && (
+                              
+                              {/* Status Badge */}
+                              {isCompleted && (
                     <div style={{
-                      position: 'absolute',
-                      top: '50%',
-                      left: '50%',
-                      transform: 'translate(-50%, -50%)',
-                      fontSize: '11px',
+                                  marginTop: '2px',
+                                  backgroundColor: '#27ae60',
+                                  color: 'white',
+                                  fontSize: '7px',
+                                  padding: '1px 4px',
+                                  borderRadius: '4px',
                       fontWeight: '600',
-                      color: 'white'
+                                  textTransform: 'uppercase',
+                                  letterSpacing: '0.2px'
                     }}>
-                      ✗ Rejected
-                    </div>
-                  )}
-                  {!timeInfo.isApproved && !timeInfo.isRejected && timeInfo.percentage >= 100 && (
-                    <div style={{
-                      position: 'absolute',
-                      top: '50%',
-                      left: '50%',
-                      transform: 'translate(-50%, -50%)',
-                      fontSize: '11px',
-                      fontWeight: '600',
-                      color: 'white'
-                    }}>
-                      ⚠️ Exceeded
+                                  Approved
                     </div>
                   )}
                 </div>
-                {timeInfo.isApproved && (
+                            
+                            {/* Connector Line */}
+                            {index < stages.length - 1 && (
                   <div style={{
-                    fontSize: '11px',
-                    color: '#28a745',
-                    marginTop: '6px',
-                    fontWeight: '600',
-                    textAlign: 'center'
-                  }}>
-                    Progress stopped at approval time
-                  </div>
-                )}
-                {timeInfo.isRejected && (
+                                flex: 1,
+                                height: '2px',
+                                backgroundColor: index < currentStageIndex ? '#27ae60' : '#e9ecef',
+                                margin: '0 -6px',
+                                marginBottom: '24px',
+                                position: 'relative',
+                                zIndex: 1,
+                                transition: 'all 0.3s ease'
+                              }} />
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+                    
+                    {/* Current Location Info */}
                   <div style={{
-                    fontSize: '11px',
-                    color: '#dc3545',
-                    marginTop: '6px',
-                    fontWeight: '600',
-                    textAlign: 'center'
-                  }}>
-                    Progress stopped at rejection time
+                      marginTop: '8px',
+                      padding: '4px 8px',
+                      backgroundColor: 'white',
+                      borderRadius: '4px',
+                      textAlign: 'center',
+                      border: '1px solid #dee2e6'
+                    }}>
+                      <span style={{
+                        fontSize: '9px',
+                        color: '#6c757d',
+                        fontWeight: '500'
+                      }}>
+                        📍 
+                      </span>
+                      <span style={{
+                        fontSize: '9px',
+                        color: '#3498db',
+                        fontWeight: '700',
+                        marginLeft: '3px'
+                      }}>
+                        {currentOffice}
+                      </span>
                   </div>
-                )}
               </div>
+                );
+              })()}
 
               {/* Time Remaining/Exceeded - Only show for active documents */}
               {!timeInfo.isApproved && !timeInfo.isRejected && (
@@ -7390,6 +11318,274 @@ function Edashboard({ onLogout }) {
           </div>
         );
       })()}
+
+      {/* View Files Modal */}
+      {showViewFilesModal && viewFilesDocument && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '15px',
+            padding: '25px',
+            maxWidth: '600px',
+            width: '90%',
+            maxHeight: '90vh',
+            overflow: 'auto',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+            position: 'relative'
+          }}>
+            {/* Close Button */}
+            <button
+              onClick={() => {
+                setShowViewFilesModal(false);
+                setViewFilesDocument(null);
+              }}
+              style={{
+                position: 'absolute',
+                top: '15px',
+                right: '15px',
+                background: 'none',
+                border: 'none',
+                fontSize: '24px',
+                cursor: 'pointer',
+                color: '#7f8c8d',
+                padding: '5px',
+                borderRadius: '50%',
+                width: '35px',
+                height: '35px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.3s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = '#f8f9fa';
+                e.target.style.color = '#e74c3c';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = 'transparent';
+                e.target.style.color = '#7f8c8d';
+              }}
+            >
+              ×
+            </button>
+
+            {/* Modal Header */}
+            <div style={{
+              textAlign: 'center',
+              marginBottom: '20px',
+              paddingBottom: '15px',
+              borderBottom: '2px solid #ecf0f1'
+            }}>
+              <h2 style={{
+                margin: '0',
+                fontSize: '20px',
+                fontWeight: '600',
+                color: '#2c3e50'
+              }}>
+                {viewFilesDocument.type || 'Document Attachments'}
+              </h2>
+            </div>
+
+            {/* Attachments List */}
+            <div style={{
+              marginBottom: '20px'
+            }}>
+              <h3 style={{
+                fontSize: '14px',
+                fontWeight: '600',
+                color: '#2c3e50',
+                marginBottom: '12px'
+              }}>
+                Attached Files ({(() => {
+                  if (!viewFilesDocument.filePath) return 0;
+                  try {
+                    const parsed = JSON.parse(viewFilesDocument.filePath);
+                    return Array.isArray(parsed) ? parsed.length : 1;
+                  } catch {
+                    return 1;
+                  }
+                })()})
+              </h3>
+              
+              {(() => {
+                // Parse filePath - it could be a single path or JSON array of paths
+                let files = [];
+                if (viewFilesDocument.filePath) {
+                  try {
+                    const parsed = JSON.parse(viewFilesDocument.filePath);
+                    files = Array.isArray(parsed) ? parsed : [viewFilesDocument.filePath];
+                  } catch {
+                    files = [viewFilesDocument.filePath];
+                  }
+                }
+
+                if (files.length === 0) {
+                  return (
+                    <div style={{
+                      textAlign: 'center',
+                      padding: '30px',
+                      backgroundColor: '#f8f9fa',
+                      borderRadius: '8px',
+                      color: '#7f8c8d'
+                    }}>
+                      <div style={{
+                        fontSize: '40px',
+                        marginBottom: '10px'
+                      }}>📎</div>
+                      <p style={{ margin: 0, fontSize: '14px' }}>
+                        No attachments found for this document
+                      </p>
+                    </div>
+                  );
+                }
+
+                return files.map((filePath, index) => {
+                  const fileName = filePath.split('/').pop();
+                  const fileExtension = fileName.split('.').pop().toLowerCase();
+                  
+                  // Determine file icon based on extension
+                  let fileIcon = '📄';
+                  if (['pdf'].includes(fileExtension)) fileIcon = '📕';
+                  else if (['doc', 'docx'].includes(fileExtension)) fileIcon = '📘';
+                  else if (['txt'].includes(fileExtension)) fileIcon = '📝';
+                  else if (['jpg', 'jpeg', 'png', 'gif'].includes(fileExtension)) fileIcon = '🖼️';
+
+                  // Determine label for Faculty Loading files
+                  let fileLabel = '';
+                  if (viewFilesDocument.type && viewFilesDocument.type.toUpperCase().includes('FACULTY LOADING')) {
+                    if (index === 0) fileLabel = 'Travel Order Form';
+                    else if (index === 1) fileLabel = 'Invitation Letter';
+                    else if (index === 2) fileLabel = 'Others';
+                  }
+
+                  return (
+                    <div
+                      key={index}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '12px 15px',
+                        backgroundColor: '#f8f9fa',
+                        borderRadius: '8px',
+                        marginBottom: '10px',
+                        border: '1px solid #e9ecef',
+                        transition: 'all 0.2s ease'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = '#e9ecef';
+                        e.currentTarget.style.borderColor = '#dee2e6';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = '#f8f9fa';
+                        e.currentTarget.style.borderColor = '#e9ecef';
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+                        <span style={{ fontSize: '24px', marginRight: '12px' }}>
+                          {fileIcon}
+                        </span>
+                        <div style={{ flex: 1 }}>
+                          {fileLabel && (
+                            <div style={{
+                              fontSize: '11px',
+                              color: '#6c757d',
+                              fontWeight: '600',
+                              marginBottom: '3px'
+                            }}>
+                              {fileLabel}
+                            </div>
+                          )}
+                          <div style={{
+                            fontSize: '13px',
+                            color: '#2c3e50',
+                            fontWeight: '500',
+                            wordBreak: 'break-all'
+                          }}>
+                            {fileName}
+                          </div>
+                        </div>
+                      </div>
+                      <a
+                        href={`${API_URL}${filePath}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        download
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: '#16a085',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          cursor: 'pointer',
+                          textDecoration: 'none',
+                          transition: 'background-color 0.2s ease',
+                          marginLeft: '10px'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.target.style.backgroundColor = '#138d75';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.backgroundColor = '#16a085';
+                        }}
+                      >
+                        Download
+                      </a>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Close Button */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'center',
+              paddingTop: '12px',
+              borderTop: '2px solid #ecf0f1'
+            }}>
+              <button
+                onClick={() => {
+                  setShowViewFilesModal(false);
+                  setViewFilesDocument(null);
+                }}
+                style={{
+                  padding: '8px 20px',
+                  backgroundColor: '#3498db',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.3s ease'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#2980b9';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#3498db';
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Document Confirmation Modal */}
       {showDeleteDocumentModal && documentToDelete && (

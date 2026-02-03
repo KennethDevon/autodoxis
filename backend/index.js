@@ -23,6 +23,8 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // Import routes
 const employeeRoutes = require('./routes/employeeRoutes');
 const officeRoutes = require('./routes/officeRoutes');
+const programRoutes = require('./routes/programRoutes');
+const positionRoutes = require('./routes/positionRoutes');
 const documentRoutes = require('./routes/documentRoutes');
 const documentTypeRoutes = require('./routes/documentTypeRoutes');
 const authRoutes = require('./routes/authRoutes');
@@ -31,6 +33,8 @@ const notificationRoutes = require('./routes/notificationRoutes');
 // Use routes
 app.use('/employees', employeeRoutes);
 app.use('/offices', officeRoutes);
+app.use('/programs', programRoutes);
+app.use('/positions', positionRoutes);
 app.use('/documents', documentRoutes);
 app.use('/document-types', documentTypeRoutes);
 app.use('/auth', authRoutes);
@@ -39,6 +43,8 @@ app.use('/notifications', notificationRoutes);
 // Initialize models
 const User = require('./models/User');
 const Office = require('./models/Office');
+const Program = require('./models/Program');
+const Position = require('./models/Position');
 const Employee = require('./models/Employee');
 const Document = require('./models/Document');
 const DocumentType = require('./models/DocumentType');
@@ -46,7 +52,7 @@ const Notification = require('./models/Notification');
 const VerificationCode = require('./models/VerificationCode');
 
 // Initialize associations
-const models = { User, Office, Employee, Document, DocumentType, Notification, VerificationCode };
+const models = { User, Office, Program, Position, Employee, Document, DocumentType, Notification, VerificationCode };
 Object.keys(models).forEach(modelName => {
   if (models[modelName].associate) {
     models[modelName].associate(models);

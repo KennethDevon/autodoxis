@@ -35,6 +35,10 @@ function formatItem(item) {
     formatted.office = formatItem(formatted.office);
   }
   
+  if (formatted.program) {
+    formatted.program = formatItem(formatted.program);
+  }
+  
   if (formatted.currentHandler) {
     formatted.currentHandler = formatItem(formatted.currentHandler);
   }
@@ -54,6 +58,10 @@ function formatItem(item) {
   // Handle arrays of nested objects (like employees in office)
   if (Array.isArray(formatted.employees)) {
     formatted.employees = formatted.employees.map(emp => formatItem(emp));
+  }
+  
+  if (Array.isArray(formatted.programs)) {
+    formatted.programs = formatted.programs.map(prog => formatItem(prog));
   }
   
   if (Array.isArray(formatted.assignedTo)) {

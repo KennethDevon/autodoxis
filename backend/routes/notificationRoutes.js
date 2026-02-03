@@ -402,7 +402,8 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
     
     // 2. Notify next recipients (users who should receive the document)
     // This applies to both uploads and forwarding events
-    const nextRecipientIds = await findNextRecipients(document);
+    // Skip for document_returned since document is going back to submitter
+    const nextRecipientIds = eventType === 'document_returned' ? [] : await findNextRecipients(document);
     const ownerUserId = submitterUser ? submitterUser.id.toString() : null;
     
     if (nextRecipientIds.length > 0) {
@@ -510,7 +511,11 @@ const notifyDocumentEvent = async (document, eventType, options = {}) => {
     
     // 3. Notify other users (for document uploads AND forwarding events)
     // IMPORTANT: Uploads notify everyone, forwarding notifies admins, status changes only notify owner
-    if (eventType === 'document_uploaded') {
+    // Skip for document_returned - only notify the owner
+    if (eventType === 'document_returned') {
+      // Document returned - only notify owner, skip other notifications
+      console.log(`📤 Document returned - only owner notified, skipping other user notifications`);
+    } else if (eventType === 'document_uploaded') {
       // For uploads, notify ALL users (except the owner and next recipients) so everyone knows a new document was uploaded
       const usersToNotify = await User.findAll();
       console.log(`📢 Document uploaded - notifying all other users (except owner and recipients)`);
@@ -667,6 +672,7 @@ const getNotificationTitle = (eventType, document, isSubmitter = false) => {
       'document_forwarded': 'Document Forwarded',
       'document_approved': 'Approved',
       'document_rejected': 'Rejected',
+      'document_returned': 'Document Returned',
       'file_updated': 'File Updated'
     };
     return ownerTitles[eventType] || 'Update';
@@ -679,6 +685,7 @@ const getNotificationTitle = (eventType, document, isSubmitter = false) => {
       'document_forwarded': 'New Document Forwarded', // Changed to "New Document Forwarded"
       'document_approved': 'Document Approved',
       'document_rejected': 'Document Rejected',
+      'document_returned': 'Document Returned',
       'file_updated': 'File Updated'
     };
     return adminTitles[eventType] || 'Update';
@@ -703,6 +710,7 @@ const getNotificationMessage = (eventType, document, options = {}, isSubmitter =
         ? `Approved${options.approvedBy ? ` by ${options.approvedBy}` : ''} and forwarded to ${options.nextOffice}`
         : `Approved${options.approvedBy ? ` by ${options.approvedBy}` : ''}`,
       'document_rejected': `Rejected${options.rejectedBy ? ` by ${options.rejectedBy}` : ''}${options.comments ? `. ${options.comments}` : ''}`,
+      'document_returned': `Returned for editing${options.returnedBy ? ` by ${options.returnedBy}` : ''}${options.comments ? `. ${options.comments}` : ''}`,
       'file_updated': `File updated`
     };
     return ownerMessages[eventType] || `Status: ${currentStatus}`;
@@ -715,6 +723,7 @@ const getNotificationMessage = (eventType, document, options = {}, isSubmitter =
       'document_forwarded': `Document "${documentName}" forwarded to ${options.nextOffice || options.employeeName || 'next office'}${options.forwardedBy ? ` by ${options.forwardedBy}` : options.updatedBy ? ` by ${options.updatedBy}` : ''}`,
       'document_approved': `Approved${options.approvedBy ? ` by ${options.approvedBy}` : ''}`,
       'document_rejected': `Rejected${options.rejectedBy ? ` by ${options.rejectedBy}` : ''}`,
+      'document_returned': `Document "${documentName}" returned to submitter${options.returnedBy ? ` by ${options.returnedBy}` : ''}${options.comments ? `. ${options.comments}` : ''}`,
       'file_updated': `File updated`
     };
     return adminMessages[eventType] || `Status: ${currentStatus}`;

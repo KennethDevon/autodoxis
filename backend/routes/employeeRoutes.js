@@ -3,6 +3,7 @@ const router = express.Router();
 const Employee = require('../models/Employee');
 const User = require('../models/User');
 const Office = require('../models/Office');
+const Program = require('../models/Program');
 const bcrypt = require('bcryptjs');
 const sequelize = require('../config/database');
 const { Op } = require('sequelize');
@@ -12,7 +13,10 @@ const { formatResponse } = require('../utils/responseFormatter');
 router.get('/', async (req, res) => {
   try {
     const employees = await Employee.findAll({
-      include: [{ model: Office, as: 'office' }]
+      include: [
+        { model: Office, as: 'office' },
+        { model: Program, as: 'program' }
+      ]
     });
     res.json(formatResponse(employees));
   } catch (err) {
@@ -24,7 +28,10 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const employee = await Employee.findByPk(req.params.id, {
-      include: [{ model: Office, as: 'office' }]
+      include: [
+        { model: Office, as: 'office' },
+        { model: Program, as: 'program' }
+      ]
     });
     if (employee == null) {
       return res.status(404).json({ message: 'Cannot find employee' });
@@ -44,7 +51,8 @@ router.post('/', async (req, res) => {
       position: req.body.position,
       department: req.body.department,
       role: req.body.role || '',
-      officeId: req.body.officeId || null
+      officeId: req.body.officeId || null,
+      programId: req.body.programId || null
     });
     
     // Automatically create a user account for the employee
@@ -123,6 +131,7 @@ router.patch('/:id', async (req, res) => {
     if (req.body.department != null) updateData.department = req.body.department;
     if (req.body.role != null) updateData.role = req.body.role;
     if (req.body.officeId !== undefined) updateData.officeId = req.body.officeId;
+    if (req.body.programId !== undefined) updateData.programId = req.body.programId;
     
     await employee.update(updateData);
     const updatedEmployee = await Employee.findByPk(employeeId, {

@@ -137,12 +137,15 @@ router.delete('/:id', async (req, res) => {
 // Assign employee to office
 router.post('/:id/assign-employee', async (req, res) => {
   try {
-    const office = await Office.findByPk(req.params.id);
+    const officeId = parseInt(req.params.id) || req.params.id;
+    const employeeId = parseInt(req.body.employeeId) || req.body.employeeId;
+
+    const office = await Office.findByPk(officeId);
     if (!office) {
       return res.status(404).json({ message: 'Office not found' });
     }
 
-    const employee = await Employee.findByPk(req.body.employeeId);
+    const employee = await Employee.findByPk(employeeId);
     if (!employee) {
       return res.status(404).json({ message: 'Employee not found' });
     }

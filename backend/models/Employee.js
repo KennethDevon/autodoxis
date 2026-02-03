@@ -35,6 +35,14 @@ const Employee = sequelize.define('Employee', {
       model: 'offices',
       key: 'id'
     }
+  },
+  programId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'programs',
+      key: 'id'
+    }
   }
 }, {
   tableName: 'employees',
@@ -46,6 +54,7 @@ const Employee = sequelize.define('Employee', {
 // Define associations after Office model is loaded
 Employee.associate = function(models) {
   Employee.belongsTo(models.Office, { foreignKey: 'officeId', as: 'office' });
+  Employee.belongsTo(models.Program, { foreignKey: 'programId', as: 'program' });
   
   // Many-to-many relationship through junction table
   Employee.belongsToMany(models.Office, { 

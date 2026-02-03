@@ -269,16 +269,47 @@ function NotificationSystem({ variant = 'default' }) {
   };
 
   const clearAll = async () => {
-    // Only clear temporary notifications, keep persistent document status notifications
-    setNotifications(prev => {
-      const persistentNotifications = prev.filter(n => n.isBackendNotification);
-      const unreadPersistent = persistentNotifications.filter(n => !n.read).length;
-      setUnreadCount(unreadPersistent);
-      return persistentNotifications;
-    });
-    
-    // Don't delete backend notifications - they should persist
-    console.log('Cleared temporary notifications. Document status notifications are preserved.');
+    try {
+      // Get all backend notification IDs
+      const backendNotificationIds = notifications
+        .filter(n => n.isBackendNotification)
+        .map(n => n.id);
+      
+      // Delete backend notifications from database
+      if (backendNotificationIds.length > 0) {
+        const userData = localStorage.getItem('userData');
+        if (userData) {
+          const user = JSON.parse(userData);
+          const userId = (user._id || user.id)?.toString();
+          
+          if (userId) {
+            // Delete all notifications for this user
+            const response = await fetch(`${API_URL}/notifications/user/${userId}/all`, {
+              method: 'DELETE',
+              headers: {
+                'Content-Type': 'application/json'
+              }
+            });
+            
+            if (response.ok) {
+              const result = await response.json();
+              console.log(`Deleted ${result.deletedCount} notifications from database`);
+            }
+          }
+        }
+      }
+      
+      // Clear all notifications from state
+      setNotifications([]);
+      setUnreadCount(0);
+      
+      console.log('✅ All notifications cleared successfully');
+    } catch (error) {
+      console.error('Error clearing notifications:', error);
+      // Still clear from UI even if backend fails
+      setNotifications([]);
+      setUnreadCount(0);
+    }
   };
 
   const getNotificationIcon = (type) => {

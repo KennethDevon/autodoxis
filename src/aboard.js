@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import Employee from './Employee';
 import Office from './Office';
+import Program from './Program';
+import Position from './Position';
 import Document from './Document';
 import Modal from './Modal';
 import Reports from './Reports';
@@ -602,6 +604,10 @@ function Aboard({ onLogout }) {
         return <Employee />;
       case 'Office':
         return <Office />;
+      case 'Program':
+        return <Program />;
+      case 'Position':
+        return <Position />;
       case 'Document':
         return <Document />;
       case 'Users':
@@ -1894,6 +1900,34 @@ function Aboard({ onLogout }) {
                 style={{ 
                   padding: '12px 20px', 
                   cursor: 'pointer',
+                  backgroundColor: currentScreen === 'Program' ? '#34495e' : 'transparent',
+                  borderLeft: currentScreen === 'Program' ? '4px solid #3498db' : '4px solid transparent',
+                  transition: 'all 0.3s ease',
+                  display: 'flex',
+                  alignItems: 'center',
+                  fontSize: '14px',
+                  fontWeight: '500'
+                }}
+                onClick={() => setCurrentScreen('Program')}
+                onMouseEnter={(e) => {
+                  if (currentScreen !== 'Program') {
+                    e.target.style.backgroundColor = '#34495e';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (currentScreen !== 'Program') {
+                    e.target.style.backgroundColor = 'transparent';
+                  }
+                }}
+              >
+                Program
+              </div>
+            </li>
+            <li style={{ marginBottom: '5px' }}>
+              <div 
+                style={{ 
+                  padding: '12px 20px', 
+                  cursor: 'pointer',
                   backgroundColor: currentScreen === 'Document' ? '#34495e' : 'transparent',
                   borderLeft: currentScreen === 'Document' ? '4px solid #3498db' : '4px solid transparent',
                   transition: 'all 0.3s ease',
@@ -1915,6 +1949,34 @@ function Aboard({ onLogout }) {
                 }}
               >
                 Documents
+              </div>
+            </li>
+            <li style={{ marginBottom: '5px' }}>
+              <div 
+                style={{ 
+                  padding: '12px 20px', 
+                  cursor: 'pointer',
+                  backgroundColor: currentScreen === 'Position' ? '#34495e' : 'transparent',
+                  borderLeft: currentScreen === 'Position' ? '4px solid #3498db' : '4px solid transparent',
+                  transition: 'all 0.3s ease',
+                  display: 'flex',
+                  alignItems: 'center',
+                  fontSize: '14px',
+                  fontWeight: '500'
+                }}
+                onClick={() => setCurrentScreen('Position')}
+                onMouseEnter={(e) => {
+                  if (currentScreen !== 'Position') {
+                    e.target.style.backgroundColor = '#34495e';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (currentScreen !== 'Position') {
+                    e.target.style.backgroundColor = 'transparent';
+                  }
+                }}
+              >
+                Position
               </div>
             </li>
             <li style={{ marginBottom: '5px' }}>

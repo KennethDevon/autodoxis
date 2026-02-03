@@ -1,36 +1,35 @@
 import React, { useState, useEffect } from 'react';
 import API_URL from './config';
 
-function Office() {
+function Position() {
   const [showModal, setShowModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [officeToDelete, setOfficeToDelete] = useState(null);
+  const [positionToDelete, setPositionToDelete] = useState(null);
   const [showNotification, setShowNotification] = useState(false);
   const [notificationMessage, setNotificationMessage] = useState('');
-  const [notificationType, setNotificationType] = useState('success'); // 'success', 'error', or 'info'
-  const [editingOffice, setEditingOffice] = useState(null);
-  const [offices, setOffices] = useState([]);
+  const [notificationType, setNotificationType] = useState('success'); // 'success' or 'error'
+  const [editingPosition, setEditingPosition] = useState(null);
+  const [positions, setPositions] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [formData, setFormData] = useState({
-    officeId: '',
-    name: '',
-    department: ''
+    name: ''
   });
 
-  // Fetch offices from backend on component mount
+  // Fetch positions from backend on component mount
   useEffect(() => {
-    fetchOffices();
+    fetchPositions();
   }, []);
 
-  const fetchOffices = async () => {
+  const fetchPositions = async () => {
     try {
-      const response = await fetch(`${API_URL}/offices`);
+      const response = await fetch(`${API_URL}/positions`);
       const data = await response.json();
       // Ensure data is always an array
-      setOffices(Array.isArray(data) ? data : []);
+      setPositions(Array.isArray(data) ? data : []);
     } catch (error) {
-      console.error('Error fetching offices:', error);
-      setOffices([]); // Set empty array on error
+      console.error('Error fetching positions:', error);
+      setPositions([]); // Set empty array on error
     }
   };
 
@@ -42,188 +41,169 @@ function Office() {
     }));
   };
 
-  // Helper function to clean office names (remove [UPDATED])
-  const cleanName = (name) => {
-    if (!name) return name;
-    return name.replace(/\s*\[UPDATED\]\s*/gi, '').trim();
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    // Auto-generate officeId if it's empty (for new offices)
-    const officeIdToUse = formData.officeId || `OFF${Date.now()}`;
-    
-    // Clean the name field before saving (remove [UPDATED])
-    const cleanedName = cleanName(formData.name);
-    
-    // Check for duplicate office names (only when adding new office)
-    if (!editingOffice) {
-      const duplicateOffice = offices.find(office => 
-        cleanName(office.name).toLowerCase() === cleanedName.toLowerCase()
-      );
-      
-      if (duplicateOffice) {
-        setShowNotification(true);
-        setNotificationMessage(`Office "${cleanedName}" already exists!`);
-        setNotificationType('error');
-        setTimeout(() => setShowNotification(false), 3000);
-        return; // Stop submission
-      }
-    }
-    
-    const cleanedFormData = {
-      ...formData,
-      officeId: officeIdToUse,
-      name: cleanedName
-    };
-    
     try {
-      if (editingOffice) {
-        // Update existing office
-        const response = await fetch(`${API_URL}/offices/${editingOffice._id}`, {
+      if (editingPosition) {
+        // Update existing position
+        const positionId = editingPosition._id || editingPosition.id;
+        const response = await fetch(`${API_URL}/positions/${positionId}`, {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(cleanedFormData),
+          body: JSON.stringify(formData),
         });
         
         if (response.ok) {
-          setShowNotification(true);
-          setNotificationMessage('Office updated successfully');
-          setNotificationType('success');
-          fetchOffices(); // Refresh the list
-          setTimeout(() => setShowNotification(false), 3000);
+          alert('Position updated successfully!');
+          fetchPositions(); // Refresh the list
         } else {
-          setShowNotification(true);
-          setNotificationMessage('Failed to update office');
-          setNotificationType('error');
-          setTimeout(() => setShowNotification(false), 3000);
+          const errorData = await response.json();
+          const errorMessage = errorData.message || 'Failed to update position';
+          alert(`Failed to update position: ${errorMessage}`);
         }
       } else {
-        // Add new office
-        const response = await fetch(`${API_URL}/offices`, {
+        // Add new position
+        const response = await fetch(`${API_URL}/positions`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(cleanedFormData),
+          body: JSON.stringify(formData),
         });
         
         if (response.ok) {
-          setShowNotification(true);
-          setNotificationMessage('Office added successfully');
-          setNotificationType('success');
-          fetchOffices(); // Refresh the list
-          setTimeout(() => setShowNotification(false), 3000);
+          // Reset form and close modal
+          setFormData({
+            name: ''
+          });
+          setEditingPosition(null);
+          setShowModal(false);
+          
+          // Show success notification
+          setShowSuccessModal(true);
+          
+          // Auto-close after 3 seconds
+          setTimeout(() => {
+            setShowSuccessModal(false);
+          }, 3000);
+          
+          fetchPositions(); // Refresh the list
         } else {
-          setShowNotification(true);
-          setNotificationMessage('Failed to add office');
-          setNotificationType('error');
-          setTimeout(() => setShowNotification(false), 3000);
+          const errorData = await response.json();
+          const errorMessage = errorData.message || 'Failed to add position';
+          alert(`Failed to add position: ${errorMessage}`);
         }
       }
     } catch (error) {
-      console.error('Error saving office:', error);
-      setShowNotification(true);
-      setNotificationMessage('Error saving office');
-      setNotificationType('error');
-      setTimeout(() => setShowNotification(false), 3000);
+      console.error('Error saving position:', error);
+      alert(`Error saving position: ${error.message || 'Network error. Please check your connection and try again.'}`);
     }
     
-    // Reset form and close modal
-    setFormData({
-      officeId: '',
-      name: '',
-      department: ''
-    });
-    setEditingOffice(null);
-    setShowModal(false);
+    // Reset form and close modal (for edit case)
+    if (editingPosition) {
+      setFormData({
+        name: ''
+      });
+      setEditingPosition(null);
+      setShowModal(false);
+    }
   };
 
-  const handleEdit = (office) => {
-    setEditingOffice(office);
+  const handleEdit = (position) => {
+    setEditingPosition(position);
     setFormData({
-      officeId: office.officeId,
-      name: cleanName(office.name), // Clean the name when editing
-      department: office.department
+      name: position.name
     });
     setShowModal(true);
   };
 
-  const handleRemove = (officeId) => {
-    const office = offices.find(off => off._id === officeId);
-    setOfficeToDelete({ id: officeId, name: office?.name || 'this office' });
+  const handleRemove = (positionId) => {
+    const position = positions.find(pos => (pos._id === positionId || pos.id === positionId));
+    const idToUse = position?._id || position?.id || positionId;
+    setPositionToDelete({ id: idToUse, name: position?.name || 'this position' });
     setShowDeleteModal(true);
   };
 
   const confirmDelete = async () => {
-    if (!officeToDelete) return;
+    if (!positionToDelete) return;
     
     try {
-      const response = await fetch(`${API_URL}/offices/${officeToDelete.id}`, {
+      const response = await fetch(`${API_URL}/positions/${positionToDelete.id}`, {
         method: 'DELETE',
       });
       
       if (response.ok) {
         setShowNotification(true);
-        setNotificationMessage('Office removed successfully');
+        setNotificationMessage('Position removed successfully');
         setNotificationType('success');
-        fetchOffices(); // Refresh the list
-        setTimeout(() => setShowNotification(false), 3000);
+        fetchPositions(); // Refresh the list
+        
+        // Auto-close notification after 3 seconds
+        setTimeout(() => {
+          setShowNotification(false);
+        }, 3000);
       } else {
         setShowNotification(true);
-        setNotificationMessage('Failed to remove office');
+        setNotificationMessage('Failed to remove position');
         setNotificationType('error');
-        setTimeout(() => setShowNotification(false), 3000);
+        setTimeout(() => {
+          setShowNotification(false);
+        }, 3000);
       }
     } catch (error) {
-      console.error('Error removing office:', error);
+      console.error('Error removing position:', error);
       setShowNotification(true);
-      setNotificationMessage('Error removing office');
+      setNotificationMessage('Error removing position');
       setNotificationType('error');
-      setTimeout(() => setShowNotification(false), 3000);
+      setTimeout(() => {
+        setShowNotification(false);
+      }, 3000);
     }
     
     setShowDeleteModal(false);
-    setOfficeToDelete(null);
+    setPositionToDelete(null);
   };
 
   const cancelDelete = () => {
     setShowNotification(true);
-    setNotificationMessage('Office deletion cancelled');
+    setNotificationMessage('Position deletion cancelled');
     setNotificationType('info');
-    setTimeout(() => setShowNotification(false), 3000);
+    setTimeout(() => {
+      setShowNotification(false);
+    }, 3000);
     
     setShowDeleteModal(false);
-    setOfficeToDelete(null);
+    setPositionToDelete(null);
   };
 
   const handleCloseModal = () => {
     setShowModal(false);
-    setEditingOffice(null);
+    setEditingPosition(null);
     setFormData({
-      officeId: '',
-      name: '',
-      department: ''
+      name: ''
     });
   };
 
-  // Filter and sort offices automatically
-  const getFilteredAndSortedOffices = () => {
-    // Ensure offices is an array before filtering
-    if (!Array.isArray(offices)) {
+  // Filter positions automatically
+  const getFilteredPositions = () => {
+    // Ensure positions is an array before filtering
+    if (!Array.isArray(positions)) {
       return [];
     }
     
-    let filtered = offices.filter(office =>
-      office.officeId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      office.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      office.department.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    // Filter based on search term
+    let filtered = positions.filter(position => {
+      const searchLower = searchTerm.toLowerCase();
+      
+      if (!searchTerm) return true; // Show all if no search term
+      
+      return position.name.toLowerCase().includes(searchLower);
+    });
 
-    // Automatically sort by office name (alphabetically)
+    // Sort by name
     filtered.sort((a, b) => {
       const aValue = a.name?.toString().toLowerCase() || '';
       const bValue = b.name?.toString().toLowerCase() || '';
@@ -233,12 +213,12 @@ function Office() {
     return filtered;
   };
 
-  const filteredAndSortedOffices = getFilteredAndSortedOffices();
+  const filteredPositions = getFilteredPositions();
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h2>Office Management</h2>
+        <h2>Position Management</h2>
         <button 
           onClick={() => setShowModal(true)}
           style={{ 
@@ -250,79 +230,183 @@ function Office() {
             cursor: 'pointer' 
           }}
         >
-          Add New Office
+          Add New Position
         </button>
       </div>
 
-       {/* Search Bar */}
-       <div style={{ marginBottom: '20px' }}>
-         <input
-           type="text"
-           placeholder="Search offices by code or description..."
-           value={searchTerm}
-           onChange={(e) => setSearchTerm(e.target.value)}
-           style={{
-             width: '100%',
-             padding: '10px',
-             border: '1px solid #ddd',
-             borderRadius: '4px',
-             fontSize: '16px'
-           }}
-         />
-       </div>
+      {/* Search Bar */}
+      <div style={{ marginBottom: '20px' }}>
+        <input
+          type="text"
+          placeholder="Search positions..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '10px',
+            border: '1px solid #ddd',
+            borderRadius: '4px',
+            fontSize: '16px'
+          }}
+        />
+      </div>
       
-      {/* Office Table */}
+      {/* Position Table */}
       <div style={{ marginTop: '20px', backgroundColor: 'white', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ backgroundColor: '#f8f9fa' }}>
-                
                 <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
-                  Code
+                  Name
                 </th>
-                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
-                  Description
+                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'center', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                  Actions
                 </th>
-                <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'center', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>Actions</th>
               </tr>
             </thead>
-             <tbody>
-               {filteredAndSortedOffices.map((office) => (
-                 <tr key={office._id} style={{ backgroundColor: 'white' }}>
-                   <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', fontWeight: '500', color: '#2c3e50' }}>{cleanName(office.name)}</td>
-                   <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', color: '#2c3e50' }}>{office.department}</td>
-                   <td style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'center' }}>
-                     <div style={{ display: 'flex', gap: '5px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
-                       <button
-                         onClick={() => handleEdit(office)}
-                         style={{
-                           padding: '6px 12px',
-                           backgroundColor: '#ffc107',
-                           color: 'black',
-                           border: 'none',
-                           borderRadius: '4px',
-                           cursor: 'pointer',
-                           fontSize: '11px',
-                           fontWeight: '500',
-                           transition: 'background-color 0.2s ease'
-                         }}
-                         onMouseEnter={(e) => e.target.style.backgroundColor = '#ffb300'}
-                         onMouseLeave={(e) => e.target.style.backgroundColor = '#ffc107'}
-                       >
-                         Edit
-                       </button>
-                     </div>
-                   </td>
-                 </tr>
-               ))}
+            <tbody>
+              {filteredPositions.length > 0 ? (
+                filteredPositions.map((position) => (
+                  <tr key={position._id || position.id} style={{ backgroundColor: 'white' }}>
+                    <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', fontWeight: '500', color: '#2c3e50' }}>
+                      {position.name}
+                    </td>
+                    <td style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', gap: '5px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => handleEdit(position)}
+                          style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#ffc107',
+                            color: 'black',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '11px',
+                            fontWeight: '500',
+                            transition: 'background-color 0.2s ease'
+                          }}
+                          onMouseEnter={(e) => e.target.style.backgroundColor = '#ffb300'}
+                          onMouseLeave={(e) => e.target.style.backgroundColor = '#ffc107'}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleRemove(position._id || position.id)}
+                          style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#dc3545',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '11px',
+                            fontWeight: '500',
+                            transition: 'background-color 0.2s ease'
+                          }}
+                          onMouseEnter={(e) => e.target.style.backgroundColor = '#c82333'}
+                          onMouseLeave={(e) => e.target.style.backgroundColor = '#dc3545'}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="2" style={{ border: '1px solid #e0e0e0', padding: '20px', textAlign: 'center', color: '#999' }}>
+                    No positions found
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
       </div>
 
+      {/* Success Notification Pane */}
+      {showSuccessModal && (
+        <div style={{
+          position: 'fixed',
+          top: '20px',
+          right: '20px',
+          backgroundColor: 'white',
+          borderRadius: '12px',
+          padding: '20px 24px',
+          boxShadow: '0 10px 25px rgba(0, 0, 0, 0.15)',
+          border: '1px solid #e5e7eb',
+          zIndex: 2000,
+          minWidth: '320px',
+          maxWidth: '400px',
+          animation: 'slideInRight 0.3s ease-out',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '14px'
+        }}
+        onClick={() => setShowSuccessModal(false)}
+        >
+          <div style={{
+            width: '40px',
+            height: '40px',
+            borderRadius: '10px',
+            backgroundColor: '#f0fdf4',
+            color: '#22c55e',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            fontSize: '20px',
+            fontWeight: 'bold'
+          }}>
+            ✓
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{
+              fontSize: '16px',
+              fontWeight: '600',
+              color: '#111827',
+              marginBottom: '4px'
+            }}>
+              Position added successfully
+            </div>
+          </div>
+          <button
+            onClick={() => setShowSuccessModal(false)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#9ca3af',
+              cursor: 'pointer',
+              fontSize: '20px',
+              padding: '4px',
+              lineHeight: '1',
+              width: '24px',
+              height: '24px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: '6px',
+              transition: 'all 0.2s ease',
+              flexShrink: 0
+            }}
+            onMouseEnter={(e) => {
+              e.target.style.color = '#6b7280';
+              e.target.style.backgroundColor = '#f3f4f6';
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.color = '#9ca3af';
+              e.target.style.backgroundColor = 'transparent';
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {/* Delete Confirmation Modal */}
-      {showDeleteModal && officeToDelete && (
+      {showDeleteModal && positionToDelete && (
         <div style={{
           position: 'fixed',
           top: 0,
@@ -362,7 +446,7 @@ function Office() {
               marginBottom: '24px',
               lineHeight: '1.5'
             }}>
-              Are you sure you want to remove <strong>{officeToDelete.name}</strong>? This action cannot be undone.
+              Are you sure you want to remove <strong>{positionToDelete.name}</strong>? This action cannot be undone.
             </div>
             <div style={{
               display: 'flex',
@@ -418,7 +502,7 @@ function Office() {
         </div>
       )}
 
-      {/* Notification */}
+      {/* Action Notification (Delete/Cancel) */}
       {showNotification && (
         <div style={{
           position: 'fixed',
@@ -497,7 +581,7 @@ function Office() {
         </div>
       )}
 
-      {/* Add/Edit Office Modal */}
+      {/* Add/Edit Position Modal */}
       {showModal && (
         <div style={{
           position: 'fixed',
@@ -518,28 +602,17 @@ function Office() {
             width: '400px',
             maxWidth: '90%'
           }}>
-            <h3>{editingOffice ? 'Edit Office' : 'Add New Office'}</h3>
+            <h3>{editingPosition ? 'Edit Position' : 'Add New Position'}</h3>
             <form onSubmit={handleSubmit}>
               <div style={{ marginBottom: '15px' }}>
-                <label style={{ display: 'block', marginBottom: '5px' }}>Code:</label>
+                <label style={{ display: 'block', marginBottom: '5px' }}>Name:</label>
                 <input
                   type="text"
                   name="name"
                   value={formData.name}
                   onChange={handleInputChange}
                   required
-                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
-                />
-              </div>
-              <div style={{ marginBottom: '15px' }}>
-                <label style={{ display: 'block', marginBottom: '5px' }}>Description:</label>
-                <input
-                  type="text"
-                  name="department"
-                  value={formData.department}
-                  onChange={handleInputChange}
-                  required
-                  placeholder="Enter description"
+                  placeholder="Enter position name"
                   style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
                 />
               </div>
@@ -569,7 +642,7 @@ function Office() {
                     cursor: 'pointer' 
                   }}
                 >
-                  {editingOffice ? 'Update Office' : 'Add Office'}
+                  {editingPosition ? 'Update Position' : 'Add Position'}
                 </button>
               </div>
             </form>
@@ -603,4 +676,5 @@ function Office() {
   );
 }
 
-export default Office;
+export default Position;
+

@@ -64,21 +64,22 @@ router.get('/:id', async (req, res) => {
 });
 
 // Create one document with file upload support
-router.post('/', upload.single('attachment'), async (req, res) => {
+router.post('/', upload.array('attachments', 3), async (req, res) => {
   try {
     console.log('Creating document with data:', req.body);
-    console.log('File uploaded:', req.file ? req.file.filename : 'No file');
+    console.log('Files uploaded:', req.files ? req.files.map(f => f.filename).join(', ') : 'No files');
     
     // Handle file path - use uploaded file path if file was uploaded, otherwise use provided path
     let filePath = '';
     let fileName = req.body.name || '';
     
-    if (req.file) {
-      // File was uploaded - use the saved file path
-      filePath = `/uploads/${req.file.filename}`;
-      // If name wasn't provided, use the original filename
+    if (req.files && req.files.length > 0) {
+      // Multiple files were uploaded - store all file paths as JSON array
+      const filePaths = req.files.map(file => `/uploads/${file.filename}`);
+      filePath = JSON.stringify(filePaths);
+      // If name wasn't provided, use the first file's original filename
       if (!fileName) {
-        fileName = req.file.originalname;
+        fileName = req.files[0].originalname;
       }
     } else if (req.body.filePath) {
       // No file uploaded but filePath provided (for backward compatibility)
@@ -101,11 +102,23 @@ router.post('/', upload.single('attachment'), async (req, res) => {
       currentHandler = null;
     }
     
-    // Initialize routing history
+    // Initialize routing history - check if provided in request body first
     let routingHistory = [];
     
-    // If document is assigned to an employee, add routing history
-    if (currentHandler) {
+    // If routing history is provided in the request body, use it (for new document submissions)
+    if (req.body.routingHistory) {
+      try {
+        routingHistory = typeof req.body.routingHistory === 'string' 
+          ? JSON.parse(req.body.routingHistory) 
+          : req.body.routingHistory;
+        console.log('📋 BACKEND POST: Using provided routing history:', routingHistory);
+      } catch (e) {
+        console.error('📋 BACKEND POST: Error parsing routing history:', e);
+        routingHistory = [];
+      }
+    }
+    // Otherwise, create routing history based on assignment
+    else if (currentHandler) {
       const employee = await Employee.findByPk(currentHandler, {
         include: [{ model: Office, as: 'office' }]
       });
@@ -218,7 +231,7 @@ router.post('/', upload.single('attachment'), async (req, res) => {
 });
 
 // Update one document
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', upload.array('attachments', 3), async (req, res) => {
   try {
     // Try to find by documentId first (string), then by id (integer)
     let document = await Document.findOne({ where: { documentId: req.params.id } });
@@ -228,6 +241,35 @@ router.patch('/:id', async (req, res) => {
     if (document == null) {
       return res.status(404).json({ message: 'Cannot find document' });
     }
+    
+    // Handle file upload if new file is provided
+    if (req.file) {
+      // Delete old file if it exists
+      if (document.filePath) {
+        try {
+          const fs = require('fs');
+          const path = require('path');
+          const filePath = document.filePath.startsWith('/') 
+            ? document.filePath.substring(1) 
+            : document.filePath;
+          const fullPath = path.join(__dirname, '..', filePath);
+          if (fs.existsSync(fullPath)) {
+            fs.unlinkSync(fullPath);
+          }
+        } catch (fileError) {
+          console.error('Error deleting old file:', fileError);
+        }
+      }
+      // Set new file path(s)
+      if (req.files && req.files.length > 0) {
+        const filePaths = req.files.map(file => `/uploads/${file.filename}`);
+        req.body.filePath = JSON.stringify(filePaths);
+        if (req.body.name == null) {
+          req.body.name = req.files[0].originalname;
+        }
+      }
+    }
+    
     if (req.body.documentId != null) {
       document.documentId = req.body.documentId;
     }
@@ -238,7 +280,8 @@ router.patch('/:id', async (req, res) => {
       document.type = req.body.type;
     }
     if (req.body.dateUploaded != null) {
-      document.dateUploaded = req.body.dateUploaded;
+      // Handle dateUploaded: convert empty string to null for database
+      document.dateUploaded = req.body.dateUploaded === '' ? null : req.body.dateUploaded;
     }
     if (req.body.status != null) {
       document.status = req.body.status;
@@ -253,7 +296,8 @@ router.patch('/:id', async (req, res) => {
       document.reviewer = req.body.reviewer;
     }
     if (req.body.reviewDate != null) {
-      document.reviewDate = req.body.reviewDate;
+      // Handle reviewDate: convert empty string to null for database
+      document.reviewDate = req.body.reviewDate === '' ? null : req.body.reviewDate;
     }
     if (req.body.comments != null) {
       document.comments = req.body.comments;
@@ -262,45 +306,8 @@ router.patch('/:id', async (req, res) => {
       document.filePath = req.body.filePath;
     }
     if (req.body.nextOffice != null) {
-      // Check if this is a forwarding action (nextOffice changed)
-      const isForwarding = req.body.nextOffice !== document.nextOffice && req.body.nextOffice.trim() !== '';
-      
-      if (isForwarding) {
-        // Get current routing history
-        let routingHistory = document.routingHistory || [];
-        if (!Array.isArray(routingHistory)) {
-          routingHistory = [];
-        }
-        
-        // Add routing history entry for forwarding
-        // Calculate processing time for previous stage
-        if (routingHistory.length > 0) {
-          const lastEntry = routingHistory[routingHistory.length - 1];
-          const processingTime = (new Date() - new Date(lastEntry.timestamp || lastEntry.date || new Date())) / (1000 * 60 * 60);
-          lastEntry.processingTime = Math.round(processingTime * 10) / 10;
-        }
-        
-        // Add new routing history entry
-        routingHistory.push({
-          office: req.body.nextOffice,
-          action: 'forwarded',
-          handler: req.body.forwardedBy || req.body.reviewer || document.reviewer || 'Unknown',
-          timestamp: new Date(),
-          comments: req.body.comments || `Document forwarded to ${req.body.nextOffice}${req.body.forwardedBy ? ` by ${req.body.forwardedBy}` : req.body.reviewer ? ` by ${req.body.reviewer}` : ''}`,
-          processingTime: 0
-        });
-        
-        // Update routing history in document
-        req.body.routingHistory = routingHistory;
-        
-        // Also update document.forwardedBy for notification purposes
-        if (req.body.forwardedBy) {
-          req.body.forwardedBy = req.body.forwardedBy;
-        } else if (req.body.reviewer) {
-          req.body.forwardedBy = req.body.reviewer;
-        }
-      }
-      
+      // Frontend is now sending complete routingHistory array,
+      // so we don't need to auto-generate entries here anymore
       req.body.nextOffice = req.body.nextOffice;
     }
     if (req.body.currentOffice != null) {
@@ -312,7 +319,9 @@ router.patch('/:id', async (req, res) => {
     
     // Handle currentHandlerId update (Sequelize uses currentHandlerId, not currentHandler)
     if (req.body.currentHandler != null || req.body.currentHandlerId != null) {
-      req.body.currentHandlerId = req.body.currentHandlerId || req.body.currentHandler;
+      const handlerValue = req.body.currentHandlerId || req.body.currentHandler;
+      // Convert empty string to null for integer field
+      req.body.currentHandlerId = handlerValue === '' ? null : handlerValue;
     }
     
     // Handle routing history update if provided
@@ -334,7 +343,8 @@ router.patch('/:id', async (req, res) => {
       
       // Add routing history entry
       const newHistoryEntry = {
-        office: historyEntry.toOffice || historyEntry.office || document.nextOffice || document.currentOffice,
+        office: historyEntry.office || historyEntry.toOffice || document.currentOffice || document.nextOffice,  // FROM office (where document was)
+        toOffice: historyEntry.toOffice || document.nextOffice || '',  // TO office (where document is going)
         action: historyEntry.action || 'forwarded',
         handler: historyEntry.performedBy || historyEntry.handler || document.reviewer || 'Unknown',
         timestamp: new Date(historyEntry.date || Date.now()),
@@ -356,26 +366,62 @@ router.patch('/:id', async (req, res) => {
     if (req.body.documentId != null) updateData.documentId = req.body.documentId;
     if (req.body.name != null) updateData.name = req.body.name;
     if (req.body.type != null) updateData.type = req.body.type;
-    if (req.body.dateUploaded != null) updateData.dateUploaded = req.body.dateUploaded;
+    // Handle dateUploaded: convert empty string to null for database
+    if (req.body.dateUploaded != null) {
+      updateData.dateUploaded = req.body.dateUploaded === '' ? null : req.body.dateUploaded;
+    }
     if (req.body.status != null) updateData.status = req.body.status;
     if (req.body.submittedBy != null) updateData.submittedBy = req.body.submittedBy;
     if (req.body.description != null) updateData.description = req.body.description;
     if (req.body.reviewer != null) updateData.reviewer = req.body.reviewer;
-    if (req.body.reviewDate != null) updateData.reviewDate = req.body.reviewDate;
+    // Handle reviewDate: convert empty string to null for database
+    if (req.body.reviewDate != null) {
+      updateData.reviewDate = req.body.reviewDate === '' ? null : req.body.reviewDate;
+    }
     if (req.body.comments != null) updateData.comments = req.body.comments;
     if (req.body.filePath != null) updateData.filePath = req.body.filePath;
     if (req.body.nextOffice != null) updateData.nextOffice = req.body.nextOffice;
     if (req.body.currentOffice != null) updateData.currentOffice = req.body.currentOffice;
     if (req.body.category != null) updateData.category = req.body.category;
-    if (req.body.currentHandlerId != null) updateData.currentHandlerId = req.body.currentHandlerId;
+    // Handle currentHandlerId: convert empty string to null for integer field
+    if (req.body.currentHandlerId != null) {
+      updateData.currentHandlerId = req.body.currentHandlerId === '' ? null : req.body.currentHandlerId;
+    }
     if (req.body.forwardedBy != null) updateData.forwardedBy = req.body.forwardedBy;
-    if (req.body.forwardedDate != null) updateData.forwardedDate = req.body.forwardedDate;
-    if (req.body.routingHistory != null) updateData.routingHistory = req.body.routingHistory;
+    // Handle forwardedDate: convert empty string to null for database
+    if (req.body.forwardedDate != null) {
+      updateData.forwardedDate = req.body.forwardedDate === '' ? null : req.body.forwardedDate;
+    }
+    if (req.body.routingHistory != null) {
+      // Parse routingHistory if it's a string (when sent as FormData)
+      try {
+        updateData.routingHistory = typeof req.body.routingHistory === 'string' 
+          ? JSON.parse(req.body.routingHistory) 
+          : req.body.routingHistory;
+        console.log('📋 BACKEND: Received routingHistory:', JSON.stringify(updateData.routingHistory, null, 2));
+      } catch (e) {
+        console.error('📋 BACKEND: Error parsing routing history:', e);
+        // If parsing fails, try to keep existing routing history or use empty array
+        updateData.routingHistory = document.routingHistory || [];
+      }
+    }
+    
+    console.log('📋 BACKEND: updateData.routingHistory length:', updateData.routingHistory ? updateData.routingHistory.length : 'NOT SET');
+    
+    // For JSON fields in Sequelize, explicitly mark as changed
+    if (updateData.routingHistory) {
+      document.routingHistory = updateData.routingHistory;
+      document.changed('routingHistory', true);
+      console.log('📋 BACKEND: Marked routingHistory as changed');
+    }
     
     await document.update(updateData);
     // Reload to get updated data including routingHistory
     await document.reload();
     const updatedDocument = document;
+    
+    console.log('📋 BACKEND: After save, document.routingHistory length:', updatedDocument.routingHistory ? updatedDocument.routingHistory.length : 'NULL/EMPTY');
+    console.log('📋 BACKEND: Full routingHistory:', JSON.stringify(updatedDocument.routingHistory, null, 2));
     
     console.log('✓ Document updated:', updatedDocument.documentId, '- Status:', updatedDocument.status, '- nextOffice:', updatedDocument.nextOffice, '- currentOffice:', updatedDocument.currentOffice);
     
@@ -386,7 +432,7 @@ router.patch('/:id', async (req, res) => {
       
       // Only send notification if status actually changed or there's a meaningful update
       const statusChanged = oldStatus !== newStatus;
-      const hasFileUpdate = req.body.filePath || req.file;
+      const hasFileUpdate = req.body.filePath || (req.files && req.files.length > 0);
       const hasAssignmentChange = req.body.assignedTo || req.body.currentHandler;
       const hasForwardChange = req.body.nextOffice && req.body.nextOffice !== document.nextOffice;
       const hasRoutingHistoryUpdate = req.body.$push && req.body.$push.routingHistory;
@@ -656,13 +702,44 @@ router.patch('/:id/return', async (req, res) => {
       return res.status(404).json({ message: 'Cannot find document' });
     }
     
+    // Get current routing history
+    let routingHistory = document.routingHistory || [];
+    if (!Array.isArray(routingHistory)) {
+      routingHistory = [];
+    }
+    
+    // Add return entry to routing history
+    routingHistory.push({
+      office: document.currentOffice || 'Unknown Office',
+      action: 'returned',
+      handler: req.body.reviewer || req.body.handler || 'System',
+      timestamp: new Date(),
+      comments: req.body.comments || 'Document returned to submitter for editing',
+      processingTime: 0
+    });
+    
     await document.update({
       status: 'Returned',
       reviewer: req.body.reviewer || '',
       reviewDate: new Date(),
-      comments: req.body.comments || ''
+      comments: req.body.comments || '',
+      nextOffice: '', // Clear next office - document goes back to submitter
+      currentOffice: '', // Clear current office
+      currentHandlerId: null, // Clear handler assignment
+      routingHistory: routingHistory
     });
     await document.reload();
+    
+    // Create notification for document owner
+    try {
+      await notifyDocumentEvent(document, 'document_returned', {
+        returnedBy: req.body.reviewer || req.body.handler || document.reviewer || 'System',
+        comments: req.body.comments || document.comments
+      });
+    } catch (notifError) {
+      console.error('Error creating return notifications:', notifError);
+    }
+    
     res.json(document);
   } catch (err) {
     res.status(400).json({ message: err.message });

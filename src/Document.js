@@ -789,24 +789,6 @@ function Document() {
                           View
                         </button>
                         <button
-                          onClick={() => handleEdit(document)}
-                          style={{
-                            padding: '6px 12px',
-                            backgroundColor: '#ffc107',
-                            color: 'black',
-                            border: 'none',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            fontSize: '11px',
-                            fontWeight: '500',
-                            transition: 'background-color 0.2s ease'
-                          }}
-                          onMouseEnter={(e) => e.target.style.backgroundColor = '#ffb300'}
-                          onMouseLeave={(e) => e.target.style.backgroundColor = '#ffc107'}
-                        >
-                          Edit
-                        </button>
-                        <button
                           onClick={() => {
                             const docId = document._id || document.id || document.documentId;
                             if (docId) {
@@ -1747,25 +1729,31 @@ function Document() {
                   docType.includes('ENDORSEMENT FORM') ||
                   category === 'Endorsement Form'
                 ) {
-                  return ['Communication', 'Program Head', 'Vice President', 'Office of the President'];
+                  return ['Program Head', 'Dean', 'Vice President', 'Office of the President'];
                 }
 
-                // For Requested Subject - routes to VP
+                // For Requested Subject - 7-stage workflow
                 if (
                   docType.includes('REQUESTED SUBJECT') || 
                   category === 'Requested Subject'
                 ) {
-                  return ['Program Head', 'Dean', 'Vice President'];
+                  return ['Academic Adviser', 'Program Head', 'Dean', 'Director of Instruction', 'VPAA', 'Dean', 'Encoder'];
                 }
 
-                // For Faculty Loading and Travel Order - routes to Academic VP
+                // For Faculty Loading - routes to Academic VP
                 if (
                   docType.includes('FACULTY LOADING') || 
-                  docType.includes('TRAVEL ORDER') ||
-                  category === 'Faculty Loading' || 
-                  category === 'Travel Order'
+                  category === 'Faculty Loading'
                 ) {
                   return ['Program Head', 'Dean', 'Academic Vice President'];
+                }
+                
+                // For Travel Order - HR route workflow
+                if (
+                  docType.includes('TRAVEL ORDER') ||
+                  category === 'Travel Order'
+                ) {
+                  return ['Immediate Supervisor', 'HR', 'Records Office', 'Executive Assistant', 'President', 'Records Office', 'HR'];
                 }
                 
                 // Default workflow
@@ -1774,9 +1762,143 @@ function Document() {
 
               // Check if workflow is complete
               const isDocumentWorkflowComplete = (doc) => {
-                if (!doc.routingHistory || doc.routingHistory.length === 0) return false;
+                if (!doc.routingHistory || !Array.isArray(doc.routingHistory) || doc.routingHistory.length === 0) return false;
                 
                 const stages = getWorkflowStages();
+                
+                // Special handling for Travel Order and Requested Subject (have duplicate stages)
+                const docType = doc.type?.toUpperCase() || '';
+                const category = doc.category || '';
+                const isTravelOrder = docType.includes('TRAVEL ORDER') || category === 'Travel Order';
+                const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || category === 'Requested Subject';
+                
+                if (isTravelOrder) {
+                  // For Travel Order, workflow is complete only if ALL 7 stages have been completed IN ORDER
+                  // We need to track which stage occurrence we're on (since Records Office and HR appear twice)
+                  const routingHistory = Array.isArray(doc.routingHistory) ? doc.routingHistory : [];
+                  
+                  // Track completed visits to each stage
+                  const stageVisits = {};
+                  routingHistory.forEach(entry => {
+                    const isApprovalAction = entry.action && (
+                      entry.action.toLowerCase().includes('approved') || 
+                      entry.action.toLowerCase().includes('forwarded')
+                    );
+                    
+                    if (isApprovalAction && entry.office && entry.office !== 'Submitted') {
+                      // Normalize office name
+                      let normalizedOffice = entry.office;
+                      const officeLower = entry.office.toLowerCase();
+                      if (officeLower.includes('hr') || officeLower.includes('human resources')) {
+                        normalizedOffice = 'HR';
+                      } else if (officeLower === 'im' || officeLower.includes('immediate supervisor')) {
+                        normalizedOffice = 'Immediate Supervisor';
+                      } else if (officeLower.includes('records')) {
+                        normalizedOffice = 'Records Office';
+                      } else if (officeLower.includes('executive assistant')) {
+                        normalizedOffice = 'Executive Assistant';
+                      } else if (officeLower.includes('president') || officeLower.includes('op')) {
+                        normalizedOffice = 'President';
+                      }
+                      
+                      stageVisits[normalizedOffice] = (stageVisits[normalizedOffice] || 0) + 1;
+                    }
+                  });
+                  
+                  // Check if each stage has been visited the required number of times
+                  // stages = ['Immediate Supervisor', 'HR', 'Records Office', 'Executive Assistant', 'President', 'Records Office', 'HR']
+                  // We need to check each occurrence in order
+                  let completedStages = 0;
+                  
+                  // Check if each stage has been visited the correct number of times
+                  for (let i = 0; i < stages.length; i++) {
+                    const stage = stages[i];
+                    const requiredCount = stages.slice(0, i + 1).filter(s => s === stage).length;
+                    const actualCount = stageVisits[stage] || 0;
+                    
+                    if (actualCount >= requiredCount) {
+                      completedStages++;
+                    } else {
+                      // Stop checking if a stage hasn't been completed
+                      break;
+                    }
+                  }
+                  
+                  // Workflow is complete only if ALL 7 stages have been completed
+                  // AND document status is Approved/Completed OR nextOffice is empty
+                  return completedStages === stages.length && (
+                         doc.status === 'Completed' || 
+                         doc.status === 'Approved' || 
+                         !doc.nextOffice || 
+                    doc.nextOffice === ''
+                  );
+                }
+                
+                if (isRequestedSubject) {
+                  // For Requested Subject, workflow is complete only if ALL 7 stages have been completed IN ORDER
+                  // We need to track which stage occurrence we're on (since Dean appears twice)
+                  const routingHistory = Array.isArray(doc.routingHistory) ? doc.routingHistory : [];
+                  
+                  // Track completed visits to each stage
+                  const stageVisits = {};
+                  routingHistory.forEach(entry => {
+                    const isApprovalAction = entry.action && (
+                      entry.action.toLowerCase().includes('approved') || 
+                      entry.action.toLowerCase().includes('forwarded')
+                    );
+                    
+                    if (isApprovalAction && entry.office && entry.office !== 'Submitted') {
+                      // Normalize office name
+                      let normalizedOffice = entry.office;
+                      const officeLower = entry.office.toLowerCase();
+                      if (officeLower.includes('academic adviser') || officeLower.includes('academic advisor')) {
+                        normalizedOffice = 'Academic Adviser';
+                      } else if (officeLower.includes('program head') || officeLower === 'ph') {
+                        normalizedOffice = 'Program Head';
+                      } else if (officeLower.includes('director of instruction') || officeLower.includes('director instruction')) {
+                        normalizedOffice = 'Director of Instruction';
+                      } else if (officeLower.includes('vpaa') || (officeLower.includes('academic') && (officeLower.includes('vp') || officeLower.includes('vice president')))) {
+                        normalizedOffice = 'VPAA';
+                      } else if (officeLower.includes('dean')) {
+                        normalizedOffice = 'Dean';
+                      } else if (officeLower.includes('encoder')) {
+                        normalizedOffice = 'Encoder';
+                      }
+                      
+                      stageVisits[normalizedOffice] = (stageVisits[normalizedOffice] || 0) + 1;
+                    }
+                  });
+                  
+                  // Check if each stage has been visited the required number of times
+                  // stages = ['Academic Adviser', 'Program Head', 'Dean', 'Director of Instruction', 'VPAA', 'Dean', 'Encoder']
+                  // We need to check each occurrence in order
+                  let completedStages = 0;
+                  
+                  // Check if each stage has been visited the correct number of times
+                  for (let i = 0; i < stages.length; i++) {
+                    const stage = stages[i];
+                    const requiredCount = stages.slice(0, i + 1).filter(s => s === stage).length;
+                    const actualCount = stageVisits[stage] || 0;
+                    
+                    if (actualCount >= requiredCount) {
+                      completedStages++;
+                    } else {
+                      // Stop checking if a stage hasn't been completed
+                      break;
+                    }
+                  }
+                  
+                  // Workflow is complete only if ALL 7 stages have been completed
+                  // AND document status is Approved/Completed OR nextOffice is empty
+                  return completedStages === stages.length && (
+                         doc.status === 'Completed' || 
+                         doc.status === 'Approved' || 
+                         !doc.nextOffice || 
+                         doc.nextOffice === ''
+                  );
+                }
+                
+                // For other workflows (no duplicate stages)
                 const finalStage = stages[stages.length - 1];
                 
                 // Check if document has been approved at the final stage
@@ -1795,16 +1917,227 @@ function Document() {
               const currentOffice = reviewDocument.currentOffice || reviewDocument.nextOffice || 'Program Head';
               
               const isWorkflowComplete = isDocumentWorkflowComplete(reviewDocument);
+              
+              // Determine if the document is finally approved (status is Approved/Completed or workflow is complete)
+              const isFinallyApproved = isWorkflowComplete || reviewDocument.status === 'Approved' || reviewDocument.status === 'Completed';
 
-              // Find current stage index
-              let currentStageIndex = stages.indexOf(currentOffice);
-              if (currentStageIndex === -1) {
-                // Try to match partial strings
-                currentStageIndex = stages.findIndex(stage => 
-                  currentOffice.includes(stage) || stage.includes(currentOffice)
-                );
+              // Helper function to match office names
+              const matchOfficeToStage = (officeName, stageName) => {
+                if (!officeName || !stageName) return false;
+                const officeLower = officeName.toLowerCase();
+                const stageLower = stageName.toLowerCase();
+                
+                if (officeLower === stageLower) return true;
+                if (officeLower.includes(stageLower) || stageLower.includes(officeLower)) return true;
+                
+                // Handle HR / Human Resources
+                if (stageLower.includes('hr') || stageLower.includes('human resources')) {
+                  return officeLower.includes('hr') || officeLower.includes('human resources');
+                }
+                
+                // Handle Immediate Supervisor
+                if (stageLower.includes('immediate supervisor')) {
+                  return officeLower === 'im' || officeLower.includes('immediate supervisor');
+                }
+                
+                // Handle Records Office
+                if (stageLower.includes('records')) {
+                  return officeLower.includes('records');
+                }
+                
+                // Handle Executive Assistant
+                if (stageLower.includes('executive assistant')) {
+                  return officeLower.includes('executive assistant');
+                }
+                
+                // Handle President
+                if (stageLower.includes('president')) {
+                  return officeLower.includes('president') || officeLower.includes('op');
+                }
+                
+                return false;
+              };
+
+              // Helper function to format duration
+              const formatDuration = (milliseconds) => {
+                if (!milliseconds || milliseconds < 0) return '';
+                
+                const seconds = Math.floor(milliseconds / 1000);
+                const minutes = Math.floor(seconds / 60);
+                const hours = Math.floor(minutes / 60);
+                const days = Math.floor(hours / 24);
+                
+                if (days > 0) {
+                  const remainingHours = hours % 24;
+                  if (remainingHours > 0) {
+                    return `${days}d ${remainingHours}h`;
+                  }
+                  return `${days} day${days > 1 ? 's' : ''}`;
+                }
+                if (hours > 0) {
+                  const remainingMinutes = minutes % 60;
+                  if (remainingMinutes > 0) {
+                    return `${hours}h ${remainingMinutes}m`;
+                  }
+                  return `${hours} hour${hours > 1 ? 's' : ''}`;
+                }
+                if (minutes > 0) {
+                  return `${minutes} min${minutes > 1 ? 's' : ''}`;
+                }
+                return `${seconds} sec${seconds !== 1 ? 's' : ''}`;
+              };
+
+              // Helper function to calculate duration for a specific stage
+              const getStageDuration = (stage, stageIndex) => {
+                if (!Array.isArray(reviewDocument.routingHistory) || reviewDocument.routingHistory.length === 0) {
+                  return null;
+                }
+
+                // For duplicate stages, determine which occurrence
+                const stageOccurrence = stages.slice(0, stageIndex + 1).filter(s => s === stage).length;
+
+                // Find arrival and action times for this specific occurrence
+                let arrivalTime = null;
+                let actionTime = null;
+                let occurrencesSeen = 0;
+
+                // Special handling for the first stage - use document submission time
+                if (stageIndex === 0) {
+                  // Find the initial submission entry
+                  const submissionEntry = reviewDocument.routingHistory.find(entry => 
+                    entry.action?.toLowerCase().includes('submitted')
+                  );
+                  if (submissionEntry && submissionEntry.timestamp) {
+                    arrivalTime = new Date(submissionEntry.timestamp);
+                  }
+                }
+
+                for (let i = 0; i < reviewDocument.routingHistory.length; i++) {
+                  const entry = reviewDocument.routingHistory[i];
+                  const action = entry.action?.toLowerCase() || '';
+                  
+                  // For stages after the first, check if document was forwarded TO this stage
+                  if (stageIndex > 0) {
+                    const isForwardedToStage = matchOfficeToStage(entry.toOffice, stage) || 
+                                              (action.includes('forwarded') && matchOfficeToStage(entry.toOffice, stage));
+                    
+                    if (isForwardedToStage && occurrencesSeen < stageOccurrence) {
+                      occurrencesSeen++;
+                      if (occurrencesSeen === stageOccurrence) {
+                        arrivalTime = entry.timestamp ? new Date(entry.timestamp) : null;
+                      }
+                    }
+                  }
+
+                  // Check if this stage took an action (after arrival)
+                  if (arrivalTime) {
+                    // Use more flexible matching for office names
+                    const entryOffice = entry.office || '';
+                    const isFromStage = matchOfficeToStage(entryOffice, stage) || 
+                                       entryOffice.toLowerCase().includes(stage.toLowerCase());
+                    const isAction = action.includes('approved') || action.includes('returned') || 
+                                   action.includes('rejected') || action.includes('forwarded');
+                    
+                    // For first stage, any action from the stage counts
+                    // For other stages, only count actions for the correct occurrence
+                    const isCorrectOccurrence = stageIndex === 0 || occurrencesSeen === stageOccurrence;
+                    
+                    if (isFromStage && isAction && isCorrectOccurrence) {
+                      const entryTimestamp = entry.timestamp ? new Date(entry.timestamp) : null;
+                      // Make sure this action happened AFTER arrival (or at least not equal)
+                      if (entryTimestamp && entryTimestamp >= arrivalTime) {
+                        actionTime = entryTimestamp;
+                        // For first stage, use the first matching action
+                        if (stageIndex === 0) {
+                          break;
+                        }
+                      }
+                    }
+                  }
+                }
+
+                // Calculate duration
+                if (arrivalTime && actionTime) {
+                  const duration = actionTime - arrivalTime;
+                  return duration > 0 ? duration : null;
+                }
+
+                return null;
+              };
+
+              // Find current stage index (improved logic for workflows with duplicate stages)
+              let currentStageIndex = -1;
+              
+              // Special handling for Travel Order (has duplicate stages: Records Office × 2, HR × 2)
+              const docType = reviewDocument.type?.toUpperCase() || '';
+              const isTravelOrder = docType.includes('TRAVEL ORDER');
+              
+              if (isTravelOrder && reviewDocument.routingHistory && reviewDocument.routingHistory.length > 0) {
+                // Count COMPLETED visits to each stage in routing history
+                // A stage is completed only when it has approved/forwarded the document
+                const stageVisits = {};
+                
+                reviewDocument.routingHistory.forEach(entry => {
+                  // Only count if this entry represents an approval/forward action FROM this office
+                  const isApprovalAction = entry.action && (
+                    entry.action.toLowerCase().includes('approved') || 
+                    entry.action.toLowerCase().includes('forwarded')
+                  );
+                  
+                  if (isApprovalAction) {
+                    // Use the 'office' field (where the action was performed)
+                    const entryOffice = entry.office || '';
+                    if (entryOffice && entryOffice !== 'Submitted') {
+                      // Normalize office names
+                      let normalizedOffice = entryOffice;
+                      if (entryOffice.toLowerCase().includes('hr') || entryOffice.toLowerCase().includes('human resources')) {
+                        normalizedOffice = 'HR';
+                      } else if (entryOffice.toLowerCase().includes('records')) {
+                        normalizedOffice = 'Records Office';
+                      } else if (entryOffice.toLowerCase().includes('executive assistant')) {
+                        normalizedOffice = 'Executive Assistant';
+                      } else if (entryOffice.toLowerCase().includes('president') || entryOffice.toLowerCase().includes('op')) {
+                        normalizedOffice = 'President';
+                      }
+                      
+                      stageVisits[normalizedOffice] = (stageVisits[normalizedOffice] || 0) + 1;
+                    }
+                  }
+                });
+                
+                // Find the current stage index by matching visits with workflow order
+                let visitCounts = {};
+                for (let i = 0; i < stages.length; i++) {
+                  const stage = stages[i];
+                  visitCounts[stage] = (visitCounts[stage] || 0) + 1;
+                  
+                  // Check if this is where we are (visit count matches)
+                  const actualVisits = stageVisits[stage] || 0;
+                  const expectedVisitsUpToHere = visitCounts[stage];
+                  
+                  // If we haven't completed this occurrence yet, this is our current stage
+                  if (actualVisits < expectedVisitsUpToHere) {
+                    currentStageIndex = i;
+                    break;
+                  }
+                }
+                
+                // If all stages visited, we're at the end
+                if (currentStageIndex === -1) {
+                  currentStageIndex = stages.length - 1;
+                }
+              } else {
+                // Standard workflow logic (no duplicate stages)
+                currentStageIndex = stages.indexOf(currentOffice);
+                if (currentStageIndex === -1) {
+                  // Try to match partial strings
+                  currentStageIndex = stages.findIndex(stage => 
+                    currentOffice.includes(stage) || stage.includes(currentOffice)
+                  );
+                }
+                if (currentStageIndex === -1) currentStageIndex = 0;
               }
-              if (currentStageIndex === -1) currentStageIndex = 0;
+              
               if (isWorkflowComplete) {
                 currentStageIndex = stages.length - 1;
               }
@@ -1836,11 +2169,12 @@ function Document() {
                     position: 'relative'
                   }}>
                     {stages.map((stage, index) => {
-                      const isCompleted = index < currentStageIndex || (isWorkflowComplete && index === currentStageIndex);
-                      const isCurrent = !isWorkflowComplete && index === currentStageIndex;
+                      // If finally approved, all stages should be green
+                      const isCompleted = isFinallyApproved ? true : index < currentStageIndex;
+                      const isCurrent = !isFinallyApproved && index === currentStageIndex;
                       
                       return (
-                        <React.Fragment key={stage}>
+                        <React.Fragment key={`${stage}-${index}`}>
                           {/* Stage Node */}
                           <div style={{
                             display: 'flex',
@@ -1884,22 +2218,29 @@ function Document() {
                               {stage}
                             </div>
                             
+                            {/* Duration Display */}
+                            {(() => {
+                              const duration = getStageDuration(stage, index);
+                              if (duration) {
+                                return (
+                                  <div style={{
+                                    marginTop: '3px',
+                                    fontSize: '10px',
+                                    color: '#495057',
+                                    fontWeight: '600',
+                                    textAlign: 'center',
+                                    backgroundColor: '#e9ecef',
+                                    padding: '2px 6px',
+                                    borderRadius: '3px'
+                                  }}>
+                                    ⏱ {formatDuration(duration)}
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
+                            
                             {/* Status Badge */}
-                            {isCurrent && (
-                              <div style={{
-                                marginTop: '2px',
-                                backgroundColor: '#3498db',
-                                color: 'white',
-                                fontSize: '7px',
-                                padding: '1px 4px',
-                                borderRadius: '4px',
-                                fontWeight: '600',
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.2px'
-                              }}>
-                                Now
-        </div>
-      )}
                             {isCompleted && (
                               <div style={{
                                 marginTop: '2px',

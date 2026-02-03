@@ -19,10 +19,6 @@ const Office = sequelize.define('Office', {
   department: {
     type: DataTypes.STRING(255),
     allowNull: false
-  },
-  location: {
-    type: DataTypes.STRING(255),
-    defaultValue: ''
   }
 }, {
   tableName: 'offices',
@@ -34,6 +30,7 @@ const Office = sequelize.define('Office', {
 // Define associations after Employee model is loaded
 Office.associate = function(models) {
   Office.hasMany(models.Employee, { foreignKey: 'officeId', as: 'employees' });
+  Office.hasMany(models.Program, { foreignKey: 'officeId', as: 'programs' });
   
   // Many-to-many relationship through junction table
   Office.belongsToMany(models.Employee, { 
