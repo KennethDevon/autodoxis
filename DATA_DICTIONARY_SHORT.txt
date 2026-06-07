@@ -1,0 +1,115 @@
+AUTODOXIS - SHORT DATA DICTIONARY
+Source: backend/config/schema.sql
+
+==================================================
+1) users
+Purpose: System login/account records
+Primary Key: id
+Important Fields:
+- username, email, password
+- employeeId, role
+- createdAt, updatedAt
+Foreign Keys: none
+
+==================================================
+2) offices
+Purpose: Office master list
+Primary Key: id
+Important Fields:
+- officeId, name, department, location
+- createdAt, updatedAt
+Foreign Keys: none
+
+==================================================
+3) employees
+Purpose: Employee profile and assignment
+Primary Key: id
+Important Fields:
+- employeeId, name, position, department, role
+- officeId
+- createdAt, updatedAt
+Foreign Keys:
+- officeId -> offices.id
+
+==================================================
+4) office_employees
+Purpose: Bridge table for offices and employees (many-to-many)
+Primary Key: id
+Important Fields:
+- officeId, employeeId, createdAt
+Foreign Keys:
+- officeId -> offices.id
+- employeeId -> employees.id
+Unique Rule:
+- (officeId, employeeId) must be unique
+
+==================================================
+5) document_types
+Purpose: List of allowed document types
+Primary Key: id
+Important Fields:
+- name, description, isActive
+- dateCreated, uploadedBy
+- createdAt, updatedAt
+Foreign Keys: none
+
+==================================================
+6) documents
+Purpose: Main document routing and tracking record
+Primary Key: id
+Important Fields:
+- documentId, name, type, status
+- submittedBy, description, comments
+- currentOffice, nextOffice, currentHandlerId
+- routingHistory, scanHistory, tags
+- priority, expectedProcessingTime, isDelayed, delayedHours
+- createdAt, updatedAt
+Foreign Keys:
+- currentHandlerId -> employees.id
+
+==================================================
+7) document_employees
+Purpose: Bridge table for documents and employees (many-to-many)
+Primary Key: id
+Important Fields:
+- documentId, employeeId, createdAt
+Foreign Keys:
+- documentId -> documents.id
+- employeeId -> employees.id
+Unique Rule:
+- (documentId, employeeId) must be unique
+
+==================================================
+8) notifications
+Purpose: In-app notification records
+Primary Key: id
+Important Fields:
+- userId, employeeId, type
+- title, message
+- documentId, documentName
+- read, metadata
+- createdAt, updatedAt
+Foreign Keys:
+- employeeId -> employees.id
+- documentId -> documents.id
+
+==================================================
+9) verification_codes
+Purpose: Email/OTP verification codes
+Primary Key: id
+Important Fields:
+- email, code, userId, expiresAt, used
+- createdAt
+Foreign Keys:
+- userId -> users.id
+
+==================================================
+RELATIONSHIP SUMMARY
+- offices 1 -> many employees
+- offices many <-> many employees via office_employees
+- employees 1 -> many documents (currentHandlerId)
+- documents many <-> many employees via document_employees
+- employees 1 -> many notifications
+- documents 1 -> many notifications
+- users 1 -> many verification_codes
+

@@ -33,26 +33,46 @@ function AnalyticsGraphs({ documents, employees, offices, documentTypes }) {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [chartType, setChartType] = useState('bar'); // 'bar' or 'line'
 
-  // Get unique departments from offices
-  const departments = [...new Set(offices.map(office => office.department || office.name))];
+  // Use office records as department options for consistent filtering
+  const departmentOptions = offices
+    .filter((office) => office && office._id)
+    .map((office) => ({
+      id: String(office._id),
+      name: office.name || office.department || 'Unknown Department',
+      department: office.department || ''
+    }));
 
-  // Helper function to get employee's department
-  const getEmployeeDepartment = (submittedBy) => {
+  // Helper function to get employee by submittedBy text
+  const getDocumentEmployee = (submittedBy) => {
     if (!submittedBy) return null;
-    const employee = employees.find(emp =>
+    return employees.find(emp =>
       emp.name?.toLowerCase() === submittedBy.toLowerCase() ||
       emp.name?.toLowerCase().includes(submittedBy.toLowerCase()) ||
       submittedBy.toLowerCase().includes(emp.name?.toLowerCase())
     );
-    return employee ? (employee.office?.name || employee.office?.department || employee.department) : null;
   };
 
   // Filter documents by department
   const getFilteredDocuments = () => {
     if (selectedDepartment === 'all') return documents;
+    const selectedOffice = offices.find((office) => String(office._id) === String(selectedDepartment));
+    if (!selectedOffice) return [];
+
+    const normalize = (value) => (value || '').toString().trim().toLowerCase();
+    const selectedDepartmentNames = new Set([
+      normalize(selectedOffice.name),
+      normalize(selectedOffice.department)
+    ].filter(Boolean));
+
     return documents.filter(doc => {
-      const dept = getEmployeeDepartment(doc.submittedBy);
-      return dept === selectedDepartment;
+      const employee = getDocumentEmployee(doc.submittedBy);
+      if (!employee) return false;
+
+      if (String(employee.office?._id) === String(selectedOffice._id)) return true;
+
+      return selectedDepartmentNames.has(normalize(employee.office?.name)) ||
+        selectedDepartmentNames.has(normalize(employee.office?.department)) ||
+        selectedDepartmentNames.has(normalize(employee.department));
     });
   };
 
@@ -305,8 +325,8 @@ function AnalyticsGraphs({ documents, employees, offices, documentTypes }) {
               }}
             >
               <option value="all">All Departments</option>
-              {departments.map((dept, index) => (
-                <option key={index} value={dept}>{dept}</option>
+              {departmentOptions.map((dept) => (
+                <option key={dept.id} value={dept.id}>{dept.name}</option>
               ))}
             </select>
           </div>

@@ -4,6 +4,9 @@ import 'jspdf-autotable';
 import NotificationSystem, { showNotification } from './components/NotificationSystem';
 import API_URL from './config';
 
+/** Display label for the final Faculty Loading approval stage (routing may still use legacy office strings). */
+const FACULTY_LOADING_FINAL_STAGE_LABEL = 'Vice President for Academic Affairs (VPAA)';
+
 function Edashboard({ onLogout }) {
   const [documents, setDocuments] = useState([]);
   const [allDocuments, setAllDocuments] = useState([]); // For History Logs - shows ALL documents
@@ -51,6 +54,9 @@ function Edashboard({ onLogout }) {
   
   // New state for enhanced document management
   const [searchTerm, setSearchTerm] = useState('');
+  const [historySearchTerm, setHistorySearchTerm] = useState('');
+  const [historySearchBy, setHistorySearchBy] = useState('all');
+  const [historySortBy, setHistorySortBy] = useState('name');
   const [statusFilter, setStatusFilter] = useState('All');
   const [submitterFilter, setSubmitterFilter] = useState('All');
   const [selectedDocument, setSelectedDocument] = useState(null);
@@ -148,36 +154,36 @@ function Edashboard({ onLogout }) {
 
   // Summary stats calculator
   // NOTE: This MUST be declared before fetchDocuments to avoid "Cannot access before initialization"
-  const calculateSummaryStats = useCallback((docs) => {
+  const calculateSummaryStats = useCallback((docs, outgoingDocs = []) => {
     const stats = {
       total: docs.length,
-      incoming: 0,
+      incoming: docs.length,
       outgoing: 0,
       active: 0,
       pending: 0,
       completed: 0
     };
 
-    // Get current user data
-    const userData = localStorage.getItem('userData');
-    const currentUser = userData ? JSON.parse(userData) : null;
-    // IMPORTANT: Don't depend on React state here (like `employee`) to avoid re-fetch loops / UI flicker.
-    const currentUserName = currentUser?.name || currentUser?.username;
+    const incomingList = Array.isArray(docs) ? docs : [];
+    const outgoingList = Array.isArray(outgoingDocs) ? outgoingDocs : [];
+    const allSummaryDocs = [...incomingList, ...outgoingList];
+    const uniqueDocs = [];
+    const seenIds = new Set();
 
-    docs.forEach(doc => {
-      // Count incoming vs outgoing based on submittedBy
-      const isSubmittedByCurrentUser = doc.submittedBy && currentUserName && (
-        doc.submittedBy.toLowerCase() === currentUserName.toLowerCase() ||
-        doc.submittedBy.toLowerCase().includes(currentUserName.toLowerCase()) ||
-        currentUserName.toLowerCase().includes(doc.submittedBy.toLowerCase())
-      );
-      
-      if (isSubmittedByCurrentUser) {
-        stats.outgoing++;
-      } else {
-        stats.incoming++;
-      }
+    allSummaryDocs.forEach((doc) => {
+      const key = String(doc?._id || doc?.id || doc?.documentId || '');
+      if (!key || seenIds.has(key)) return;
+      seenIds.add(key);
+      uniqueDocs.push(doc);
+    });
 
+    // Outgoing should represent only documents still in-process.
+    stats.outgoing = outgoingList.filter((doc) => {
+      const status = String(doc?.status || '').toLowerCase();
+      return !['approved', 'completed'].includes(status);
+    }).length;
+
+    uniqueDocs.forEach(doc => {
       // Count by status
       if (doc.status) {
         const status = doc.status.toLowerCase();
@@ -281,8 +287,8 @@ function Edashboard({ onLogout }) {
                 // For shared positions (OP), always return true
                 if (isSharedPosition) return true;
                 
-                // For OP position, be more lenient - show documents from same department or documents submitted by user
-                if (position === 'OP' || position === 'Office of the President' || position === 'President') {
+                // For OP/President: show documents submitted by user OR any document (President sees all at their desk)
+                if (position === 'OP' || position === 'Office of the President' || position === 'President' || (position && (position.includes('President') || position.includes('OP')))) {
                   const userData = localStorage.getItem('userData');
                   const parsedUser = userData ? JSON.parse(userData) : null;
                   const isSubmittedByUser = doc.submittedBy && parsedUser && 
@@ -568,10 +574,9 @@ function Edashboard({ onLogout }) {
                   return routedToOffice || forwardedToEmployee;
                 });
                 console.log('Filtered for Vice President:', filteredDocuments.length);
-              } else if (position === 'OP' || position === 'Office of the President' || position === 'President') {
+              } else if (position === 'OP' || position === 'Office of the President' || position === 'President' || (position && (position.includes('President') || position.includes('OP')))) {
                 // Show documents routed to Office of the President OR forwarded to this employee OR submitted by this user
-                // For Faculty Loading: university-wide (no department restriction)
-                // For other documents: department-specific
+                // President/OP sees ALL documents at their desk (any department) - final approver
                 filteredDocuments = fetchedDocuments.filter(doc => {
                   // Always show documents submitted by this user
                   const userData = localStorage.getItem('userData');
@@ -584,41 +589,31 @@ function Edashboard({ onLogout }) {
                     return true;
                   }
                   
-                  // Check if document is routed to OP
-                  const routedToOP = doc.nextOffice === 'Office of the President' || 
-                    doc.nextOffice === 'OP' ||
-                    doc.nextOffice === 'President' ||
-                    doc.currentOffice === 'Office of the President' ||
-                    doc.currentOffice === 'OP' ||
-                    doc.currentOffice === 'President';
+                  // Check if document is routed to OP (include common variants from backend)
+                  const nextOffice = (doc.nextOffice || '').trim();
+                  const currentOffice = (doc.currentOffice || '').trim();
+                  const routedToOP = 
+                    nextOffice === 'Office of the President' || nextOffice === 'OP' || nextOffice === 'President' ||
+                    currentOffice === 'Office of the President' || currentOffice === 'OP' || currentOffice === 'President' ||
+                    (nextOffice && (nextOffice.includes('President') || nextOffice.includes('OP'))) ||
+                    (currentOffice && (currentOffice.includes('President') || currentOffice.includes('OP')));
                   
                   const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
                   
-                  // For Faculty Loading: bypass department check (university-wide)
-                  const isFacultyLoading = doc.type?.toUpperCase().includes('FACULTY LOADING');
-                  if (isFacultyLoading && routedToOP) {
-                    console.log('✓ OP will see Faculty Loading (university-wide):', doc.name);
+                  // President/OP: show ALL documents routed to them (no department restriction)
+                  if (routedToOP || forwardedToEmployee) {
+                    console.log('✓ OP will see:', doc.name, '- nextOffice:', doc.nextOffice, '- currentOffice:', doc.currentOffice);
                     return true;
                   }
                   
-                  // For other documents: apply department check
-                  if (!isDocumentRoutedToMyDepartment(doc)) {
-                    return false;
-                  }
-                  
-                  const routedToOffice = routedToOP && isDocumentRoutedToMyDepartment(doc);
-                  
-                  if (routedToOffice || forwardedToEmployee) {
-                    console.log('✓ OP will see:', doc.name, '- Dept:', getSubmitterDepartment(doc.submittedBy));
-                  }
-                  return routedToOffice || forwardedToEmployee;
+                  return false;
                 });
                 console.log('Filtered for Office of the President:', filteredDocuments.length);
-              } else if (position && (position.includes('HR') || position.includes('Human Resources'))) {
+              } else if (position && (position.includes('HR') || position.includes('Human Resources') || position.includes('Human Resource'))) {
                 // HR sees documents routed to HR (university-wide, not department-specific)
                 filteredDocuments = fetchedDocuments.filter(doc => {
-                  const routedToHR = (doc.nextOffice && (doc.nextOffice.includes('HR') || doc.nextOffice.includes('Human Resources'))) || 
-                                     (doc.currentOffice && (doc.currentOffice.includes('HR') || doc.currentOffice.includes('Human Resources')));
+                  const routedToHR = (doc.nextOffice && (doc.nextOffice.includes('HR') || doc.nextOffice.includes('Human Resources') || doc.nextOffice.includes('Human Resource'))) || 
+                                     (doc.currentOffice && (doc.currentOffice.includes('HR') || doc.currentOffice.includes('Human Resources') || doc.currentOffice.includes('Human Resource')));
                   const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
                   
                   if (routedToHR || forwardedToEmployee) {
@@ -627,6 +622,18 @@ function Edashboard({ onLogout }) {
                   return routedToHR || forwardedToEmployee;
                 });
                 console.log('Filtered for HR:', filteredDocuments.length);
+              } else if (position && position.includes('Loading Coordinator')) {
+                // Loading Coordinator sees Endorsement Form documents routed to them
+                filteredDocuments = fetchedDocuments.filter(doc => {
+                  const routedToLC = (doc.nextOffice && doc.nextOffice.includes('Loading Coordinator')) ||
+                                     (doc.currentOffice && doc.currentOffice.includes('Loading Coordinator'));
+                  const forwardedToEmployee = isDocumentAssignedToEmployee(doc, currentEmployee._id);
+                  if (routedToLC || forwardedToEmployee) {
+                    console.log('✓ Loading Coordinator will see:', doc.name);
+                  }
+                  return routedToLC || forwardedToEmployee;
+                });
+                console.log('Filtered for Loading Coordinator:', filteredDocuments.length);
               } else if (position && (position.includes('Records Office') || position.includes('Records'))) {
                 // Records Office sees documents routed to Records Office (university-wide)
                 filteredDocuments = fetchedDocuments.filter(doc => {
@@ -822,7 +829,6 @@ function Edashboard({ onLogout }) {
     
     // Calculate the correct next office based on workflow (not from document.nextOffice which might be outdated)
     // We need to temporarily set selectedDocument to calculate getNextOffice()
-    const tempSelectedDocument = document;
     const docType = document.type?.toUpperCase() || '';
     const docCategory = document.category?.toUpperCase() || '';
     const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory.includes('REQUESTED SUBJECT');
@@ -1168,11 +1174,107 @@ function Edashboard({ onLogout }) {
     return false;
   };
 
-  const isEndorsementDocument = (doc) => {
+  /** True if employee holds the President / OP role (not Vice President or Academic VP). Used for Travel Order action rules. */
+  const isPresidentRoleForTravelOrder = (position) => {
+    if (!position) return false;
+    const lower = String(position).toLowerCase();
+    if (lower.includes('vice')) return false;
+    if (lower.includes('vpaa')) return false;
+    if (lower.includes('academic') && lower.includes('vp')) return false;
+    return (
+      lower.includes('office of the president') ||
+      lower === 'op' ||
+      (lower.includes('president') && !lower.includes('vice'))
+    );
+  };
+
+  /** Travel Order: only the President may Reject; show when doc is at President's desk. */
+  const canTravelOrderPresidentReject = () => {
+    if (!selectedDocument || !employee) return false;
+    const docType = selectedDocument.type?.toUpperCase() || '';
+    const docCat = selectedDocument.category || '';
+    if (!docType.includes('TRAVEL ORDER') && docCat !== 'Travel Order') return false;
+    if (!isPresidentRoleForTravelOrder(employee.position)) return false;
+    return (
+      positionMatchesOffice(employee.position, selectedDocument.currentOffice) ||
+      positionMatchesOffice(employee.position, selectedDocument.nextOffice)
+    );
+  };
+
+  /** True if the logged-in employee/user is the original submitter of the document. */
+  const isDocumentSubmittedByCurrentUser = useCallback((doc) => {
     if (!doc) return false;
-    const docType = doc.type?.toUpperCase() || '';
-    const docCategory = doc.category?.toUpperCase() || '';
-    return docType.includes('ENDORSEMENT') || docCategory.includes('ENDORSEMENT');
+    const candidates = [employee?.name, user?.username]
+      .filter(Boolean)
+      .map(value => String(value).toLowerCase());
+    if (candidates.length === 0) return false;
+
+    const docSubmitter = String(doc.submittedBy || '').toLowerCase();
+    const matchesSubmittedBy = docSubmitter && candidates.some(candidate =>
+      docSubmitter === candidate ||
+      docSubmitter.includes(candidate) ||
+      candidate.includes(docSubmitter)
+    );
+    if (matchesSubmittedBy) return true;
+
+    const history = Array.isArray(doc.routingHistory) ? doc.routingHistory : [];
+    const firstSubmittedEntry = history.find(entry => String(entry?.action || '').toLowerCase() === 'submitted');
+    const originalSender = String(firstSubmittedEntry?.performedBy || firstSubmittedEntry?.handler || '').toLowerCase();
+    if (!originalSender) return false;
+    return candidates.some(candidate =>
+      originalSender === candidate ||
+      originalSender.includes(candidate) ||
+      candidate.includes(originalSender)
+    );
+  }, [employee, user]);
+
+  /** President / OP is acting on this document (for labels and reject-forward behavior). */
+  const isPresidentReviewingThisDocument = () => {
+    if (!selectedDocument || !employee?.position) return false;
+    if (!isPresidentRoleForTravelOrder(employee.position)) return false;
+    return (
+      positionMatchesOffice(employee.position, selectedDocument.currentOffice) ||
+      positionMatchesOffice(employee.position, selectedDocument.nextOffice)
+    );
+  };
+
+  // Hide actions for an office after it returns a document,
+  // until a later "resubmitted" action appears in routing history.
+  const hasPendingReturnFromMyOffice = (doc, position) => {
+    if (!doc || !position) return false;
+
+    const history = Array.isArray(doc.routingHistory) ? doc.routingHistory : [];
+    if (history.length === 0) return false;
+
+    let latestReturnIdx = -1;
+    const posLower = String(position).toLowerCase();
+
+    for (let i = history.length - 1; i >= 0; i--) {
+      const entry = history[i] || {};
+      const action = String(entry.action || '').toLowerCase();
+      const office = String(entry.office || '');
+      const officeLower = office.toLowerCase();
+
+      if (!action.includes('returned')) continue;
+
+      const isMyOffice =
+        positionMatchesOffice(position, office) ||
+        officeLower.includes(posLower) ||
+        posLower.includes(officeLower);
+
+      if (isMyOffice) {
+        latestReturnIdx = i;
+        break;
+      }
+    }
+
+    if (latestReturnIdx === -1) return false;
+
+    const hasResubmittedAfterReturn = history
+      .slice(latestReturnIdx + 1)
+      .some(entry => String(entry?.action || '').toLowerCase().includes('resubmitted'));
+
+    return !hasResubmittedAfterReturn;
   };
 
   const isRequestedSubjectDocument = (doc) => {
@@ -1180,6 +1282,44 @@ function Edashboard({ onLogout }) {
     const docType = doc.type?.toUpperCase() || '';
     const docCategory = doc.category?.toUpperCase() || '';
     return docType.includes('REQUESTED SUBJECT') || docCategory.includes('REQUESTED SUBJECT');
+  };
+
+  /** Requested Subject: VPAA while the document is at VPAA — full actions (forward, hold, return, reject). */
+  const isRsVpaaReviewingRequestedSubject = () => {
+    if (!selectedDocument || !employee?.position) return false;
+    if (!isRequestedSubjectDocument(selectedDocument)) return false;
+    const p = employee.position;
+    if (!p.includes('VPAA') && !p.includes('Vice President for Academic Affairs')) return false;
+    const cur = (selectedDocument.currentOffice || '').toLowerCase();
+    const nex = (selectedDocument.nextOffice || '').toLowerCase();
+    return (
+      cur.includes('vpaa') ||
+      cur.includes('vice president for academic affairs') ||
+      nex.includes('vpaa') ||
+      nex.includes('vice president for academic affairs')
+    );
+  };
+
+  /** Requested Subject: Encoder while the document is at Encoder — encode / finalize step. */
+  const isRsEncoderReviewingRequestedSubject = () => {
+    if (!selectedDocument || !employee?.position) return false;
+    if (!isRequestedSubjectDocument(selectedDocument)) return false;
+    if (!employee.position.includes('Encoder')) return false;
+    const cur = (selectedDocument.currentOffice || '').toLowerCase();
+    const nex = (selectedDocument.nextOffice || '').toLowerCase();
+    return cur.includes('encoder') || nex.includes('encoder');
+  };
+
+  /**
+   * Requested Subject: intermediate offices (Program Head, Dean, Director of Instruction, 2nd Dean visit, etc.)
+   * — only forward; no hold / return / reject / finalize quick actions.
+   */
+  const isRequestedSubjectForwardOnlyReviewer = () => {
+    if (!selectedDocument || !employee?.position) return false;
+    if (!isRequestedSubjectDocument(selectedDocument)) return false;
+    if (isRsVpaaReviewingRequestedSubject()) return false;
+    if (isRsEncoderReviewingRequestedSubject()) return false;
+    return true;
   };
 
   const isDocumentWorkflowComplete = (doc) => {
@@ -1225,21 +1365,30 @@ function Edashboard({ onLogout }) {
         selectedDocument.routingHistory || [],
         selectedDocument.submittedBy
       );
-      // If workflow is complete, return null
-      if (nextOffice === null || nextOffice === 'COMPLETED') return null;
+      // COMPLETED = final HR step closes workflow via Accept & Forward (not Final Approve)
+      if (nextOffice === null) return null;
       return nextOffice;
     }
     
     // Check if this is a Faculty Loading document
     const isFacultyLoading = docType.includes('FACULTY LOADING') || docCategory.includes('FACULTY LOADING');
     if (isFacultyLoading) {
-      // Use the Faculty Loading workflow function
       const nextOffice = getFacultyLoadingNextOffice(
         selectedDocument.currentOffice || employee.position,
         selectedDocument.routingHistory || [],
         selectedDocument.submittedBy
       );
-      // If workflow is complete, return null
+      if (nextOffice === null || nextOffice === 'COMPLETED') return null;
+      return nextOffice;
+    }
+
+    // Check if this is an Endorsement Form document
+    const isEndorsement = docType.includes('ENDORSEMENT') || docCategory.includes('ENDORSEMENT');
+    if (isEndorsement) {
+      const nextOffice = getEndorsementFormNextOffice(
+        selectedDocument.currentOffice || employee.position,
+        selectedDocument.routingHistory || []
+      );
       if (nextOffice === null || nextOffice === 'COMPLETED') return null;
       return nextOffice;
     }
@@ -1259,9 +1408,11 @@ function Edashboard({ onLogout }) {
     }
     
     const position = employee.position;
+    // Normalize position so "Program Head (PH)", "Dean", etc. match (Accept & Forward / Hold depend on getNextOffice)
+    const normalizePos = (p) => (p && String(p).replace(/\s*\([^)]*\)\s*/g, '').trim()) || '';
+    const pos = normalizePos(position);
     const employeeDepartment = employee.department;
     const employeeOfficeName = employee.office?.name;
-    const endorsementFlow = isEndorsementDocument(selectedDocument);
     const requestedSubjectFlow = isRequestedSubjectDocument(selectedDocument);
     
     // Get document submitter's department to maintain context
@@ -1300,19 +1451,19 @@ function Edashboard({ onLogout }) {
     // eslint-disable-next-line no-unused-vars
     const isSharedPosition = targetPos => false; // No positions are shared anymore
     
-    // Determine next position in workflow
+    // Determine next position in workflow (use normalized pos so "Program Head (PH)" etc. match)
     let nextPosition = null;
-    if (position === 'Communication' || position === 'Communications' || position === 'Secretary') {
+    if (pos === 'Communication' || pos === 'Communications' || pos === 'Secretary' || position?.includes('Secretary')) {
       nextPosition = 'Program Head';
-    } else if (position === 'Program Head') {
+    } else if (pos === 'Program Head' || pos === 'PH' || position?.includes('Program Head')) {
       nextPosition = 'Dean';
-    } else if (position === 'Dean') {
-      nextPosition = endorsementFlow ? 'Vice President' : (requestedSubjectFlow ? 'Vice President' : 'Academic Vice President');
-    } else if (position === 'Academic VP' || position === 'Academic Vice President') {
+    } else if (pos === 'Dean' || position?.includes('Dean')) {
+      nextPosition = requestedSubjectFlow ? 'Vice President' : 'Academic Vice President';
+    } else if (pos === 'Academic VP' || pos === 'Academic Vice President' || position?.includes('Academic VP') || position?.includes('Academic Vice President')) {
       return null; // Final approver
-    } else if (position === 'Vice President' || position === 'VP') {
-      nextPosition = endorsementFlow ? 'Office of the President' : null;
-    } else if (position === 'Office of the President' || position === 'President') {
+    } else if (pos === 'Vice President' || pos === 'VP' || position?.includes('Vice President')) {
+      return null;
+    } else if (pos === 'Office of the President' || pos === 'President' || pos === 'OP' || position?.includes('Office of the President') || position?.includes('President')) {
       return null; // Final approver
     }
     
@@ -1335,11 +1486,100 @@ function Edashboard({ onLogout }) {
     return nextPosition;
   };
 
+  /** Faculty Loading at Academic VP (final stage): same Quick Actions layout as Travel Order President — primary approve + On Hold, plus Reject/Return. */
+  const isAcademicVpReviewingFacultyLoadingFinal = () => {
+    if (!selectedDocument || !employee?.position) return false;
+    const docType = selectedDocument.type?.toUpperCase() || '';
+    const docCat = selectedDocument.category?.toUpperCase() || '';
+    const isFL = docType.includes('FACULTY LOADING') || docCat.includes('FACULTY LOADING');
+    if (!isFL) return false;
+    const isAvp =
+      positionMatchesOffice(employee.position, 'Academic Vice President') ||
+      positionMatchesOffice(employee.position, 'Academic VP');
+    if (!isAvp) return false;
+    if (getNextOffice()) return false;
+    return (
+      positionMatchesOffice(employee.position, selectedDocument.currentOffice) ||
+      positionMatchesOffice(employee.position, selectedDocument.nextOffice)
+    );
+  };
+
+  /**
+   * Routing-history row text must reflect the actual actor (handler). The review textarea is pre-filled
+   * with document.comments (latest summary), which previously overwrote every routing comment with the same text.
+   * Always use autoSummary for the action line; only append textarea content when it differs from that snapshot.
+   */
+  const buildRoutingComment = (autoSummary, formComments, documentCommentsSnapshot) => {
+    const note = (formComments || '').trim();
+    const prev = (documentCommentsSnapshot || '').trim();
+    if (!note) return autoSummary;
+    if (note === prev) return autoSummary;
+    return `${autoSummary} — ${note}`;
+  };
+
   // Quick action: Accept & Forward
   const handleApproveAndForward = async () => {
     if (!selectedDocument) return;
 
     const nextOffice = getNextOffice();
+    if (nextOffice === 'COMPLETED') {
+      try {
+        const approverName = employee?.name || user?.username || 'Unknown';
+        const currentOfficeForHistory = employee?.position || 'Unknown';
+        const currentRoutingHistory = selectedDocument.routingHistory || [];
+        const newRoutingHistory = Array.isArray(currentRoutingHistory) ? [...currentRoutingHistory] : [];
+        newRoutingHistory.push({
+          office: currentOfficeForHistory,
+          toOffice: selectedDocument.submittedBy || 'Sender',
+          action: 'approved',
+          performedBy: approverName,
+          handler: approverName,
+          date: new Date().toISOString(),
+          timestamp: new Date().toISOString(),
+          comments: buildRoutingComment(
+            `Travel Order workflow completed; returned to sender by ${approverName}`,
+            reviewForm.comments,
+            selectedDocument.comments || ''
+          )
+        });
+        const updateData = {
+          status: 'Approved',
+          comments: reviewForm.comments || `Travel Order completed by ${approverName}`,
+          reviewer: approverName,
+          reviewDate: new Date().toISOString(),
+          nextOffice: selectedDocument.submittedBy || 'Sender',
+          currentOffice: selectedDocument.submittedBy || 'Sender',
+          forwardedBy: approverName,
+          routingHistory: newRoutingHistory
+        };
+        const docId = selectedDocument._id || selectedDocument.id || selectedDocument.documentId;
+        if (!docId) {
+          alert('Error: Document ID not found');
+          return;
+        }
+        const response = await fetch(`${API_URL}/documents/${docId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updateData)
+        });
+        if (response.ok) {
+          showNotification('success', 'Travel Order Completed', 'Workflow finished; document returned to sender.');
+          handleCloseReviewModal();
+          await fetchDocuments();
+          if (activeSidebarTab === 'history' || activeSidebarTab === 'forwarded') {
+            setTimeout(() => fetchDocuments(), 300);
+          }
+        } else {
+          const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
+          alert(`Failed to complete document: ${errorData.message || 'Unknown error'}`);
+        }
+      } catch (error) {
+        console.error('Error completing travel order:', error);
+        alert('Error completing travel order');
+      }
+      return;
+    }
+
     if (!nextOffice) {
       alert('Cannot forward: No next office defined for your position');
       return;
@@ -1374,9 +1614,11 @@ function Edashboard({ onLogout }) {
       // Use ONLY employee position, never selectedDocument.currentOffice
       // because currentOffice is already updated to the DESTINATION by the time we read it
       const currentOfficeForHistory = employee?.position || 'Unknown';
-      const commentsWithDept = documentDepartment && !isSharedPosition
-        ? (reviewForm.comments || `Approved and forwarded to ${nextOffice} of ${documentDepartment} by ${approverName}`)
-        : (reviewForm.comments || `Approved and forwarded to ${nextOffice} by ${approverName}`);
+      const docCommentsSnapshot = selectedDocument.comments || '';
+      const autoRoutingSummary = documentDepartment && !isSharedPosition
+        ? `Approved and forwarded to ${nextOffice} of ${documentDepartment} by ${approverName}`
+        : `Approved and forwarded to ${nextOffice} by ${approverName}`;
+      const commentsWithDept = buildRoutingComment(autoRoutingSummary, reviewForm.comments, docCommentsSnapshot);
       
       // Manually build routing history array
       const currentRoutingHistory = selectedDocument.routingHistory || [];
@@ -1503,7 +1745,11 @@ function Edashboard({ onLogout }) {
             performedBy: holderName,
             handler: holderName,
             date: new Date().toISOString(),
-            comments: reviewForm.comments || `File held by ${holderName} at ${currentOffice}`
+            comments: buildRoutingComment(
+              `File held by ${holderName} at ${currentOffice}`,
+              reviewForm.comments,
+              selectedDocument.comments || ''
+            )
           }
         }
       };
@@ -1565,6 +1811,13 @@ function Edashboard({ onLogout }) {
       const documentDepartment = getSubmitterDepartment(selectedDocument.submittedBy);
       const officeForHistory = documentDepartment ? `${currentPosition} of ${documentDepartment}` : currentPosition;
       
+      const rc = (reviewForm.comments || '').trim();
+      const snap = (selectedDocument.comments || '').trim();
+      const returnRoutingComment =
+        rc && rc !== snap
+          ? `Returned by ${approverName}: ${rc}`
+          : `Document returned to submitter by ${approverName} for editing`;
+      
       // Use documentId (string) if available, otherwise use _id or id
       const documentIdToUse = selectedDocument.documentId || selectedDocument._id || selectedDocument.id;
       
@@ -1583,7 +1836,7 @@ function Edashboard({ onLogout }) {
         action: 'returned',
         handler: approverName,
         timestamp: new Date().toISOString(),
-        comments: reviewForm.comments || `Document returned to submitter by ${approverName} for editing`,
+        comments: returnRoutingComment,
         processingTime: 0
       });
       
@@ -1620,7 +1873,7 @@ function Edashboard({ onLogout }) {
               office: officeForHistory,
               action: 'returned',
               handler: approverName,
-              comments: reviewForm.comments || `Document returned to you for editing by ${approverName}`
+              comments: returnRoutingComment
             })
           });
         } catch (notifError) {
@@ -1652,6 +1905,17 @@ function Edashboard({ onLogout }) {
   const handleFinalApprove = async () => {
     if (!selectedDocument) return;
 
+    const docTypeUpper = selectedDocument.type?.toUpperCase() || '';
+    const docCatUpper = selectedDocument.category?.toUpperCase() || '';
+    if (
+      docTypeUpper.includes('TRAVEL ORDER') ||
+      docCatUpper.includes('TRAVEL ORDER') ||
+      selectedDocument.category === 'Travel Order'
+    ) {
+      alert('Travel Order documents are finalized by the President or closed via forwarding — Final Approve is not used for this type.');
+      return;
+    }
+
     try {
       const currentPosition = employee?.position || user?.username;
       const approverName = employee?.name || user?.username || 'Unknown';
@@ -1668,12 +1932,19 @@ function Edashboard({ onLogout }) {
       const docType = selectedDocument.type?.toUpperCase() || '';
       const docCategory = selectedDocument.category?.toUpperCase() || '';
       const isFacultyLoading = docType.includes('FACULTY LOADING') || docCategory.includes('FACULTY LOADING');
+      const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory.includes('REQUESTED SUBJECT');
+      const isRsEncoderFinalize =
+        isRequestedSubject && employee?.position && employee.position.includes('Encoder');
       
       // For Faculty Loading, workflow is complete after final approval
       // Clear nextOffice to indicate workflow is finished
       const updateData = {
         status: 'Approved',
-        comments: reviewForm.comments || `Final approval by ${approverName}${isFacultyLoading ? ' - Workflow complete' : ''}`,
+        comments: reviewForm.comments || (
+          isRsEncoderFinalize
+            ? `Encoded and completed by ${approverName} — Requested Subject workflow closed`
+            : `Final approval by ${approverName}${isFacultyLoading ? ' - Workflow complete' : ''}`
+        ),
         reviewer: approverName,
         reviewDate: new Date().toISOString(),
         nextOffice: '', // Clear nextOffice - workflow is complete
@@ -1699,8 +1970,15 @@ function Edashboard({ onLogout }) {
             body: JSON.stringify({
               office: currentPosition,
               action: 'approved',
+              toOffice: '',
               handler: approverName,
-              comments: reviewForm.comments || `Final approval by ${approverName}`
+              comments: buildRoutingComment(
+                isRsEncoderFinalize
+                  ? `Encoded and workflow completed by ${approverName}`
+                  : `Final approval by ${approverName}`,
+                reviewForm.comments,
+                selectedDocument.comments || ''
+              )
             }),
           });
         } catch (historyError) {
@@ -1711,9 +1989,12 @@ function Edashboard({ onLogout }) {
         const docType = selectedDocument.type?.toUpperCase() || '';
         const docCategory = selectedDocument.category?.toUpperCase() || '';
         const isFacultyLoading = docType.includes('FACULTY LOADING') || docCategory.includes('FACULTY LOADING');
+        const isReqSubType = docType.includes('REQUESTED SUBJECT') || docCategory.includes('REQUESTED SUBJECT');
         
         if (isFacultyLoading) {
           showNotification('success', 'Document Approved', `Faculty Loading document "${selectedDocument.name}" has been APPROVED and RETURNED TO SENDER!`);
+        } else if (isReqSubType && employee?.position?.includes('Encoder')) {
+          showNotification('success', 'Encoding complete', `Requested Subject "${selectedDocument.name}" has been encoded and the workflow is complete.`);
         } else {
           showNotification('success', 'Document Approved', `Document "${selectedDocument.name}" has received FINAL APPROVAL! Workflow complete.`);
         }
@@ -1740,6 +2021,17 @@ function Edashboard({ onLogout }) {
   const handleReject = async () => {
     if (!selectedDocument) return;
 
+    const docTypeUpper = selectedDocument.type?.toUpperCase() || '';
+    const docCat = selectedDocument.category || '';
+    const isTravelOrderDoc =
+      docTypeUpper.includes('TRAVEL ORDER') ||
+      docCat.toUpperCase().includes('TRAVEL ORDER') ||
+      docCat === 'Travel Order';
+    if (isTravelOrderDoc && !canTravelOrderPresidentReject()) {
+      alert('Only the President may reject a Travel Order while it is at the Office of the President.');
+      return;
+    }
+
     if (!reviewForm.comments) {
       alert('Please provide comments explaining why the document is being rejected');
       return;
@@ -1755,7 +2047,70 @@ function Edashboard({ onLogout }) {
         alert('Error: Cannot identify document');
         return;
       }
-      
+
+      // Travel Order at President: reject decision + forward file to the next office (e.g. Records)
+      const nextOfficeForReject = getNextOffice();
+      const presidentRejectAndForward =
+        isTravelOrderDoc &&
+        canTravelOrderPresidentReject() &&
+        nextOfficeForReject &&
+        nextOfficeForReject !== 'COMPLETED';
+
+      if (presidentRejectAndForward) {
+        const currentOfficeForHistory = employee?.position || 'Unknown';
+        const currentRoutingHistory = selectedDocument.routingHistory || [];
+        const newRoutingHistory = Array.isArray(currentRoutingHistory) ? [...currentRoutingHistory] : [];
+        newRoutingHistory.push({
+          office: currentOfficeForHistory,
+          toOffice: nextOfficeForReject,
+          action: 'rejected',
+          performedBy: approverName,
+          handler: approverName,
+          date: new Date().toISOString(),
+          timestamp: new Date().toISOString(),
+          comments: buildRoutingComment(
+            `President rejected; forwarded to ${nextOfficeForReject} (${approverName})`,
+            reviewForm.comments,
+            selectedDocument.comments || ''
+          )
+        });
+
+        const forwardUpdate = {
+          status: 'Processing',
+          comments:
+            reviewForm.comments ||
+            `President rejected request; forwarded to ${nextOfficeForReject} — ${approverName}`,
+          reviewer: approverName,
+          reviewDate: new Date().toISOString(),
+          nextOffice: nextOfficeForReject,
+          currentOffice: nextOfficeForReject,
+          routingHistory: newRoutingHistory
+        };
+
+        const fwResponse = await fetch(`${API_URL}/documents/${docId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(forwardUpdate)
+        });
+
+        if (fwResponse.ok) {
+          showNotification(
+            'info',
+            'Rejected & forwarded',
+            `Rejected at President and sent to ${nextOfficeForReject}.`
+          );
+          handleCloseReviewModal();
+          await fetchDocuments();
+          if (activeSidebarTab === 'history' || activeSidebarTab === 'forwarded') {
+            setTimeout(() => fetchDocuments(), 300);
+          }
+        } else {
+          const errorData = await fwResponse.json().catch(() => ({ message: 'Unknown error' }));
+          alert(`Failed to reject and forward: ${errorData.message || 'Unknown error'}`);
+        }
+        return;
+      }
+
       const updateData = {
         status: 'Rejected',
         comments: reviewForm.comments || `Rejected by ${approverName}`,
@@ -1839,7 +2194,11 @@ function Edashboard({ onLogout }) {
             handler: currentUserName,
             date: new Date().toISOString(),
             timestamp: new Date().toISOString(),
-            comments: reviewForm.comments || `Approved and forwarded to ${reviewForm.nextOffice} by ${currentUserName}`
+            comments: buildRoutingComment(
+              `Approved and forwarded to ${reviewForm.nextOffice} by ${currentUserName}`,
+              reviewForm.comments,
+              selectedDocument.comments || ''
+            )
           };
           newRoutingHistory.push(newEntry);
           updateData.routingHistory = newRoutingHistory;
@@ -2141,11 +2500,11 @@ function Edashboard({ onLogout }) {
 
   // Get documents for Document Management
   const getDocumentManagementDocuments = () => {
-    if (!employee || !allDocuments.length) return [];
+    const sourceDocuments = (Array.isArray(documents) && documents.length > 0) ? documents : allDocuments;
+    if (!employee || !sourceDocuments.length) return [];
     
     const employeeDepartment = employee.department;
     const employeeOfficeName = employee.office?.name;
-    const currentUserName = employee.name || user?.username;
     const currentPosition = employee.position;
     
     // Helper function to get submitter's department
@@ -2182,57 +2541,87 @@ function Edashboard({ onLogout }) {
       return matchesDept;
     };
     
-    // Check if document is submitted by current user
-    const isSubmittedByCurrentUser = (doc) => {
-      if (!doc.submittedBy || !currentUserName) return false;
-      const docSubmitter = doc.submittedBy.toLowerCase();
-      const currentUser = currentUserName.toLowerCase();
-      return docSubmitter === currentUser || 
-             docSubmitter.includes(currentUser) || 
-             currentUser.includes(docSubmitter);
+    // Normalize office/position names to handle "Director For Instruction" vs "Director of Instruction" etc.
+    const normalizeOfficeName = (name) => {
+      if (!name) return '';
+      // Keep parenthesized abbreviations (e.g. "(HR)") as tokens to normalize robustly.
+      const n = name
+        .toLowerCase()
+        .replace(/[()]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (n.includes('director') && n.includes('instruction')) return 'director of instruction';
+      if (n.includes('program head') || n === 'ph') return 'program head';
+      if (n.includes('loading coordinator')) return 'loading coordinator';
+      if (n.includes('academic adviser') || n.includes('academic advisor')) return 'academic adviser';
+      if (n.includes('vpaa') || n.includes('vice president for academic affairs')) return 'vpaa';
+      if (n.includes('academic vice president') || n.includes('academic vp')) return 'academic vice president';
+      if (n.includes('vice president') || n === 'vp') return 'vice president';
+      if (n.includes('president') || n === 'op' || n.includes('office of the president')) return 'office of the president';
+      if (n.includes('dean')) return 'dean';
+      if (n.includes('encoder')) return 'encoder';
+      if (n.includes('hr') || n.includes('human resources') || n.includes('human resource')) return 'hr';
+      if (n.includes('records')) return 'records office';
+      if (n.includes('executive assistant')) return 'executive assistant';
+      if (n.includes('immediate supervisor')) return 'immediate supervisor';
+      return n;
     };
-    
+
     // Check if document is routed to current user's position
     const isRoutedToMyPosition = (doc) => {
       if (!currentPosition) return false;
-      const nextOffice = doc.nextOffice || '';
-      const currentOffice = doc.currentOffice || '';
-      
-      // Use includes to handle position variations like "Records Office (RO)"
-      return (nextOffice && currentPosition.includes(nextOffice)) || 
-             (currentOffice && currentPosition.includes(currentOffice)) ||
-             (nextOffice && nextOffice.includes(currentPosition)) ||
-             (currentOffice && currentOffice.includes(currentPosition));
+      const normPosition = normalizeOfficeName(currentPosition);
+      const normNext = normalizeOfficeName(doc.nextOffice || '');
+      const normCurrent = normalizeOfficeName(doc.currentOffice || '');
+      return (normNext && (normNext === normPosition || normNext.includes(normPosition) || normPosition.includes(normNext))) ||
+             (normCurrent && (normCurrent === normPosition || normCurrent.includes(normPosition) || normPosition.includes(normCurrent)));
     };
     
-    return allDocuments.filter(doc => {
+    return sourceDocuments.filter(doc => {
       // Check if document is routed to current user's position (before department check)
       const isRoutedToMe = isRoutedToMyPosition(doc);
       
       // University-wide document types - bypass department check
-      const isFacultyLoading = doc.type?.toUpperCase().includes('FACULTY LOADING');
-      const isTravelOrder = doc.type?.toUpperCase().includes('TRAVEL ORDER') || 
-                           doc.category?.toUpperCase().includes('TRAVEL ORDER');
+      const docTypeUpper = doc.type?.toUpperCase() || '';
+      const docCatUpper = doc.category?.toUpperCase() || '';
+      const isFacultyLoading = docTypeUpper.includes('FACULTY LOADING');
+      const isTravelOrder = docTypeUpper.includes('TRAVEL ORDER') || docCatUpper.includes('TRAVEL ORDER');
+      const isRequestedSubject = docTypeUpper.includes('REQUESTED SUBJECT') || docCatUpper.includes('REQUESTED SUBJECT');
       
       // Check if user is President/OP - they can see documents routed to them regardless of department
       const isPresident = currentPosition?.includes('President') || 
                          currentPosition === 'OP' || 
                          currentPosition === 'Office of the President';
       
-      // For President: Show documents routed to them regardless of department
-      // For university-wide documents (Faculty Loading, Travel Order): bypass department check
-      // For other documents: must be from same department
+      // Bypass department check for university-wide documents and President
+      // Requested Subject, Faculty Loading, Travel Order are all university-wide
       const bypassDepartmentCheck = isFacultyLoading || 
                                     isTravelOrder || 
+                                    (isRequestedSubject && isRoutedToMe) ||
                                     (isPresident && isRoutedToMe);
       
       if (!bypassDepartmentCheck && !isFromSameDepartment(doc)) {
         return false;
       }
       
-      // IMPORTANT: If document is "Returned", ONLY show it to the original submitter
+      // IMPORTANT: If document is "Returned", show it to:
+      // 1) original submitter, OR
+      // 2) current routed office/position, OR
+      // 3) assigned/forwarded employee
+      // This handles cases where routing uses "Returned" as an in-process state.
       if (doc.status === 'Returned') {
-        return isSubmittedByCurrentUser(doc);
+        const isSubmitted = isDocumentSubmittedByCurrentUser(doc);
+        const isAssignedOrForwarded = isDocumentAssignedToEmployee(doc, employee._id);
+        const positionLower = (currentPosition || '').toLowerCase();
+        const isFacultyOrStaff = positionLower.includes('faculty') || positionLower.includes('staff');
+
+        // Faculty/Staff should only see returned documents they submitted.
+        // Processing offices can see returned docs only if routed/assigned to them.
+        if (isFacultyOrStaff) {
+          return isSubmitted;
+        }
+
+        return isSubmitted || isAssignedOrForwarded || isRoutedToMe;
       }
       
       // For other statuses, show documents that are:
@@ -2240,12 +2629,88 @@ function Edashboard({ onLogout }) {
       // 2. Assigned to current user
       // 3. Forwarded to current user
       // 4. Routed to current user's position (nextOffice or currentOffice matches)
-      const isSubmitted = isSubmittedByCurrentUser(doc);
+      const isSubmitted = isDocumentSubmittedByCurrentUser(doc);
       const isAssignedOrForwarded = isDocumentAssignedToEmployee(doc, employee._id);
       
       return isSubmitted || isAssignedOrForwarded || isRoutedToMe;
     });
   };
+
+  const getFilteredHistoryDocumentsForSummary = useCallback(() => {
+    if (!employee || !allDocuments.length) return [];
+
+    const normalizeOfficeName = (name) => {
+      if (!name) return '';
+      const n = String(name)
+        .toLowerCase()
+        .replace(/[()]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (n.includes('director') && n.includes('instruction')) return 'director of instruction';
+      if (n.includes('program head') || n === 'ph') return 'program head';
+      if (n.includes('loading coordinator')) return 'loading coordinator';
+      if (n.includes('academic adviser') || n.includes('academic advisor')) return 'academic adviser';
+      if (n.includes('vpaa') || n.includes('vice president for academic affairs')) return 'vpaa';
+      if (n.includes('academic vice president') || n.includes('academic vp')) return 'academic vice president';
+      if (n.includes('vice president') || n === 'vp') return 'vice president';
+      if (n.includes('president') || n === 'op' || n.includes('office of the president')) return 'office of the president';
+      if (n.includes('dean')) return 'dean';
+      if (n.includes('encoder')) return 'encoder';
+      if (n.includes('hr') || n.includes('human resources') || n.includes('human resource')) return 'hr';
+      if (n.includes('records')) return 'records office';
+      if (n.includes('executive assistant')) return 'executive assistant';
+      if (n.includes('immediate supervisor')) return 'immediate supervisor';
+      return n;
+    };
+
+    const isRoutedToMyPosition = (doc) => {
+      const currentPosition = employee?.position;
+      if (!currentPosition) return false;
+      const normPosition = normalizeOfficeName(currentPosition);
+      const normNext = normalizeOfficeName(doc.nextOffice || '');
+      const normCurrent = normalizeOfficeName(doc.currentOffice || '');
+      return (normNext && (normNext === normPosition || normNext.includes(normPosition) || normPosition.includes(normNext))) ||
+             (normCurrent && (normCurrent === normPosition || normCurrent.includes(normPosition) || normPosition.includes(normCurrent)));
+    };
+
+    return allDocuments.filter(doc => {
+      const hasRoutingHistory = doc.routingHistory && Array.isArray(doc.routingHistory) && doc.routingHistory.length > 0;
+      const hasActions = hasRoutingHistory && doc.routingHistory.some(entry =>
+        entry.action && ['forwarded', 'approved', 'rejected', 'returned', 'received', 'on hold', 'resubmitted'].includes(entry.action.toLowerCase())
+      );
+      const hasBeenReviewed = doc.reviewer && doc.reviewDate;
+      const hasHistorySignal = hasActions || hasBeenReviewed;
+      if (!hasHistorySignal) return false;
+
+      const isSubmitted = isDocumentSubmittedByCurrentUser(doc);
+      const isAssignedOrForwarded = isDocumentAssignedToEmployee(doc, employee._id);
+      const isRoutedToMe = isRoutedToMyPosition(doc);
+      const currentPosition = employee?.position || '';
+      const currentName = employee?.name || user?.username || '';
+      const normalizedMyOffice = normalizeOfficeName(currentPosition);
+      const normalizedMyName = String(currentName).toLowerCase();
+      const hasBeenHandledByMe = hasRoutingHistory && doc.routingHistory.some(entry => {
+        const entryOffice = normalizeOfficeName(entry?.office || '');
+        const entryHandler = String(entry?.handler || entry?.performedBy || '').toLowerCase();
+
+        const officeMatch = entryOffice && normalizedMyOffice && (
+          entryOffice === normalizedMyOffice ||
+          entryOffice.includes(normalizedMyOffice) ||
+          normalizedMyOffice.includes(entryOffice)
+        );
+
+        const handlerMatch = entryHandler && normalizedMyName && (
+          entryHandler === normalizedMyName ||
+          entryHandler.includes(normalizedMyName) ||
+          normalizedMyName.includes(entryHandler)
+        );
+
+        return officeMatch || handlerMatch;
+      });
+
+      return isSubmitted || isAssignedOrForwarded || isRoutedToMe || hasBeenHandledByMe;
+    });
+  }, [employee, allDocuments, user, isDocumentAssignedToEmployee, isDocumentSubmittedByCurrentUser]);
 
   // Get unique submitters for filter dropdown (from document management documents)
   const getUniqueSubmitters = () => {
@@ -2272,16 +2737,19 @@ function Edashboard({ onLogout }) {
     return matchesSearch && matchesStatus && matchesSubmitter;
   }) : [];
 
-  // Recalculate Dashboard summary stats based on Document Management documents
+  // Recalculate Dashboard summary stats:
+  // Incoming = Document Management count
+  // Outgoing = History Logs count
   useEffect(() => {
-    if (employee && allDocuments.length > 0) {
-      const docManagementDocs = getDocumentManagementDocuments();
-      if (docManagementDocs.length >= 0) {
-        calculateSummaryStats(docManagementDocs);
-      }
+    if (employee) {
+      const incomingDocs = getDocumentManagementDocuments();
+      const outgoingDocs = getFilteredHistoryDocumentsForSummary();
+      calculateSummaryStats(
+        Array.isArray(incomingDocs) ? incomingDocs : [],
+        Array.isArray(outgoingDocs) ? outgoingDocs : []
+      );
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allDocuments, employee, allEmployees]);
+  }, [employee, allDocuments, documents, allEmployees, user, getFilteredHistoryDocumentsForSummary, calculateSummaryStats]);
 
   const handleLogout = () => {
     setShowLogoutModal(true);
@@ -2556,7 +3024,7 @@ function Edashboard({ onLogout }) {
     }
   };
 
-  // Travel Order Workflow: Sender → Immediate Supervisor → HR → Records Office → Executive Assistant → President → Records Office → HR → Back to Sender
+  // Travel Order Workflow: Sender → Immediate Supervisor → HR → Records Office → Executive Assistant → President → Records Office → HR
   const getTravelOrderNextOffice = (currentOffice, routingHistory, submittedBy) => {
     // Define the workflow sequence
     const workflow = [
@@ -2679,21 +3147,19 @@ function Edashboard({ onLogout }) {
       return workflow[currentIndex + 1];
     }
     
-    // If at the end of workflow (completed at second HR visit), return null
-    // HR will have final decision buttons: Approve, Return, or On Hold
+    // Final HR visit: close workflow via Accept & Forward → COMPLETED (after President's stage)
     if (currentIndex === workflow.length - 1) {
-      return null; // null means end of workflow, HR makes final decision
+      return 'COMPLETED';
     }
     
     // Default to HR if something went wrong
     return 'HR';
   };
 
-  // Requested Subject Workflow: Sender → Academic Adviser → Program Head → Dean → Director of Instruction → VPAA → Dean → Encoder
+  // Requested Subject Workflow: Sender (Academic Adviser) → Program Head → Dean → Director of Instruction → VPAA → Dean → Encoder
   const getRequestedSubjectNextOffice = (currentOffice, routingHistory, submittedBy) => {
     // Define the workflow sequence
     const workflow = [
-      'Academic Adviser',
       'Program Head',
       'Dean', // First visit
       'Director of Instruction',
@@ -2702,9 +3168,9 @@ function Edashboard({ onLogout }) {
       'Encoder'
     ];
     
-    // If no current office, start at Academic Adviser
+    // If no current office, start at Program Head
     if (!currentOffice) {
-      return 'Academic Adviser';
+      return 'Program Head';
     }
     
     // Normalize office names for matching (remove abbreviations in parentheses)
@@ -2782,52 +3248,52 @@ function Edashboard({ onLogout }) {
     // Find current position in workflow, considering visit count for duplicate stages (Dean)
     let currentIndex = -1;
     
-    // Special case: If we're at Program Head, we should be at index 1, and next is Dean (index 2)
+    // Special case: If we're at Program Head, we should be at index 0, and next is Dean (index 1)
     // This handles the case where Program Head is reviewing/approving
     if (effectiveCurrentOffice === 'Program Head') {
-      const deanFirstVisitCompleted = completedStages.includes(2); // Dean at index 2
+      const deanFirstVisitCompleted = completedStages.includes(1); // Dean at index 1
       
       // If Dean (first visit) hasn't been completed yet, we're at Program Head (index 1)
       // This ensures that after Program Head approves, it goes to Dean, not Director
       if (!deanFirstVisitCompleted) {
-        currentIndex = 1; // Program Head position (index 1), next will be Dean (index 2)
-        console.log('✅ Special case: At Program Head, Dean not completed, setting index to 1 (next will be Dean)');
+        currentIndex = 0; // Program Head position (index 0), next will be Dean (index 1)
+        console.log('✅ Special case: At Program Head, Dean not completed, setting index to 0 (next will be Dean)');
       } else {
         // Dean has been completed, so if we're still at Program Head, use normal logic
         // This shouldn't happen in normal flow, but handle it anyway
-        currentIndex = 1;
+        currentIndex = 0;
       }
     }
     
-    // Special case: If we're at VPAA, we should be at index 4, and next is Dean (index 5)
+    // Special case: If we're at VPAA, we should be at index 3, and next is Dean (index 4)
     // This handles the case where VPAA is reviewing/approving
     if (effectiveCurrentOffice === 'VPAA') {
       const vpaaVisitCount = visitCounts['VPAA'] || 0;
       
-      // If VPAA hasn't approved yet (visitCount = 0), we're at VPAA (index 4)
-      // After VPAA approves, it should go to Dean (second visit, index 5)
+      // If VPAA hasn't approved yet (visitCount = 0), we're at VPAA (index 3)
+      // After VPAA approves, it should go to Dean (second visit, index 4)
       if (vpaaVisitCount === 0) {
-        currentIndex = 4; // VPAA position (index 4), next will be Dean (index 5)
-        console.log('✅ Special case: At VPAA, VPAA not yet approved, setting index to 4 (next will be Dean second visit)');
+        currentIndex = 3; // VPAA position (index 3), next will be Dean (index 4)
+        console.log('✅ Special case: At VPAA, VPAA not yet approved, setting index to 3 (next will be Dean second visit)');
       } else {
         // VPAA has already approved, so we should be past VPAA
-        // This means we should be at Dean (second visit, index 5)
-        currentIndex = 5;
-        console.log('✅ Special case: At VPAA, but VPAA already approved, setting index to 5 (Dean second visit)');
+        // This means we should be at Dean (second visit, index 4)
+        currentIndex = 4;
+        console.log('✅ Special case: At VPAA, but VPAA already approved, setting index to 4 (Dean second visit)');
       }
     }
     
     // Additional check: If currentOffice doesn't match VPAA but routing history shows VPAA just approved,
     // we need to determine the next office based on completed stages
-    if (currentIndex === -1 && completedStages.includes(4)) {
-      // VPAA has completed (index 4), so next should be Dean (index 5)
+    if (currentIndex === -1 && completedStages.includes(3)) {
+      // VPAA has completed (index 3), so next should be Dean (index 4)
       // This handles cases where currentOffice might not be set correctly
       const vpaaVisitCount = visitCounts['VPAA'] || 0;
-      if (vpaaVisitCount >= 1 && !completedStages.includes(5)) {
+      if (vpaaVisitCount >= 1 && !completedStages.includes(4)) {
         // VPAA has approved, but Dean (second visit) hasn't been completed yet
-        // So we should be at Dean (second visit, index 5)
-        currentIndex = 5;
-        console.log('✅ Fallback: VPAA completed, setting current index to 5 (Dean second visit)');
+        // So we should be at Dean (second visit, index 4)
+        currentIndex = 4;
+        console.log('✅ Fallback: VPAA completed, setting current index to 4 (Dean second visit)');
       }
     }
     
@@ -2849,20 +3315,19 @@ function Edashboard({ onLogout }) {
     if (currentIndex === -1) {
       const firstOccurrenceIndex = workflow.findIndex(o => normalizeOfficeName(o) === effectiveCurrentOffice);
       if (firstOccurrenceIndex !== -1) {
-        // If we're at Dean and Stage 2 (Program Head) is completed but Stage 4 (Director) is not,
-        // then we're at Stage 3 (Dean first visit)
-        if (effectiveCurrentOffice === 'Dean' && completedStages.includes(1) && !completedStages.includes(3)) {
-          currentIndex = 2; // Stage 3: Dean first visit
+        // If we're at Dean and Program Head is completed but Director is not,
+        // then we're at Dean first visit
+        if (effectiveCurrentOffice === 'Dean' && completedStages.includes(0) && !completedStages.includes(2)) {
+          currentIndex = 1; // Dean first visit
         }
-        // If all stages 0-4 (up to and including Stage 5: VPAA) are completed,
-        // then we're at Stage 6 (Dean second visit)
+        // If all stages 0-3 (up to and including VPAA) are completed,
+        // then we're at Dean second visit
         else if (effectiveCurrentOffice === 'Dean' && 
-                 completedStages.includes(0) && // Academic Adviser
-                 completedStages.includes(1) && // Program Head
-                 completedStages.includes(2) && // Dean (first visit)
-                 completedStages.includes(3) && // Director of Instruction
-                 completedStages.includes(4)) { // VPAA
-          currentIndex = 5; // Stage 6: Dean second visit
+                 completedStages.includes(0) && // Program Head
+                 completedStages.includes(1) && // Dean (first visit)
+                 completedStages.includes(2) && // Director of Instruction
+                 completedStages.includes(3)) { // VPAA
+          currentIndex = 4; // Dean second visit
         }
         // For other offices, use first occurrence if not visited, or check based on completed stages
         else if ((visitCounts[effectiveCurrentOffice] || 0) === 0) {
@@ -2898,69 +3363,148 @@ function Edashboard({ onLogout }) {
       return null; // null means end of workflow, Encoder makes final decision
     }
     
-    // Default to Academic Adviser if something went wrong
-    console.log('⚠️ No match found, defaulting to Academic Adviser');
-    return 'Academic Adviser';
-  };
-
-  // Faculty Loading Workflow: Sender → Program Head → Dean → Academic VP → Back to Sender
-  const getFacultyLoadingNextOffice = (currentOffice, routingHistory, submittedBy) => {
-    // Define the workflow sequence
-    const workflow = [
-      'Program Head',
-      'Dean',
-      'Academic Vice President'
-    ];
-    
-    // If no current office, start at Program Head
-    if (!currentOffice) {
+    // Backward compatibility for old records that still point to Academic Adviser
+    if (effectiveCurrentOffice === 'Academic Adviser') {
       return 'Program Head';
     }
-    
-    // Normalize office names for matching (remove abbreviations in parentheses)
-    const normalizeOfficeName = (name) => {
-      if (!name) return '';
-      // Remove parenthetical abbreviations like (PH), (ACP), etc.
-      const withoutParens = name.replace(/\s*\([^)]*\)\s*/g, '').trim();
-      const normalized = withoutParens.toLowerCase().trim();
-      
-      if (normalized.includes('program head') || normalized === 'ph') return 'Program Head';
-      if (normalized.includes('dean')) return 'Dean';
-      if (normalized.includes('academic') && (normalized.includes('vp') || normalized.includes('vice president'))) return 'Academic Vice President';
-      if (normalized === 'academic vp' || normalized === 'avp' || normalized === 'acp') return 'Academic Vice President';
-      
-      return withoutParens;
-    };
-    
-    const normalizedCurrentOffice = normalizeOfficeName(currentOffice);
-    
-    console.log('🔍 Faculty Loading Next Office Check:', {
-      originalCurrentOffice: currentOffice,
-      normalizedCurrentOffice: normalizedCurrentOffice,
-      workflow: workflow
-    });
-    
-    // Find current position in workflow
-    const currentIndex = workflow.findIndex(office => normalizeOfficeName(office) === normalizedCurrentOffice);
-    
-    console.log('📍 Current Index:', currentIndex, 'Workflow Length:', workflow.length);
-    
-    // Move to next office in workflow
-    if (currentIndex >= 0 && currentIndex < workflow.length - 1) {
-      const nextOffice = workflow[currentIndex + 1];
-      console.log('➡️ Returning next office:', nextOffice);
-      return nextOffice;
-    }
-    
-    // If at the end of workflow (completed at Academic VP), return null
-    // Academic VP will have final decision buttons: Approve, Return, or On Hold
-    if (currentIndex === workflow.length - 1) {
-      console.log('✅ At final stage, returning null');
-      return null; // null means end of workflow, Academic VP makes final decision
-    }
-    
+
     // Default to Program Head if something went wrong
     console.log('⚠️ No match found, defaulting to Program Head');
+    return 'Program Head';
+  };
+
+  // Faculty Loading Workflow: Sender → PH → Loading Coordinator → PH → Dean → Academic VP → Back to Sender
+  const getFacultyLoadingNextOffice = (currentOffice, routingHistory) => {
+    const workflow = [
+      'Program Head',          // Stage 1
+      'Loading Coordinator',   // Stage 2
+      'Program Head',          // Stage 3 (second visit)
+      'Dean',                  // Stage 4
+      FACULTY_LOADING_FINAL_STAGE_LABEL, // Stage 5 — final approver
+    ];
+
+    const normalizeOfficeName = (name) => {
+      if (!name) return '';
+      const withoutParens = name.replace(/\s*\([^)]*\)\s*/g, '').trim();
+      const n = withoutParens.toLowerCase().trim();
+      if (n.includes('program head') || n === 'ph') return 'Program Head';
+      if (n.includes('loading coordinator')) return 'Loading Coordinator';
+      if (n.includes('dean')) return 'Dean';
+      if (
+        n.includes('vpaa') || n.includes('vice president for academic affairs') ||
+        n.includes('academic vice president') ||
+        (n.includes('academic') && (n.includes('vp') || n.includes('vice president'))) ||
+        n === 'avp' || n === 'acp' || n === 'academic vp'
+      ) return 'Academic Vice President';
+      return withoutParens;
+    };
+
+    if (!currentOffice) return 'Program Head';
+
+    const normalizedCurrent = normalizeOfficeName(currentOffice);
+
+    // Count how many times Program Head and Loading Coordinator have APPROVED
+    // so we can disambiguate the two PH visits.
+    const approvedVisits = {};
+    if (Array.isArray(routingHistory)) {
+      routingHistory.forEach(entry => {
+        const act = entry.action?.toLowerCase() || '';
+        if (act.includes('approved') || act.includes('forwarded')) {
+          const office = normalizeOfficeName(entry.office || '');
+          if (office) approvedVisits[office] = (approvedVisits[office] || 0) + 1;
+        }
+      });
+    }
+
+    console.log('🔍 Faculty Loading Next Office Check:', {
+      originalCurrentOffice: currentOffice,
+      normalizedCurrentOffice: normalizedCurrent,
+      workflow,
+      approvedVisits
+    });
+
+    // Program Head logic — first visit → LC; second visit → Dean
+    if (normalizedCurrent === 'Program Head') {
+      const lcVisits = approvedVisits['Loading Coordinator'] || 0;
+      const phVisits = approvedVisits['Program Head'] || 0;
+      // If LC hasn't been visited yet → send to LC (1st PH visit)
+      // If LC already approved → send to Dean (2nd PH visit)
+      if (lcVisits === 0) return 'Loading Coordinator';
+      return 'Dean';
+    }
+
+    if (normalizedCurrent === 'Loading Coordinator') return 'Program Head';
+    if (normalizedCurrent === 'Dean') return FACULTY_LOADING_FINAL_STAGE_LABEL;
+
+    // At Academic Vice President → end of workflow
+    if (normalizedCurrent === 'Academic Vice President') {
+      console.log('✅ Faculty Loading: at final stage (Academic VP), returning null');
+      return null;
+    }
+
+    console.log('⚠️ Faculty Loading: no match found, defaulting to Program Head');
+    return 'Program Head';
+  };
+
+  // Endorsement Form Workflow: Sender → PH → Dean → VP → Records → Executive Assistant → President → Records
+  const getEndorsementFormNextOffice = (currentOffice, routingHistory = []) => {
+    const normalizeOfficeName = (name) => {
+      if (!name) return '';
+      const withoutParens = name.replace(/\s*\([^)]*\)\s*/g, '').trim();
+      const n = withoutParens.toLowerCase().trim();
+      if (n.includes('program head') || n === 'ph') return 'Program Head';
+      if (n.includes('dean')) return 'Dean';
+      if (
+        n.includes('vice president') || n === 'vp' ||
+        n.includes('vpaa') || n.includes('vice president for academic affairs') ||
+        n.includes('academic vice president') ||
+        (n.includes('academic') && n.includes('vp'))
+      ) return 'Vice President';
+      if (n.includes('records')) return 'Records Office';
+      if (n.includes('executive assistant') || n.includes('executive asst')) return 'Executive Assistant';
+      if (
+        n.includes('office of the president') || n === 'op' ||
+        (n.includes('president') && !n.includes('vice'))
+      ) return 'President';
+      return withoutParens;
+    };
+
+    if (!currentOffice) return 'Program Head';
+
+    const normalizedCurrent = normalizeOfficeName(currentOffice);
+
+    console.log('🔍 Endorsement Form Next Office Check:', {
+      originalCurrentOffice: currentOffice,
+      normalizedCurrentOffice: normalizedCurrent
+    });
+
+    const normalizedHistory = Array.isArray(routingHistory) ? routingHistory : [];
+    const approvedVisits = normalizedHistory.reduce((acc, entry) => {
+      const action = (entry?.action || '').toLowerCase();
+      const isApprovalAction = action.includes('approved') || action.includes('forwarded');
+      if (!isApprovalAction) return acc;
+      const normalizedOffice = normalizeOfficeName(entry?.office || '');
+      if (!normalizedOffice) return acc;
+      acc[normalizedOffice] = (acc[normalizedOffice] || 0) + 1;
+      return acc;
+    }, {});
+
+    const recordsVisits = approvedVisits['Records Office'] || 0;
+
+    if (normalizedCurrent === 'Program Head') return 'Dean';
+    if (normalizedCurrent === 'Dean') return 'Vice President';
+    if (normalizedCurrent === 'Vice President') return 'Records Office';
+    if (normalizedCurrent === 'Records Office') {
+      if (recordsVisits >= 2) {
+        console.log('✅ Endorsement Form: at final stage (Records second visit), returning null');
+        return null;
+      }
+      return recordsVisits >= 1 ? null : 'Executive Assistant';
+    }
+    if (normalizedCurrent === 'Executive Assistant') return 'President';
+    if (normalizedCurrent === 'President') return 'Records Office';
+
+    console.log('⚠️ Endorsement Form: no match, defaulting to Program Head');
     return 'Program Head';
   };
 
@@ -2969,6 +3513,15 @@ function Edashboard({ onLogout }) {
       // Validate: Document Type is required
       if (!documentForm.type || documentForm.type.trim() === '') {
         alert('Please select a Document Type before submitting.');
+        return;
+      }
+
+      if (
+        editingDocument &&
+        editingDocument.status === 'Returned' &&
+        !isDocumentSubmittedByCurrentUser(editingDocument)
+      ) {
+        alert('Only the person who submitted this document can edit and resubmit it after it is returned.');
         return;
       }
       
@@ -3013,14 +3566,16 @@ function Edashboard({ onLogout }) {
       
       // Check if editing a returned document
       const isEditing = editingDocument && editingDocument.status === 'Returned';
-      
-      // Check if this is a Travel Order or Requested Subject resubmission (needed before status setting)
+
+      // Classify document type
       const docType = (documentForm.type?.toUpperCase() || '');
       const docCategory = documentForm.category || '';
       const isTravelOrder = docType.includes('TRAVEL ORDER') || docCategory === 'Travel Order';
       const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory === 'Requested Subject';
-      const isReturnedResubmission = isEditing && editingDocument && editingDocument.status === 'Returned' && (isTravelOrder || isRequestedSubject);
-      
+
+      // ALL returned-document re-uploads resume from the office that returned it, preserving routing history
+      const isReturnedResubmission = isEditing && editingDocument && editingDocument.status === 'Returned';
+
       // Add all document fields
       if (!isEditing) {
         formData.append('documentId', generateDocumentId());
@@ -3029,147 +3584,88 @@ function Edashboard({ onLogout }) {
       formData.append('name', documentForm.attachments && documentForm.attachments.length > 0 ? documentForm.attachments[0].name : (isEditing ? editingDocument.name : `Document_${new Date().toISOString().split('T')[0]}`));
       formData.append('type', documentForm.type || 'Report');
       formData.append('description', documentForm.notes || '');
-      // Use the sender from the form (which should be the logged-in user's name)
-      // Fallback to employee name, then username, then 'Unknown User'
       formData.append('submittedBy', documentForm.sender || employee?.name || user?.username || 'Unknown User');
-      // Status will be set later for Travel Order or Requested Subject resubmissions, otherwise set it here
-      if (!isReturnedResubmission) {
-      formData.append('status', isEditing ? 'Submitted' : (selectedEmployee ? 'Under Review' : 'Submitted'));
-      }
-      
-      // Determine nextOffice based on document type and routing workflow
+
+      // Status re-enters the workflow
+      formData.append('status', 'Processing');
+
+      // Helper: normalize an office name to a canonical workflow stage name
+      const normalizeReturnOffice = (officeName) => {
+        if (!officeName) return '';
+        let name = officeName;
+        // Strip " of <department>" suffixes
+        if (name.includes(' of ')) name = name.split(' of ')[0].trim();
+        const n = name.toLowerCase().trim();
+        if (n.includes('immediate supervisor') || n === 'im') return 'Immediate Supervisor';
+        if (n.includes('hr') || n.includes('human resources')) return 'HR';
+        if (n.includes('records')) return 'Records Office';
+        if (n.includes('executive assistant')) return 'Executive Assistant';
+        if (n.includes('loading coordinator')) return 'Loading Coordinator';
+        if (n.includes('program head') || n === 'ph') return 'Program Head';
+        if (n.includes('dean')) return 'Dean';
+        if (n.includes('vpaa') || n.includes('vice president for academic affairs')) return 'VPAA';
+        if (n.includes('academic vice president') || n.includes('academic vp') || n === 'avp') return 'Academic Vice President';
+        if (n.includes('vice president') || (n.includes('vp') && !n.includes('academic') && !n.includes('vpaa'))) return 'Vice President';
+        if (n.includes('president') || n.includes('op')) return 'Office of the President';
+        if (n.includes('academic adviser') || n.includes('academic advisor')) return 'Academic Adviser';
+        if (n.includes('director') && n.includes('instruction')) return 'Director of Instruction';
+        if (n.includes('encoder')) return 'Encoder';
+        if (n.includes('secretary')) return 'Secretary';
+        return name; // fallback: keep as-is
+      };
+
+      // Determine nextOffice:
+      // - For resubmissions: go back to the office that returned it (resume flow from that stage)
+      // - For new submissions: start at Stage 1
       let nextOffice = '';
-      
-      // Universal resubmission logic: When ANY document is returned and resubmitted, 
-      // go back to the office that returned it (works for all document types)
-      if (isReturnedResubmission && editingDocument.routingHistory) {
-        // Find the last office that returned the document
-        const routingHistory = Array.isArray(editingDocument.routingHistory) 
-          ? editingDocument.routingHistory 
+      if (selectedEmployee) {
+        nextOffice = selectedEmployee.position;
+      } else if (isReturnedResubmission && editingDocument.routingHistory) {
+        // Find the last "returned" entry and send back to that office
+        const routingHistory = Array.isArray(editingDocument.routingHistory)
+          ? editingDocument.routingHistory
           : [];
-        
-        // Find the last return entry - this is the office that returned it
         const lastReturnEntry = [...routingHistory]
           .reverse()
-          .find(entry => {
-            const action = entry.action?.toLowerCase() || '';
-            return action.includes('returned');
-          });
-        
+          .find(entry => (entry.action || '').toLowerCase().includes('return'));
         if (lastReturnEntry && lastReturnEntry.office) {
-          // Normalize office name - extract base office name (e.g., "Immediate Supervisor" from "Immediate Supervisor of FACET")
-          let returnOffice = lastReturnEntry.office;
-          
-          // Extract base office name by removing department suffixes
-          if (returnOffice.includes(' of ')) {
-            // Split on " of " and take the first part
-            returnOffice = returnOffice.split(' of ')[0].trim();
-          }
-          
-          // Normalize common variations for all office types
-          const officeLower = returnOffice.toLowerCase();
-          if (officeLower.includes('immediate supervisor') || officeLower === 'im') {
-            nextOffice = 'Immediate Supervisor';
-          } else if (officeLower.includes('hr') || officeLower.includes('human resources')) {
-            nextOffice = 'HR';
-          } else if (officeLower.includes('records')) {
-            nextOffice = 'Records Office';
-          } else if (officeLower.includes('executive assistant')) {
-            nextOffice = 'Executive Assistant';
-          } else if (officeLower.includes('president') || officeLower.includes('op')) {
-            nextOffice = 'President';
-          } else if (officeLower.includes('program head') || officeLower === 'ph') {
-            nextOffice = 'Program Head';
-          } else if (officeLower.includes('dean')) {
-            nextOffice = 'Dean';
-          } else if (officeLower.includes('academic vice president') || officeLower.includes('academic vp') || officeLower === 'avp') {
-            nextOffice = 'Academic Vice President';
-          } else if (officeLower.includes('vice president') || officeLower.includes('vp') && !officeLower.includes('academic')) {
-            nextOffice = 'Vice President';
-          } else if (officeLower.includes('secretary')) {
-            nextOffice = 'Secretary';
-          } else if (officeLower.includes('academic adviser') || officeLower.includes('academic advisor')) {
-            nextOffice = 'Academic Adviser';
-          } else if (officeLower.includes('head') && !officeLower.includes('program')) {
-            nextOffice = 'Head';
-          } else if (officeLower.includes('director of instruction') || officeLower.includes('director for instruction')) {
-            nextOffice = 'Director of Instruction';
-          } else if (officeLower.includes('vpaa')) {
-            nextOffice = 'VPAA';
-          } else if (officeLower.includes('encoder')) {
-            nextOffice = 'Encoder';
-          } else {
-            // Use the normalized base name
-            nextOffice = returnOffice;
-          }
-          
-          // Set status to "Under Review" so it appears in the office's queue
-          formData.set('status', 'Under Review');
-        } else {
-          // No return entry found, determine nextOffice based on document type (default workflow)
-          // This will be handled in the else block below
+          nextOffice = normalizeReturnOffice(lastReturnEntry.office);
         }
-      }
-      
-      // If not a resubmission or no return entry found, determine nextOffice normally
-      if (!nextOffice) {
-      if (selectedEmployee) {
-        // If employee is selected, use their position
-        nextOffice = selectedEmployee.position;
+        // If we still have no office (no return entry found), fall back to Stage 1
+        if (!nextOffice) {
+          nextOffice = isTravelOrder ? 'Immediate Supervisor'
+            : isRequestedSubject ? 'Program Head'
+            : 'Program Head';
+        }
       } else {
-          // Check for other document types
-        const isFacultyLoading = docType.includes('FACULTY LOADING') || docCategory === 'Faculty Loading';
-        const isEndorsementForm = docType.includes('ENDORSEMENT') || docCategory === 'Endorsement Form';
-        const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory === 'Requested Subject';
-        
-        // Faculty Loading routing - routes to Academic VP: Sender → Program Head → Dean → Academic VP → Back to Sender
-        if (isFacultyLoading) {
-          // Faculty Loading always starts at Program Head
-          nextOffice = 'Program Head';
-        }
-          // Travel Order routing - HR workflow: Sender → Immediate Supervisor → HR → Records Office → Executive Assistant → President → Records Office → HR → Back to Sender
-        else if (isTravelOrder) {
-          // Travel Order always starts at Immediate Supervisor
-          nextOffice = 'Immediate Supervisor';
-        }
-        // Endorsement Form routing: Sender → Program Head → Dean → Vice President → Office of the President → Back to Sender
-        else if (isEndorsementForm) {
-          // Endorsement Form always starts at Program Head
-          nextOffice = 'Program Head';
-        }
-        // Requested Subject routing: Academic Adviser → Program Head → Dean → Director of Instruction → VPAA → Dean → Encoder
-        else if (isRequestedSubject) {
-          // Requested Subject always starts at Academic Adviser
-          nextOffice = 'Academic Adviser';
-          }
-        }
+        // Fresh submission — Stage 1 per document type
+        if (isTravelOrder) nextOffice = 'Immediate Supervisor';
+        else if (isRequestedSubject) nextOffice = 'Program Head';
+        else nextOffice = 'Program Head'; // Endorsement Form, Faculty Loading, default
       }
-      
-      // Set nextOffice - for resubmissions, this goes back to the office that returned it
+
       formData.append('nextOffice', nextOffice);
-      formData.append('currentOffice', nextOffice); // Set currentOffice to match nextOffice initially
-      
+      formData.append('currentOffice', nextOffice);
+
       // Clear reviewer, reviewDate, and comments when resubmitting
       formData.append('reviewer', '');
-      formData.append('reviewDate', ''); // Backend will convert empty string to null
+      formData.append('reviewDate', '');
       formData.append('comments', '');
       formData.append('category', '');
-      
+
       // Assign to employee if selected
       if (selectedEmployee) {
         formData.append('assignedTo', JSON.stringify([selectedEmployee._id]));
         formData.append('currentHandler', selectedEmployee._id);
       } else {
         formData.append('assignedTo', JSON.stringify([]));
-        // Don't send currentHandler if empty - backend will handle as null
-        // formData.append('currentHandler', '');
       }
-      
+
       formData.append('forwardedBy', user?.username || 'Unknown User');
       if (selectedEmployee) {
         formData.append('forwardedDate', new Date().toISOString());
       }
-      
+
       // Travel Order specific fields
       if (travelOrderDepartureDate) {
         formData.append('travelOrderDepartureDate', travelOrderDepartureDate);
@@ -3180,14 +3676,11 @@ function Edashboard({ onLogout }) {
       }
       formData.append('travelOrderReturnTime', documentForm.travelOrderReturnTime || '');
 
-      // Handle routing history for new submissions and resubmissions
-      if (isReturnedResubmission && (isTravelOrder || isRequestedSubject) && editingDocument.routingHistory) {
-        // For Travel Order or Requested Subject resubmissions: preserve existing routing history and add resubmission entry
-        const existingHistory = Array.isArray(editingDocument.routingHistory) 
-          ? [...editingDocument.routingHistory] 
+      // Routing history: always preserve existing history and append a resubmission entry
+      if (isReturnedResubmission) {
+        const existingHistory = Array.isArray(editingDocument.routingHistory)
+          ? [...editingDocument.routingHistory]
           : [];
-        
-        // Add resubmission entry
         existingHistory.push({
           office: 'Submitted',
           toOffice: nextOffice,
@@ -3196,13 +3689,12 @@ function Edashboard({ onLogout }) {
           handler: documentForm.sender || employee?.name || user?.username || 'Unknown User',
           timestamp: new Date().toISOString(),
           date: new Date().toISOString(),
-          comments: `Document resubmitted and forwarded to ${nextOffice}`
+          comments: `Document resubmitted — sent back to ${nextOffice}`
         });
-        
         formData.append('routingHistory', JSON.stringify(existingHistory));
-        console.log('📋 Routing history preserved and resubmission entry added:', existingHistory);
-      } else if ((!isEditing || isReturnedResubmission) && nextOffice) {
-        // For new submissions or non-Travel Order/Requested Subject resubmissions: create initial routing history
+        console.log('📋 Resubmission: routing history preserved, resuming at:', nextOffice);
+      } else if (nextOffice) {
+        // Fresh submission
         const initialRoutingHistory = [{
           office: 'Submitted',
           toOffice: nextOffice,
@@ -3542,7 +4034,11 @@ function Edashboard({ onLogout }) {
   // Handle editing a returned document
   const handleEditReturnedDocument = async (document) => {
     if (document.status !== 'Returned') return;
-    
+    if (!isDocumentSubmittedByCurrentUser(document)) {
+      alert('Only the person who submitted this document can edit it after it is returned.');
+      return;
+    }
+
     setEditingDocument(document);
     // Open the SAME modal used for adding, based on document type
     const docTypeUpper = (document.type || '').toUpperCase();
@@ -3742,40 +4238,6 @@ function Edashboard({ onLogout }) {
                 History Logs
               </button>
             </li>
-            <li style={{ marginBottom: '5px' }}>
-              <button
-                onClick={() => setActiveSidebarTab('forwarded')}
-                style={{
-                  width: '100%',
-                  padding: '12px 20px',
-                  backgroundColor: activeSidebarTab === 'forwarded' ? '#34495e' : 'transparent',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  textAlign: 'left',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  transition: 'all 0.3s ease',
-                  borderLeft: activeSidebarTab === 'forwarded' ? '4px solid #3498db' : '4px solid transparent'
-                }}
-                onMouseEnter={(e) => {
-                  if (activeSidebarTab !== 'forwarded') {
-                    e.target.style.backgroundColor = '#34495e';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (activeSidebarTab !== 'forwarded') {
-                    e.target.style.backgroundColor = 'transparent';
-                  }
-                }}
-              >
-                Forwarded Documents Report
-              </button>
-            </li>
           </ul>
         </nav>
 
@@ -3816,25 +4278,29 @@ function Edashboard({ onLogout }) {
       {/* Main Content */}
       <div style={{ 
         flexGrow: 1, 
-        padding: '20px', 
+        width: 'calc(100% - 250px)',
+        boxSizing: 'border-box',
+        padding: '24px 28px', 
         backgroundColor: '#ecf0f1',
         marginLeft: '250px',
-        minHeight: '100vh'
+        minHeight: '100vh',
+        fontSize: '16px',
+        lineHeight: 1.5
       }}>
         {/* Header Section */}
         <div style={{
           background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
           color: 'white',
-          padding: '15px 20px',
-          borderRadius: '8px',
-          marginBottom: '15px',
+          padding: '18px 24px',
+          borderRadius: '10px',
+          marginBottom: '18px',
           boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
           position: 'relative'
         }}>
           <div style={{ textAlign: 'center' }}>
             <h1 style={{ 
               margin: '0', 
-              fontSize: '22px', 
+              fontSize: 'clamp(22px, 2.2vw, 30px)', 
               fontWeight: '700' 
             }}>
               Welcome{user ? `, ${user.username}` : ''} to Employee Dashboard
@@ -3842,7 +4308,7 @@ function Edashboard({ onLogout }) {
             {employee && (
               <p style={{
                 margin: '5px 0 0 0',
-                fontSize: '13px',
+                fontSize: '15px',
                 opacity: '0.9'
               }}>
                 {employee.position} • {employee.department}
@@ -3904,24 +4370,24 @@ function Edashboard({ onLogout }) {
             }}>
               <h2 style={{ 
                 margin: '0 0 15px 0', 
-                fontSize: '18px', 
+                fontSize: '22px', 
                 fontWeight: '600',
                 color: '#2c3e50'
               }}>
                 Document Summary
               </h2>
               
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '10px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '14px' }}>
                 {/* Total Documents */}
                 <div style={{
                   backgroundColor: '#f8f9fa',
-                  padding: '12px',
+                  padding: '16px 14px',
                   borderRadius: '8px',
                   textAlign: 'center',
                   border: '2px solid #e9ecef'
                 }}>
                   <div style={{
-                    fontSize: '20px',
+                    fontSize: 'clamp(24px, 3vw, 32px)',
                     fontWeight: 'bold',
                     color: '#2c3e50',
                     marginBottom: '4px'
@@ -3929,7 +4395,7 @@ function Edashboard({ onLogout }) {
                     {summaryStats.total}
                   </div>
                   <div style={{
-                    fontSize: '11px',
+                    fontSize: '13px',
                     color: '#6c757d',
                     fontWeight: '600',
                     textTransform: 'uppercase',
@@ -3942,13 +4408,13 @@ function Edashboard({ onLogout }) {
                 {/* Incoming Documents */}
                 <div style={{
                   backgroundColor: '#e3f2fd',
-                  padding: '12px',
+                  padding: '16px 14px',
                   borderRadius: '8px',
                   textAlign: 'center',
                   border: '2px solid #bbdefb'
                 }}>
                   <div style={{
-                    fontSize: '20px',
+                    fontSize: 'clamp(24px, 3vw, 32px)',
                     fontWeight: 'bold',
                     color: '#1976d2',
                     marginBottom: '4px'
@@ -3956,7 +4422,7 @@ function Edashboard({ onLogout }) {
                     {summaryStats.incoming}
                   </div>
                   <div style={{
-                    fontSize: '11px',
+                    fontSize: '13px',
                     color: '#1565c0',
                     fontWeight: '600',
                     textTransform: 'uppercase',
@@ -3969,13 +4435,13 @@ function Edashboard({ onLogout }) {
                 {/* Outgoing Documents */}
                 <div style={{
                   backgroundColor: '#e8f5e8',
-                  padding: '12px',
+                  padding: '16px 14px',
                   borderRadius: '8px',
                   textAlign: 'center',
                   border: '2px solid #c8e6c9'
                 }}>
                   <div style={{
-                    fontSize: '20px',
+                    fontSize: 'clamp(24px, 3vw, 32px)',
                     fontWeight: 'bold',
                     color: '#388e3c',
                     marginBottom: '4px'
@@ -3983,7 +4449,7 @@ function Edashboard({ onLogout }) {
                     {summaryStats.outgoing}
                   </div>
                   <div style={{
-                    fontSize: '11px',
+                    fontSize: '13px',
                     color: '#2e7d32',
                     fontWeight: '600',
                     textTransform: 'uppercase',
@@ -3996,13 +4462,13 @@ function Edashboard({ onLogout }) {
                 {/* Active Status */}
                 <div style={{
                   backgroundColor: '#fff3e0',
-                  padding: '12px',
+                  padding: '16px 14px',
                   borderRadius: '8px',
                   textAlign: 'center',
                   border: '2px solid #ffcc02'
                 }}>
                   <div style={{
-                    fontSize: '20px',
+                    fontSize: 'clamp(24px, 3vw, 32px)',
                     fontWeight: 'bold',
                     color: '#f57c00',
                     marginBottom: '4px'
@@ -4010,7 +4476,7 @@ function Edashboard({ onLogout }) {
                     {summaryStats.active}
                   </div>
                   <div style={{
-                    fontSize: '11px',
+                    fontSize: '13px',
                     color: '#ef6c00',
                     fontWeight: '600',
                     textTransform: 'uppercase',
@@ -4023,13 +4489,13 @@ function Edashboard({ onLogout }) {
                 {/* Pending Status */}
                 <div style={{
                   backgroundColor: '#fce4ec',
-                  padding: '12px',
+                  padding: '16px 14px',
                   borderRadius: '8px',
                   textAlign: 'center',
                   border: '2px solid #f8bbd9'
                 }}>
                   <div style={{
-                    fontSize: '20px',
+                    fontSize: 'clamp(24px, 3vw, 32px)',
                     fontWeight: 'bold',
                     color: '#c2185b',
                     marginBottom: '4px'
@@ -4037,7 +4503,7 @@ function Edashboard({ onLogout }) {
                     {summaryStats.pending}
                   </div>
                   <div style={{
-                    fontSize: '11px',
+                    fontSize: '13px',
                     color: '#ad1457',
                     fontWeight: '600',
                     textTransform: 'uppercase',
@@ -4050,13 +4516,13 @@ function Edashboard({ onLogout }) {
                 {/* Completed Status */}
                 <div style={{
                   backgroundColor: '#e0f2f1',
-                  padding: '12px',
+                  padding: '16px 14px',
                   borderRadius: '8px',
                   textAlign: 'center',
                   border: '2px solid #b2dfdb'
                 }}>
                   <div style={{
-                    fontSize: '20px',
+                    fontSize: 'clamp(24px, 3vw, 32px)',
                     fontWeight: 'bold',
                     color: '#00796b',
                     marginBottom: '4px'
@@ -4064,7 +4530,7 @@ function Edashboard({ onLogout }) {
                     {summaryStats.completed}
                   </div>
                   <div style={{
-                    fontSize: '11px',
+                    fontSize: '13px',
                     color: '#00695c',
                     fontWeight: '600',
                     textTransform: 'uppercase',
@@ -4077,18 +4543,18 @@ function Edashboard({ onLogout }) {
             </div>
 
             {/* Quick Actions and Recent Activity Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '18px', marginBottom: '18px' }}>
               {/* Quick Actions */}
               <div style={{
                 backgroundColor: 'white',
                 borderRadius: '10px',
-                padding: '18px',
+                padding: '22px',
                 boxShadow: '0 4px 15px rgba(0,0,0,0.08)',
                 border: '1px solid #f1f3f4'
               }}>
                 <h3 style={{ 
                   margin: '0 0 12px 0', 
-                  fontSize: '16px', 
+                  fontSize: '18px', 
                   fontWeight: '600',
                   color: '#2c3e50',
                   display: 'flex',
@@ -4198,7 +4664,7 @@ function Edashboard({ onLogout }) {
           <div style={{
             backgroundColor: 'white',
             borderRadius: '10px',
-            padding: '20px',
+            padding: '24px',
             boxShadow: '0 4px 15px rgba(0,0,0,0.08)',
             border: '1px solid #f1f3f4'
           }}>
@@ -4206,11 +4672,11 @@ function Edashboard({ onLogout }) {
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
-              marginBottom: '15px'
+              marginBottom: '18px'
             }}>
               <h2 style={{ 
                 margin: 0, 
-                fontSize: '18px', 
+                fontSize: '22px', 
                 fontWeight: '600',
                 color: '#2c3e50'
               }}>
@@ -4219,12 +4685,12 @@ function Edashboard({ onLogout }) {
               <button
                 onClick={handleOpenDocumentTypeModal}
                 style={{
-                  padding: '8px 16px',
+                  padding: '10px 18px',
                   backgroundColor: '#27ae60',
                   color: 'white',
                   border: 'none',
                   borderRadius: '6px',
-                  fontSize: '13px',
+                  fontSize: '15px',
                   fontWeight: '600',
                   cursor: 'pointer',
                   transition: 'all 0.3s ease',
@@ -4264,7 +4730,7 @@ function Edashboard({ onLogout }) {
                   padding: '12px 15px',
                   border: '2px solid #e1e8ed',
                   borderRadius: '8px',
-                  fontSize: '14px',
+                  fontSize: '15px',
                   outline: 'none',
                   transition: 'border-color 0.3s ease'
                 }}
@@ -4432,7 +4898,8 @@ function Edashboard({ onLogout }) {
                   </thead>
                   <tbody>
                     {filteredDocuments.length > 0 ? (
-                      filteredDocuments.map((document) => (
+                      filteredDocuments.map((document) => {
+                        return (
                         <tr key={document._id} style={{ cursor: 'pointer' }} onClick={() => handleDocumentClick(document)}>
                           <td style={{ 
                             border: '1px solid #ddd', 
@@ -4552,12 +5019,14 @@ function Edashboard({ onLogout }) {
                                   backgroundColor: '#3498db',
                                   color: 'white',
                                   border: 'none',
-                                  padding: '5px 10px',
-                                  borderRadius: '4px',
+                                  padding: '6px 10px',
+                                  borderRadius: '6px',
                                   fontSize: '11px',
-                                  fontWeight: '500',
+                                  fontWeight: '600',
                                   cursor: 'pointer',
-                                  transition: 'background-color 0.3s ease'
+                                  transition: 'all 0.25s ease',
+                                  minHeight: '32px',
+                                  lineHeight: '1.2'
                                 }}
                                 onMouseEnter={(e) => {
                                   e.target.style.backgroundColor = '#2980b9';
@@ -4577,12 +5046,14 @@ function Edashboard({ onLogout }) {
                                   backgroundColor: '#f39c12',
                                   color: 'white',
                                   border: 'none',
-                                  padding: '5px 10px',
-                                  borderRadius: '4px',
+                                  padding: '6px 10px',
+                                  borderRadius: '6px',
                                   fontSize: '11px',
-                                  fontWeight: '500',
+                                  fontWeight: '600',
                                   cursor: 'pointer',
-                                  transition: 'background-color 0.3s ease'
+                                  transition: 'all 0.25s ease',
+                                  minHeight: '32px',
+                                  lineHeight: '1.2'
                                 }}
                                 onMouseEnter={(e) => {
                                   e.target.style.backgroundColor = '#e67e22';
@@ -4603,12 +5074,14 @@ function Edashboard({ onLogout }) {
                                   backgroundColor: '#9b59b6',
                                   color: 'white',
                                   border: 'none',
-                                  padding: '5px 10px',
-                                  borderRadius: '4px',
+                                  padding: '6px 10px',
+                                  borderRadius: '6px',
                                   fontSize: '11px',
-                                  fontWeight: '500',
+                                  fontWeight: '600',
                                   cursor: 'pointer',
-                                  transition: 'background-color 0.3s ease'
+                                  transition: 'all 0.25s ease',
+                                  minHeight: '32px',
+                                  lineHeight: '1.2'
                                 }}
                                 onMouseEnter={(e) => {
                                   e.target.style.backgroundColor = '#8e44ad';
@@ -4629,12 +5102,14 @@ function Edashboard({ onLogout }) {
                                   backgroundColor: '#16a085',
                                   color: 'white',
                                   border: 'none',
-                                  padding: '5px 10px',
-                                  borderRadius: '4px',
+                                  padding: '6px 10px',
+                                  borderRadius: '6px',
                                   fontSize: '11px',
-                                  fontWeight: '500',
+                                  fontWeight: '600',
                                   cursor: 'pointer',
-                                  transition: 'background-color 0.3s ease'
+                                  transition: 'all 0.25s ease',
+                                  minHeight: '32px',
+                                  lineHeight: '1.2'
                                 }}
                                 onMouseEnter={(e) => {
                                   e.target.style.backgroundColor = '#138d75';
@@ -4645,7 +5120,7 @@ function Edashboard({ onLogout }) {
                               >
                                 View Files
                               </button>
-                              {document.status === 'Returned' && (
+                              {document.status === 'Returned' && isDocumentSubmittedByCurrentUser(document) && (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -4655,12 +5130,14 @@ function Edashboard({ onLogout }) {
                                     backgroundColor: '#27ae60',
                                     color: 'white',
                                     border: 'none',
-                                    padding: '5px 10px',
-                                    borderRadius: '4px',
+                                    padding: '6px 10px',
+                                    borderRadius: '6px',
                                     fontSize: '11px',
-                                    fontWeight: '500',
+                                    fontWeight: '600',
                                     cursor: 'pointer',
-                                    transition: 'background-color 0.3s ease'
+                                    transition: 'all 0.25s ease',
+                                    minHeight: '32px',
+                                    lineHeight: '1.2'
                                   }}
                                   onMouseEnter={(e) => {
                                     e.target.style.backgroundColor = '#229954';
@@ -4675,7 +5152,8 @@ function Edashboard({ onLogout }) {
                             </div>
                           </td>
                         </tr>
-                      ))
+                      );
+                      })
                     ) : (
                       <tr>
                         <td 
@@ -4716,6 +5194,76 @@ function Edashboard({ onLogout }) {
             }}>
               Document History Logs
             </h2>
+
+            {/* History Search */}
+            <div style={{
+              display: 'flex',
+              gap: '10px',
+              marginBottom: '15px',
+              flexWrap: 'wrap',
+              alignItems: 'center'
+            }}>
+              <input
+                type="text"
+                placeholder="Search history logs..."
+                value={historySearchTerm}
+                onChange={(e) => setHistorySearchTerm(e.target.value)}
+                style={{
+                  flex: '1',
+                  minWidth: '250px',
+                  padding: '12px 15px',
+                  border: '2px solid #e1e8ed',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  outline: 'none',
+                  transition: 'border-color 0.3s ease'
+                }}
+                onFocus={(e) => e.target.style.borderColor = '#3498db'}
+                onBlur={(e) => e.target.style.borderColor = '#e1e8ed'}
+              />
+              <select
+                value={historySearchBy}
+                onChange={(e) => setHistorySearchBy(e.target.value)}
+                style={{
+                  padding: '12px 15px',
+                  border: '2px solid #e1e8ed',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  backgroundColor: 'white',
+                  outline: 'none',
+                  minWidth: '170px'
+                }}
+              >
+                <option value="all">Search by: All</option>
+                <option value="documentId">Search by: Document ID</option>
+                <option value="name">Search by: Name</option>
+                <option value="type">Search by: Type</option>
+                <option value="status">Search by: Status</option>
+                <option value="reviewer">Search by: Reviewer</option>
+                <option value="location">Search by: Location</option>
+                <option value="submittedBy">Search by: Submitted By</option>
+              </select>
+              <select
+                value={historySortBy}
+                onChange={(e) => setHistorySortBy(e.target.value)}
+                style={{
+                  padding: '12px 15px',
+                  border: '2px solid #e1e8ed',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  backgroundColor: 'white',
+                  outline: 'none',
+                  minWidth: '160px'
+                }}
+              >
+                <option value="name">Sort by: Name</option>
+                <option value="documentId">Sort by: Document ID</option>
+                <option value="type">Sort by: Type</option>
+                <option value="status">Sort by: Status</option>
+                <option value="dateDesc">Sort by: Newest</option>
+                <option value="dateAsc">Sort by: Oldest</option>
+              </select>
+            </div>
 
             {/* All Documents with History */}
             <div style={{ overflowX: 'auto' }}>
@@ -4846,91 +5394,127 @@ function Edashboard({ onLogout }) {
                 </thead>
                 <tbody>
                   {(() => {
-                    // Filter documents by department for History Logs
+                    // Filter History Logs by strict process-flow visibility
                     const getFilteredHistoryDocuments = () => {
                       if (!employee || !allDocuments.length) return [];
-                      
-                      const employeeDepartment = employee.department;
-                      const employeeOfficeName = employee.office?.name;
-                      // eslint-disable-next-line no-unused-vars
-                      const employeePosition = employee.position;
-                      
-                      // ALL positions are now department-specific (no shared positions)
-                      // OP, VP, Academic VP, Dean, Program Head, etc. - all are department-specific
-                      // eslint-disable-next-line no-unused-vars
-                      const isSharedPosition = false; // No positions are shared anymore
-                      
-                      // Helper function to get submitter's department
-                      const getSubmitterDepartment = (submittedBy) => {
-                        if (!submittedBy) return null;
-                        const submitter = employees.find(emp => 
-                          emp.name?.toLowerCase() === submittedBy.toLowerCase() ||
-                          emp.name?.toLowerCase().includes(submittedBy.toLowerCase()) ||
-                          submittedBy.toLowerCase().includes(emp.name?.toLowerCase())
-                        );
-                        return submitter ? (submitter.office?.name || submitter.department) : null;
+
+                      const normalizeOfficeName = (name) => {
+                        if (!name) return '';
+                        const n = String(name)
+                          .toLowerCase()
+                          .replace(/[()]/g, ' ')
+                          .replace(/\s+/g, ' ')
+                          .trim();
+                        if (n.includes('director') && n.includes('instruction')) return 'director of instruction';
+                        if (n.includes('program head') || n === 'ph') return 'program head';
+                        if (n.includes('loading coordinator')) return 'loading coordinator';
+                        if (n.includes('academic adviser') || n.includes('academic advisor')) return 'academic adviser';
+                        if (n.includes('vpaa') || n.includes('vice president for academic affairs')) return 'vpaa';
+                        if (n.includes('academic vice president') || n.includes('academic vp')) return 'academic vice president';
+                        if (n.includes('vice president') || n === 'vp') return 'vice president';
+                        if (n.includes('president') || n === 'op' || n.includes('office of the president')) return 'office of the president';
+                        if (n.includes('dean')) return 'dean';
+                        if (n.includes('encoder')) return 'encoder';
+                        if (n.includes('hr') || n.includes('human resources') || n.includes('human resource')) return 'hr';
+                        if (n.includes('records')) return 'records office';
+                        if (n.includes('executive assistant')) return 'executive assistant';
+                        if (n.includes('immediate supervisor')) return 'immediate supervisor';
+                        return n;
                       };
-                      
-                      // Enhanced department matching function
-                      const isFromSameDepartment = (doc) => {
-                        const submitterDept = getSubmitterDepartment(doc.submittedBy);
-                        if (!submitterDept) return false;
-                        
-                        // Strict department matching: document must be from the same department/office as the employee
-                        const docDeptLower = submitterDept.toLowerCase();
-                        const empDeptLower = employeeDepartment?.toLowerCase() || '';
-                        const empOfficeLower = employeeOfficeName?.toLowerCase() || '';
-                        
-                        // Check exact matches or if one contains the other (for variations like "Faculty of Agriculture and Life Sciences" vs "FALS")
-                        const matchesDept = docDeptLower === empDeptLower || 
-                                           docDeptLower === empOfficeLower ||
-                                           empDeptLower === docDeptLower ||
-                                           empOfficeLower === docDeptLower ||
-                                           (docDeptLower.includes(empDeptLower) && empDeptLower.length > 0) ||
-                                           (empDeptLower.includes(docDeptLower) && docDeptLower.length > 0) ||
-                                           (docDeptLower.includes(empOfficeLower) && empOfficeLower.length > 0) ||
-                                           (empOfficeLower.includes(docDeptLower) && docDeptLower.length > 0);
-                        
-                        return matchesDept;
+
+                      const isRoutedToMyPosition = (doc) => {
+                        const currentPosition = employee?.position;
+                        if (!currentPosition) return false;
+                        const normPosition = normalizeOfficeName(currentPosition);
+                        const normNext = normalizeOfficeName(doc.nextOffice || '');
+                        const normCurrent = normalizeOfficeName(doc.currentOffice || '');
+                        return (normNext && (normNext === normPosition || normNext.includes(normPosition) || normPosition.includes(normNext))) ||
+                               (normCurrent && (normCurrent === normPosition || normCurrent.includes(normPosition) || normPosition.includes(normCurrent)));
                       };
-                      
-                      // Check if user is President/OP - they can see all documents regardless of department
-                      const isPresident = employeePosition?.includes('President') || 
-                                         employeePosition === 'OP' || 
-                                         employeePosition === 'Office of the President';
-                      
-                      // University-wide document types - bypass department check
-                      const isFacultyLoading = (doc) => doc.type?.toUpperCase().includes('FACULTY LOADING');
-                      const isTravelOrder = (doc) => doc.type?.toUpperCase().includes('TRAVEL ORDER') || 
-                                                   doc.category?.toUpperCase().includes('TRAVEL ORDER');
-                      
+
                       return allDocuments.filter(doc => {
-                        // For President: Show all documents regardless of department
-                        // For university-wide documents (Faculty Loading, Travel Order): bypass department check
-                        const bypassDepartmentCheck = isPresident || 
-                                                      isFacultyLoading(doc) || 
-                                                      isTravelOrder(doc);
-                        
-                        if (!bypassDepartmentCheck && !isFromSameDepartment(doc)) {
-                          return false;
-                        }
-                        
-                        // IMPORTANT: History Logs should only show documents with actions taken
-                        // Check if document has routing history with actions (forwarded, approved, rejected, returned, etc.)
                         const hasRoutingHistory = doc.routingHistory && Array.isArray(doc.routingHistory) && doc.routingHistory.length > 0;
-                        const hasActions = hasRoutingHistory && doc.routingHistory.some(entry => 
-                          entry.action && ['forwarded', 'approved', 'rejected', 'returned', 'received', 'on hold'].includes(entry.action.toLowerCase())
+                        const hasActions = hasRoutingHistory && doc.routingHistory.some(entry =>
+                          entry.action && ['forwarded', 'approved', 'rejected', 'returned', 'received', 'on hold', 'resubmitted'].includes(entry.action.toLowerCase())
                         );
-                        
-                        // Also show if document has been reviewed (has reviewer and review date)
                         const hasBeenReviewed = doc.reviewer && doc.reviewDate;
-                        
-                        // Show documents that have either actions in routing history or have been reviewed
-                        return hasActions || hasBeenReviewed;
+                        const hasHistorySignal = hasActions || hasBeenReviewed;
+
+                        if (!hasHistorySignal) return false;
+
+                        const isSubmitted = isDocumentSubmittedByCurrentUser(doc);
+                        const isAssignedOrForwarded = isDocumentAssignedToEmployee(doc, employee._id);
+                        const isRoutedToMe = isRoutedToMyPosition(doc);
+                        const currentPosition = employee?.position || '';
+                        const currentName = employee?.name || user?.username || '';
+                        const normalizedMyOffice = normalizeOfficeName(currentPosition);
+                        const normalizedMyName = String(currentName).toLowerCase();
+                        const hasBeenHandledByMe = hasRoutingHistory && doc.routingHistory.some(entry => {
+                          const entryOffice = normalizeOfficeName(entry?.office || '');
+                          const entryHandler = String(entry?.handler || entry?.performedBy || '').toLowerCase();
+
+                          const officeMatch = entryOffice && normalizedMyOffice && (
+                            entryOffice === normalizedMyOffice ||
+                            entryOffice.includes(normalizedMyOffice) ||
+                            normalizedMyOffice.includes(entryOffice)
+                          );
+
+                          const handlerMatch = entryHandler && normalizedMyName && (
+                            entryHandler === normalizedMyName ||
+                            entryHandler.includes(normalizedMyName) ||
+                            normalizedMyName.includes(entryHandler)
+                          );
+
+                          return officeMatch || handlerMatch;
+                        });
+
+                        // Show only to users participating in this document's process flow.
+                        // Includes users/offices that already took an action on the document.
+                        return isSubmitted || isAssignedOrForwarded || isRoutedToMe || hasBeenHandledByMe;
                       });
                     };
                     
-                    const filteredHistoryDocs = getFilteredHistoryDocuments();
+                    const filteredHistoryDocs = getFilteredHistoryDocuments().filter(doc => {
+                      const query = String(historySearchTerm || '').trim().toLowerCase();
+                      if (!query) return true;
+
+                      const status = String(getDisplayStatus(doc) || doc.status || '').toLowerCase();
+                      const searchableFields = {
+                        documentId: String(doc.documentId || '').toLowerCase(),
+                        name: String(doc.name || '').toLowerCase(),
+                        type: String(doc.type || '').toLowerCase(),
+                        submittedBy: String(doc.submittedBy || '').toLowerCase(),
+                        reviewer: String(doc.reviewer || '').toLowerCase(),
+                        location: `${String(doc.currentOffice || '').toLowerCase()} ${String(doc.nextOffice || '').toLowerCase()}`.trim(),
+                        status
+                      };
+
+                      if (historySearchBy === 'all') {
+                        return Object.values(searchableFields).some(value => value.includes(query));
+                      }
+
+                      return String(searchableFields[historySearchBy] || '').includes(query);
+                    }).sort((a, b) => {
+                      const normalize = (value) => String(value || '').toLowerCase();
+                      const dateA = new Date(a.dateUploaded || a.reviewDate || a.updatedAt || 0).getTime();
+                      const dateB = new Date(b.dateUploaded || b.reviewDate || b.updatedAt || 0).getTime();
+
+                      switch (historySortBy) {
+                        case 'documentId':
+                          return normalize(a.documentId).localeCompare(normalize(b.documentId));
+                        case 'type':
+                          return normalize(a.type).localeCompare(normalize(b.type));
+                        case 'status':
+                          return normalize(getDisplayStatus(a)).localeCompare(normalize(getDisplayStatus(b)));
+                        case 'dateAsc':
+                          return dateA - dateB;
+                        case 'dateDesc':
+                          return dateB - dateA;
+                        case 'name':
+                        default:
+                          return normalize(a.name).localeCompare(normalize(b.name));
+                      }
+                    });
                     
                     return filteredHistoryDocs.length > 0 ? (
                       filteredHistoryDocs.map((doc) => (
@@ -5160,7 +5744,7 @@ function Edashboard({ onLogout }) {
         )}
 
         {/* Forwarded Documents Report Section */}
-        {activeSidebarTab === 'forwarded' && (
+        {false && activeSidebarTab === 'forwarded' && (
           <div style={{
             backgroundColor: 'white',
             borderRadius: '10px',
@@ -5970,8 +6554,8 @@ function Edashboard({ onLogout }) {
             backgroundColor: 'white',
             borderRadius: '15px',
             padding: '30px',
-            maxWidth: '500px',
-            width: '90%',
+            maxWidth: '640px',
+            width: 'min(96vw, 640px)',
             maxHeight: '80vh',
             overflow: 'auto',
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
@@ -6395,8 +6979,8 @@ function Edashboard({ onLogout }) {
             backgroundColor: 'white',
             borderRadius: '15px',
             padding: '30px',
-            maxWidth: '500px',
-            width: '90%',
+            maxWidth: '640px',
+            width: 'min(96vw, 640px)',
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
             position: 'relative'
           }}>
@@ -6563,8 +7147,8 @@ function Edashboard({ onLogout }) {
             backgroundColor: 'white',
             borderRadius: '15px',
             padding: '30px',
-            maxWidth: '600px',
-            width: '90%',
+            maxWidth: '900px',
+            width: 'min(96vw, 900px)',
             maxHeight: '90vh',
             overflow: 'auto',
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
@@ -6921,8 +7505,8 @@ function Edashboard({ onLogout }) {
             backgroundColor: 'white',
             borderRadius: '15px',
             padding: '30px',
-            maxWidth: '600px',
-            width: '90%',
+            maxWidth: '900px',
+            width: 'min(96vw, 900px)',
             maxHeight: '90vh',
             overflow: 'auto',
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
@@ -7283,8 +7867,8 @@ function Edashboard({ onLogout }) {
             backgroundColor: 'white',
             borderRadius: '15px',
             padding: '30px',
-            maxWidth: '600px',
-            width: '90%',
+            maxWidth: '900px',
+            width: 'min(96vw, 900px)',
             maxHeight: '90vh',
             overflow: 'auto',
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
@@ -7565,8 +8149,8 @@ function Edashboard({ onLogout }) {
             backgroundColor: 'white',
             borderRadius: '15px',
             padding: '30px',
-            maxWidth: '600px',
-            width: '90%',
+            maxWidth: '900px',
+            width: 'min(96vw, 900px)',
             maxHeight: '90vh',
             overflow: 'auto',
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
@@ -7847,8 +8431,8 @@ function Edashboard({ onLogout }) {
             backgroundColor: 'white',
             borderRadius: '15px',
             padding: '30px',
-            maxWidth: '600px',
-            width: '90%',
+            maxWidth: '900px',
+            width: 'min(96vw, 900px)',
             maxHeight: '90vh',
             overflow: 'auto',
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
@@ -8479,11 +9063,11 @@ function Edashboard({ onLogout }) {
         }}>
           <div style={{
             backgroundColor: 'white',
-            borderRadius: '10px',
-            padding: '15px',
-            maxWidth: '700px',
-            width: '90%',
-            maxHeight: '88vh',
+            borderRadius: '12px',
+            padding: '28px 32px',
+            maxWidth: '1180px',
+            width: 'min(98vw, 1180px)',
+            maxHeight: '90vh',
             overflowY: 'auto',
             overflowX: 'hidden',
             boxShadow: '0 15px 50px rgba(0, 0, 0, 0.3)',
@@ -8525,15 +9109,16 @@ function Edashboard({ onLogout }) {
             {/* Modal Header */}
             <div style={{
               textAlign: 'center',
-              marginBottom: '12px',
-              paddingBottom: '10px',
+              marginBottom: '16px',
+              paddingBottom: '12px',
               borderBottom: '2px solid #ecf0f1'
             }}>
               <h2 style={{
                 margin: '0',
-                fontSize: '18px',
+                fontSize: '22px',
                 fontWeight: '600',
-                color: '#2c3e50'
+                color: '#2c3e50',
+                letterSpacing: '-0.02em'
               }}>
                 Document Review
               </h2>
@@ -8546,28 +9131,28 @@ function Edashboard({ onLogout }) {
                 const docType = selectedDocument.type?.toUpperCase() || '';
                 const category = selectedDocument.category || '';
                 
-                // For Endorsement Form
+                // For Endorsement Form: PH → Dean → VP → Records → Executive Assistant → President → Records
                 if (
-                  docType.includes('ENDORSEMENT FORM') ||
-                  category === 'Endorsement Form'
+                  docType.includes('ENDORSEMENT') ||
+                  (category && String(category).toUpperCase().includes('ENDORSEMENT'))
                 ) {
-                  return ['Program Head', 'Dean', 'Vice President', 'Office of the President'];
+                  return ['Program Head', 'Dean', 'Vice President', 'Records Office', 'Executive Assistant', 'President', 'Records Office'];
                 }
 
-                // For Requested Subject - 7-stage workflow
+                // For Requested Subject - 6-stage workflow (sender is Academic Adviser)
                 if (
                   docType.includes('REQUESTED SUBJECT') || 
                   category === 'Requested Subject'
                 ) {
-                  return ['Academic Adviser', 'Program Head', 'Dean', 'Director of Instruction', 'VPAA', 'Dean', 'Encoder'];
+                  return ['Program Head', 'Dean', 'Director of Instruction', 'VPAA', 'Dean', 'Encoder'];
                 }
 
-                // For Faculty Loading - routes to Academic VP
+                // For Faculty Loading: PH → Loading Coordinator → PH → Dean → Academic VP (5 stages)
                 if (
-                  docType.includes('FACULTY LOADING') || 
+                  docType.includes('FACULTY LOADING') ||
                   category === 'Faculty Loading'
                 ) {
-                  return ['Program Head', 'Dean', 'Academic Vice President'];
+                  return ['Program Head', 'Loading Coordinator', 'Program Head', 'Dean', FACULTY_LOADING_FINAL_STAGE_LABEL];
                 }
                 
                 // For Travel Order - HR route workflow
@@ -8583,6 +9168,19 @@ function Edashboard({ onLogout }) {
               };
 
               const stages = getWorkflowStages();
+
+              const matchesVpaaFinalStage = (entryOffice, stageLabel) => {
+                if (!entryOffice || !stageLabel) return false;
+                const o = entryOffice.toLowerCase();
+                const s = stageLabel.toLowerCase();
+                if (o === s || o.includes(s) || s.includes(o)) return true;
+                const isVpaaFamily = (x) =>
+                  x.includes('vice president for academic affairs') ||
+                  x.includes('academic vice president') ||
+                  x.includes('vpaa') ||
+                  (x.includes('academic') && x.includes('vice president'));
+                return isVpaaFamily(o) && isVpaaFamily(s);
+              };
               
               // Check if workflow is complete (matching admin dashboard logic)
               const checkWorkflowComplete = (doc) => {
@@ -8590,9 +9188,11 @@ function Edashboard({ onLogout }) {
                 // IMPORTANT: Returned documents should NOT show as fully completed/approved in the progress bar
                 if (doc.status === 'Returned') return false;
                 
-                // Special handling for Travel Order (has duplicate stages)
+                // Special handling for workflows with duplicate stages
                 const docType = doc.type?.toUpperCase() || '';
-                const isTravelOrder = docType.includes('TRAVEL ORDER');
+                const docCategory = doc.category?.toUpperCase() || '';
+                const isTravelOrder = docType.includes('TRAVEL ORDER') || docCategory.includes('TRAVEL ORDER');
+                const isEndorsement = docType.includes('ENDORSEMENT') || docCategory.includes('ENDORSEMENT');
                 
                 if (isTravelOrder) {
                   // For Travel Order, workflow is complete only if ALL 7 stages have been completed IN ORDER
@@ -8628,7 +9228,7 @@ function Edashboard({ onLogout }) {
                   });
                   
                   // Check if each stage has been visited the required number of times
-                  // stages = ['Immediate Supervisor', 'HR', 'Records Office', 'Executive Assistant', 'Office of the President', 'Records Office', 'HR']
+                  // stages = ['Immediate Supervisor', 'HR', 'Records Office', 'Executive Assistant', 'President', 'Records Office', 'HR']
                   // We need to check each occurrence in order
                   let completedStages = 0;
                   const requiredVisits = {};
@@ -8661,6 +9261,64 @@ function Edashboard({ onLogout }) {
                     doc.nextOffice === ''
                   );
                 }
+
+                if (isEndorsement) {
+                  const routingHistory = Array.isArray(doc.routingHistory) ? doc.routingHistory : [];
+                  const stageVisits = {};
+
+                  routingHistory.forEach(entry => {
+                    const isApprovalAction = entry.action && (
+                      entry.action.toLowerCase().includes('approved') ||
+                      entry.action.toLowerCase().includes('forwarded')
+                    );
+
+                    if (isApprovalAction && entry.office && entry.office !== 'Submitted') {
+                      let normalizedOffice = entry.office;
+                      const officeLower = entry.office.toLowerCase();
+                      if (officeLower.includes('program head') || officeLower === 'ph') {
+                        normalizedOffice = 'Program Head';
+                      } else if (officeLower.includes('dean')) {
+                        normalizedOffice = 'Dean';
+                      } else if (
+                        officeLower.includes('vice president') ||
+                        officeLower === 'vp' ||
+                        officeLower.includes('vpaa') ||
+                        officeLower.includes('academic vice president') ||
+                        officeLower.includes('vice president for academic affairs')
+                      ) {
+                        normalizedOffice = 'Vice President';
+                      } else if (officeLower.includes('records')) {
+                        normalizedOffice = 'Records Office';
+                      } else if (officeLower.includes('executive assistant') || officeLower.includes('executive asst')) {
+                        normalizedOffice = 'Executive Assistant';
+                      } else if (officeLower.includes('president') || officeLower.includes('op')) {
+                        normalizedOffice = 'President';
+                      }
+
+                      stageVisits[normalizedOffice] = (stageVisits[normalizedOffice] || 0) + 1;
+                    }
+                  });
+
+                  let completedStages = 0;
+                  for (let i = 0; i < stages.length; i++) {
+                    const stage = stages[i];
+                    const requiredCount = stages.slice(0, i + 1).filter(s => s === stage).length;
+                    const actualCount = stageVisits[stage] || 0;
+
+                    if (actualCount >= requiredCount) {
+                      completedStages++;
+                    } else {
+                      break;
+                    }
+                  }
+
+                  return completedStages === stages.length && (
+                    doc.status === 'Completed' ||
+                    doc.status === 'Approved' ||
+                    !doc.nextOffice ||
+                    doc.nextOffice === ''
+                  );
+                }
                 
                 // For other workflows (no duplicate stages)
                 const finalStage = stages[stages.length - 1];
@@ -8670,7 +9328,8 @@ function Edashboard({ onLogout }) {
                 const finalApproval = doc.routingHistory.find(entry => 
                   (entry.action === 'approved' || entry.action === 'Approved and Forwarded') &&
                   (entry.office === finalStage || 
-                   entry.office?.includes(finalStage))
+                   entry.office?.includes(finalStage) ||
+                   matchesVpaaFinalStage(entry.office, finalStage))
                 );
                 
                 return finalApproval !== undefined || doc.status === 'Approved' || doc.status === 'Completed';
@@ -8723,10 +9382,23 @@ function Edashboard({ onLogout }) {
                   return officeLower.includes('vp') || officeLower.includes('vice president');
                 }
                 
-                // Handle Academic Vice President
+                // Handle VPAA (stage name in Requested Subject / Endorsement Form workflow)
+                if (stageLower === 'vpaa' || stageLower.includes('vpaa')) {
+                  return officeLower.includes('vpaa') ||
+                         officeLower.includes('academic vice president') ||
+                         officeLower.includes('vice president for academic affairs') ||
+                         (officeLower.includes('vice president') && officeLower.includes('academic')) ||
+                         (officeLower.includes('vp') && officeLower.includes('academic')) ||
+                         officeLower.includes('avp');
+                }
+
+                // Handle Academic Vice President (stage name in Faculty Loading workflow)
                 if (stageLower.includes('academic vice president')) {
-                  return officeLower.includes('avp') || officeLower.includes('academic vice president') || 
-                         (officeLower.includes('academic') && officeLower.includes('vp'));
+                  return officeLower.includes('avp') || officeLower.includes('academic vice president') ||
+                         officeLower.includes('vice president for academic affairs') ||
+                         (officeLower.includes('academic') && officeLower.includes('vp')) ||
+                         (officeLower.includes('vice president') && officeLower.includes('academic')) ||
+                         officeLower.includes('vpaa');
                 }
                 
                 // Handle Program Head
@@ -8853,6 +9525,63 @@ function Edashboard({ onLogout }) {
                   }
                 }
 
+                // Post-process: if this stage returned the document at some point
+                // (e.g. Encoder returned → resubmitted to Encoder → Encoder finally approved),
+                // arrivalTime is still pointing at the FIRST arrival.
+                // Correct it to the LAST re-arrival after the last return so that the
+                // displayed duration reflects only the final visit, not the whole loop.
+                if (arrivalTime && actionTime) {
+                  // Find the last 'returned' action FROM this stage at or after arrivalTime
+                  let lastReturnTs = null;
+                  for (const e of selectedDocument.routingHistory) {
+                    const eOffice = e.office || '';
+                    const eAct = e.action?.toLowerCase() || '';
+                    if (
+                      (matchOfficeToStage(eOffice, stage) || eOffice.toLowerCase().includes(stage.toLowerCase())) &&
+                      eAct.includes('returned') &&
+                      e.timestamp
+                    ) {
+                      const ts = new Date(e.timestamp);
+                      if (ts >= arrivalTime) lastReturnTs = ts;
+                    }
+                  }
+
+                  if (lastReturnTs) {
+                    // Find the last re-arrival at this stage AFTER that return
+                    let lastReArrivalTs = null;
+                    for (const e of selectedDocument.routingHistory) {
+                      const eToOffice = e.toOffice || '';
+                      if (matchOfficeToStage(eToOffice, stage) && e.timestamp) {
+                        const ts = new Date(e.timestamp);
+                        if (ts > lastReturnTs) lastReArrivalTs = ts;
+                      }
+                    }
+
+                    if (lastReArrivalTs) {
+                      arrivalTime = lastReArrivalTs;
+                      // Re-find actionTime starting from the new arrivalTime
+                      actionTime = null;
+                      for (const e of selectedDocument.routingHistory) {
+                        const eOffice = e.office || '';
+                        const eAct = e.action?.toLowerCase() || '';
+                        const isFromStage =
+                          matchOfficeToStage(eOffice, stage) ||
+                          eOffice.toLowerCase().includes(stage.toLowerCase());
+                        const isActionType =
+                          eAct.includes('approved') || eAct.includes('returned') ||
+                          eAct.includes('rejected') || eAct.includes('forwarded');
+                        if (isFromStage && isActionType && e.timestamp) {
+                          const ts = new Date(e.timestamp);
+                          if (ts >= arrivalTime) {
+                            actionTime = ts;
+                            if (stageIndex === 0) break; // first action wins for stage 0
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+
                 // Calculate duration
                 if (arrivalTime && actionTime) {
                   const duration = actionTime - arrivalTime;
@@ -8867,12 +9596,36 @@ function Edashboard({ onLogout }) {
               const docCategory = selectedDocument.category || '';
               const isTravelOrder = docType.includes('TRAVEL ORDER') || docCategory === 'Travel Order';
               const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory === 'Requested Subject';
+              const isFacultyLoading = docType.includes('FACULTY LOADING') || docCategory === 'Faculty Loading';
+
+              const formatFacultyLoadingPinOffice = (office) => {
+                if (!office || !isFacultyLoading) return office;
+                const l = String(office).toLowerCase();
+                if (
+                  l.includes('academic vice president') ||
+                  l.includes('vice president for academic affairs') ||
+                  l.includes('vpaa') ||
+                  (l.includes('academic') && l.includes('vice president'))
+                ) {
+                  return FACULTY_LOADING_FINAL_STAGE_LABEL;
+                }
+                return office;
+              };
 
               // If document was returned, show "RETURNED" in the progress bar at the returning stage
-              // BUT only if there's no later approval/forward from that same stage
-              const lastReturnEntry = selectedDocument?.routingHistory && Array.isArray(selectedDocument.routingHistory)
-                ? [...selectedDocument.routingHistory].reverse().find(e =>
-                    e?.action && e.action.toLowerCase().includes('returned')
+              // BUT only if there's no later approval/forward from that same stage.
+              // Prefer a return entry that HAS a timestamp (the PATCH entry); the separate POST
+              // to /routing-history can create a duplicate without a timestamp, which would
+              // otherwise make returnTimestamp null and break the laterActions check.
+              const allHistory = selectedDocument?.routingHistory;
+              const lastReturnEntry = Array.isArray(allHistory)
+                ? (
+                    [...allHistory].reverse().find(e =>
+                      e?.action && e.action.toLowerCase().includes('returned') && e.timestamp
+                    ) ||
+                    [...allHistory].reverse().find(e =>
+                      e?.action && e.action.toLowerCase().includes('returned')
+                    )
                   )
                 : null;
               
@@ -8887,40 +9640,61 @@ function Edashboard({ onLogout }) {
               if (lastReturnEntry && lastReturnEntry.office && !isFinallyApproved) {
                 const returnOffice = lastReturnEntry.office;
                 const returnTimestamp = lastReturnEntry.timestamp ? new Date(lastReturnEntry.timestamp) : null;
+                const returnIdx = Array.isArray(allHistory) ? allHistory.indexOf(lastReturnEntry) : -1;
                 
                 // Find any approval/forward actions from the same office AFTER the return
-                const laterActions = Array.isArray(selectedDocument.routingHistory)
-                  ? selectedDocument.routingHistory.filter(entry => {
-                  if (!entry.action || !entry.office) return false;
-                  const isApprovalOrForward = entry.action.toLowerCase().includes('approved') || 
-                                             entry.action.toLowerCase().includes('forwarded');
-                  const isSameOffice = matchOfficeToStage(entry.office, returnOffice) || 
-                                      matchOfficeToStage(returnOffice, entry.office);
-                  
-                  if (isApprovalOrForward && isSameOffice && returnTimestamp) {
-                    const entryTimestamp = entry.timestamp ? new Date(entry.timestamp) : null;
-                    return entryTimestamp && entryTimestamp > returnTimestamp;
-                  }
-                  return false;
+                const laterActions = Array.isArray(allHistory)
+                  ? allHistory.filter((entry, entryIdx) => {
+                      if (!entry.action || !entry.office) return false;
+                      const isApprovalOrForward = entry.action.toLowerCase().includes('approved') || 
+                                                 entry.action.toLowerCase().includes('forwarded');
+                      const isSameOffice = matchOfficeToStage(entry.office, returnOffice) || 
+                                          matchOfficeToStage(returnOffice, entry.office);
+                      
+                      if (!isApprovalOrForward || !isSameOffice) return false;
+                      
+                      if (returnTimestamp) {
+                        // Prefer timestamp-based comparison
+                        const entryTimestamp = entry.timestamp ? new Date(entry.timestamp) : null;
+                        if (entryTimestamp) return entryTimestamp > returnTimestamp;
+                      }
+                      // Fallback: use array index order
+                      return entryIdx > returnIdx;
                     })
                   : [];
+
+                // If the document has been resubmitted after the return,
+                // treat that return as resolved for progress display.
+                const hasResubmissionAfterReturn = Array.isArray(allHistory)
+                  ? allHistory.some((entry, entryIdx) => {
+                      const action = entry?.action?.toLowerCase() || '';
+                      if (!action.includes('resubmitted')) return false;
+                      if (returnTimestamp && entry.timestamp) {
+                        return new Date(entry.timestamp) > returnTimestamp;
+                      }
+                      return entryIdx > returnIdx;
+                    })
+                  : false;
                 
                 // Only show "RETURNED" if there's NO later approval/forward from that stage
-                shouldShowReturned = laterActions.length === 0;
+                // and it has not already been resubmitted.
+                shouldShowReturned = laterActions.length === 0 && !hasResubmissionAfterReturn;
               }
 
               // Determine which stage should display as "RETURNED" (orange)
-              // For duplicate stages (HR, Records Office), we need to find the correct occurrence
+              // For duplicate stages (HR, Records Office, Dean) we must find the correct occurrence.
+              // Both Travel Order AND Requested Subject have duplicate stages so use the same logic.
               let returnedStageIndex = -1;
-              if (lastReturnEntry?.office && isTravelOrder) {
-                // For Travel Order, determine which specific occurrence returned the document
+              if (lastReturnEntry?.office && (isTravelOrder || isRequestedSubject || isFacultyLoading)) {
                 const returnOffice = lastReturnEntry.office;
                 const returnTimestamp = lastReturnEntry.timestamp ? new Date(lastReturnEntry.timestamp) : null;
+                const returnIdx = Array.isArray(allHistory) ? allHistory.indexOf(lastReturnEntry) : -1;
                 
-                // Count how many times this office APPROVED/FORWARDED before the return
+                // Count how many times this office APPROVED/FORWARDED before the return.
+                // If Dean approved once before the return, we're at the 2nd Dean occurrence (index 5).
                 let approvalsBeforeReturn = 0;
-                if (returnTimestamp && Array.isArray(selectedDocument.routingHistory)) {
-                  selectedDocument.routingHistory.forEach(entry => {
+                if (Array.isArray(selectedDocument.routingHistory)) {
+                  selectedDocument.routingHistory.forEach((entry, entryIdx) => {
                     const action = entry.action?.toLowerCase() || '';
                     const isApproval = action.includes('approved') || action.includes('forwarded');
                     const entryOffice = entry.office || '';
@@ -8929,16 +9703,15 @@ function Edashboard({ onLogout }) {
                     
                     if (isApproval && isSameOffice) {
                       const entryTimestamp = entry.timestamp ? new Date(entry.timestamp) : null;
-                      if (entryTimestamp && entryTimestamp < returnTimestamp) {
-                        approvalsBeforeReturn++;
-                      }
+                      const isBeforeReturn = returnTimestamp
+                        ? (entryTimestamp && entryTimestamp < returnTimestamp)
+                        : entryIdx < returnIdx; // fallback: array-index order
+                      if (isBeforeReturn) approvalsBeforeReturn++;
                     }
                   });
                 }
                 
-                // Find the correct stage index based on approval count
-                // If 0 approvals before return = first occurrence (Stage 2 for HR, Stage 3 for Records Office)
-                // If 1 approval before return = second occurrence (Stage 7 for HR, Stage 6 for Records Office)
+                // Pick the occurrence whose count matches approvalsBeforeReturn
                 let foundCount = 0;
                 for (let i = 0; i < stages.length; i++) {
                   if (matchOfficeToStage(stages[i], returnOffice)) {
@@ -8950,7 +9723,7 @@ function Edashboard({ onLogout }) {
                   }
                 }
               } else if (lastReturnEntry?.office) {
-                // For non-Travel Order or if above logic didn't find it, use first match
+                // Non-duplicate workflows: simple first-match is fine
                 returnedStageIndex = stages.findIndex(stage => matchOfficeToStage(lastReturnEntry.office, stage));
               }
 
@@ -8960,12 +9733,13 @@ function Edashboard({ onLogout }) {
               // Declare stageVisits outside the if block so it's accessible in the map function below
               let stageVisits = {};
               
-              // Special handling for Travel Order and Requested Subject (both have duplicate stages)
+              // Special handling for workflows with duplicate stages
               // Travel Order: Records Office × 2, HR × 2
               // Requested Subject: Dean × 2
-              // docType, isTravelOrder, and isRequestedSubject already defined above
+              // Faculty Loading: Program Head × 2
+              // (isFacultyLoading already declared above alongside isTravelOrder / isRequestedSubject)
               
-              if ((isTravelOrder || isRequestedSubject) && Array.isArray(selectedDocument.routingHistory) && selectedDocument.routingHistory.length > 0) {
+              if ((isTravelOrder || isRequestedSubject || isFacultyLoading) && Array.isArray(selectedDocument.routingHistory) && selectedDocument.routingHistory.length > 0) {
                 // Count COMPLETED visits to each stage in routing history
                 // A stage is completed only when it has approved/forwarded the document
                 stageVisits = {};
@@ -8991,18 +9765,35 @@ function Edashboard({ onLogout }) {
                         normalizedOffice = 'Records Office';
                       } else if (entryOffice.toLowerCase().includes('executive assistant')) {
                         normalizedOffice = 'Executive Assistant';
+                      } else if (
+                        // VPAA must come BEFORE the generic 'president' check because
+                        // "Vice President for Academic Affairs" contains the word "president"
+                        entryOffice.toLowerCase().includes('vpaa') ||
+                        entryOffice.toLowerCase().includes('vice president for academic affairs') ||
+                        entryOffice.toLowerCase().includes('academic vice president') ||
+                        (entryOffice.toLowerCase().includes('vice president') && entryOffice.toLowerCase().includes('academic')) ||
+                        (entryOffice.toLowerCase().includes('vp') && entryOffice.toLowerCase().includes('academic'))
+                      ) {
+                        normalizedOffice = 'VPAA';
                       } else if (entryOffice.toLowerCase().includes('president') || entryOffice.toLowerCase().includes('op')) {
                         normalizedOffice = 'President';
                       } else if (entryOffice.toLowerCase().includes('academic adviser') || entryOffice.toLowerCase().includes('academic advisor')) {
                         normalizedOffice = 'Academic Adviser';
+                      } else if (entryOffice.toLowerCase().includes('loading coordinator')) {
+                        normalizedOffice = 'Loading Coordinator';
                       } else if (entryOffice.toLowerCase().includes('program head') || entryOffice.toLowerCase() === 'ph') {
                         normalizedOffice = 'Program Head';
                       } else if (entryOffice.toLowerCase().includes('dean')) {
                         normalizedOffice = 'Dean';
                       } else if (entryOffice.toLowerCase().includes('director of instruction') || entryOffice.toLowerCase().includes('director for instruction')) {
                         normalizedOffice = 'Director of Instruction';
-                      } else if (entryOffice.toLowerCase().includes('vpaa') || entryOffice.toLowerCase().includes('vice president for academic affairs')) {
-                        normalizedOffice = 'VPAA';
+                      } else if (entryOffice.toLowerCase().includes('academic vice president') ||
+                                 entryOffice.toLowerCase().includes('vice president for academic affairs') ||
+                                 entryOffice.toLowerCase().includes('vpaa') ||
+                                 (entryOffice.toLowerCase().includes('academic') && entryOffice.toLowerCase().includes('vice president'))) {
+                        normalizedOffice = isFacultyLoading
+                          ? FACULTY_LOADING_FINAL_STAGE_LABEL
+                          : 'Academic Vice President';
                       } else if (entryOffice.toLowerCase().includes('encoder')) {
                         normalizedOffice = 'Encoder';
                       }
@@ -9012,26 +9803,42 @@ function Edashboard({ onLogout }) {
                   }
                 });
                 
-                // Find the current stage index by matching visits with workflow order
-                let visitCounts = {};
+                // Use currentOffice as ground truth to find the current stage index.
+                // stageVisits is only used to disambiguate duplicate stages (e.g. Dean × 2).
+                const matchingIndices = [];
                 for (let i = 0; i < stages.length; i++) {
-                  const stage = stages[i];
-                  visitCounts[stage] = (visitCounts[stage] || 0) + 1;
-                  
-                  // Check if this is where we are (visit count matches)
-                  const actualVisits = stageVisits[stage] || 0;
-                  const expectedVisitsUpToHere = visitCounts[stage];
-                  
-                  // If we haven't completed this occurrence yet, this is our current stage
-                  if (actualVisits < expectedVisitsUpToHere) {
-                    currentStageIndex = i;
-                    break;
+                  if (
+                    matchOfficeToStage(currentOffice, stages[i]) ||
+                    matchOfficeToStage(stages[i], currentOffice)
+                  ) {
+                    matchingIndices.push(i);
                   }
                 }
-                
-                // If all stages visited, we're at the end
-                if (currentStageIndex === -1) {
-                  currentStageIndex = stages.length - 1;
+
+                if (matchingIndices.length === 1) {
+                  // Unique stage match — use it directly
+                  currentStageIndex = matchingIndices[0];
+                } else if (matchingIndices.length > 1) {
+                  // Duplicate stage (e.g. Dean at indices 2 and 5).
+                  // Count how many times this stage has been COMPLETED so far.
+                  const stageName = stages[matchingIndices[0]];
+                  const completedVisits = stageVisits[stageName] || 0;
+                  // Pick the occurrence that matches the completed-visit count
+                  currentStageIndex = matchingIndices[Math.min(completedVisits, matchingIndices.length - 1)];
+                } else {
+                  // No currentOffice match — fall back to visit-count scan
+                  let visitCounts = {};
+                  for (let i = 0; i < stages.length; i++) {
+                    const stage = stages[i];
+                    visitCounts[stage] = (visitCounts[stage] || 0) + 1;
+                    const actualVisits = stageVisits[stage] || 0;
+                    const expectedVisitsUpToHere = visitCounts[stage];
+                    if (actualVisits < expectedVisitsUpToHere) {
+                      currentStageIndex = i;
+                      break;
+                    }
+                  }
+                  if (currentStageIndex === -1) currentStageIndex = stages.length - 1;
                 }
               } else {
                 // Standard workflow logic (no duplicate stages)
@@ -9090,19 +9897,19 @@ function Edashboard({ onLogout }) {
               return (
                 <div style={{
                   backgroundColor: '#f8f9fa',
-                  padding: '10px 12px',
-                  borderRadius: '6px',
-                  marginBottom: '12px',
+                  padding: '16px 18px',
+                  borderRadius: '8px',
+                  marginBottom: '18px',
                   border: '1px solid #e9ecef'
                 }}>
                   <h4 style={{
-                    margin: '0 0 8px 0',
-                    fontSize: '10px',
+                    margin: '0 0 12px 0',
+                    fontSize: '13px',
                     fontWeight: '700',
                     color: '#495057',
                     textAlign: 'center',
                     textTransform: 'uppercase',
-                    letterSpacing: '0.3px'
+                    letterSpacing: '0.04em'
                   }}>
                     Progress
                   </h4>
@@ -9192,8 +9999,8 @@ function Edashboard({ onLogout }) {
                           }}>
                             {/* Circle */}
                             <div style={{
-                              width: '28px',
-                              height: '28px',
+                              width: '36px',
+                              height: '36px',
                               borderRadius: '50%',
                               backgroundColor: isReturned ? '#ff9800' : isCompleted ? '#27ae60' : isCurrent ? '#3498db' : '#e9ecef',
                               border: `2px solid ${isReturned ? '#ff9800' : isCompleted ? '#27ae60' : isCurrent ? '#3498db' : '#dee2e6'}`,
@@ -9202,8 +10009,8 @@ function Edashboard({ onLogout }) {
                               justifyContent: 'center',
                               fontWeight: 'bold',
                               color: isCompleted || isCurrent || isReturned ? 'white' : '#adb5bd',
-                              fontSize: '12px',
-                              marginBottom: '5px',
+                              fontSize: '14px',
+                              marginBottom: '8px',
                               transition: 'all 0.3s ease',
                               boxShadow: isReturned ? '0 0 10px rgba(255, 152, 0, 0.25)' : isCurrent ? '0 0 10px rgba(52, 152, 219, 0.3)' : 'none'
                             }}>
@@ -9212,14 +10019,14 @@ function Edashboard({ onLogout }) {
                             
                             {/* Stage Label */}
                             <div style={{
-                              fontSize: '9px',
+                              fontSize: '11px',
                               fontWeight: isCurrent ? '700' : '600',
                               color: isReturned ? '#ff9800' : isCompleted ? '#27ae60' : isCurrent ? '#3498db' : '#adb5bd',
                               textAlign: 'center',
-                              maxWidth: '80px',
-                              lineHeight: '1.1',
+                              maxWidth: '112px',
+                              lineHeight: '1.25',
                               textTransform: 'uppercase',
-                              letterSpacing: '0.1px'
+                              letterSpacing: '0.12px'
                             }}>
                               {stage}
                             </div>
@@ -9230,14 +10037,14 @@ function Edashboard({ onLogout }) {
                               if (duration) {
                                 return (
                                   <div style={{
-                                    marginTop: '3px',
-                                    fontSize: '10px',
+                                    marginTop: '4px',
+                                    fontSize: '11px',
                                     color: '#495057',
                                     fontWeight: '600',
                                     textAlign: 'center',
                                     backgroundColor: '#e9ecef',
-                                    padding: '2px 6px',
-                                    borderRadius: '3px'
+                                    padding: '3px 8px',
+                                    borderRadius: '4px'
                                   }}>
                                     ⏱ {formatDuration(duration)}
                                   </div>
@@ -9249,11 +10056,11 @@ function Edashboard({ onLogout }) {
                             {/* Status Badge */}
                             {isReturned && (
                               <div style={{
-                                marginTop: '2px',
+                                marginTop: '4px',
                                 backgroundColor: '#ff9800',
                                 color: 'white',
-                                fontSize: '7px',
-                                padding: '1px 4px',
+                                fontSize: '9px',
+                                padding: '3px 7px',
                                 borderRadius: '4px',
                                 fontWeight: '600',
                                 textTransform: 'uppercase',
@@ -9264,11 +10071,11 @@ function Edashboard({ onLogout }) {
                             )}
                             {isCompleted && (
                               <div style={{
-                                marginTop: '2px',
+                                marginTop: '4px',
                                 backgroundColor: '#27ae60',
                                 color: 'white',
-                                fontSize: '7px',
-                                padding: '1px 4px',
+                                fontSize: '9px',
+                                padding: '3px 7px',
                                 borderRadius: '4px',
                                 fontWeight: '600',
                                 textTransform: 'uppercase',
@@ -9287,7 +10094,7 @@ function Edashboard({ onLogout }) {
                               // Show green if this stage is completed OR if workflow is complete
                               backgroundColor: (isCompleted || isWorkflowComplete) ? '#27ae60' : '#e9ecef',
                               margin: '0 -6px',
-                              marginBottom: '24px',
+                              marginBottom: '30px',
                               position: 'relative',
                               zIndex: 1,
                               transition: 'all 0.3s ease'
@@ -9300,419 +10107,298 @@ function Edashboard({ onLogout }) {
                   
                   {/* Current Location Info */}
                   <div style={{
-                    marginTop: '8px',
-                    padding: '4px 8px',
+                    marginTop: '12px',
+                    padding: '10px 14px',
                     backgroundColor: 'white',
-                    borderRadius: '4px',
+                    borderRadius: '6px',
                     textAlign: 'center',
                     border: '1px solid #dee2e6'
                   }}>
                     <span style={{
-                      fontSize: '9px',
+                      fontSize: '13px',
                       color: '#6c757d',
                       fontWeight: '500'
                     }}>
                       📍 
                     </span>
                     <span style={{
-                      fontSize: '9px',
+                      fontSize: '14px',
                       color: '#3498db',
                       fontWeight: '700',
-                      marginLeft: '3px'
+                      marginLeft: '6px'
                     }}>
-                      {currentOffice}
+                      {formatFacultyLoadingPinOffice(currentOffice)}
                     </span>
                   </div>
                 </div>
               );
             })()}
 
-            {/* Document Info */}
-            <div style={{
-              backgroundColor: '#f8f9fa',
-              padding: '10px 12px',
-              borderRadius: '6px',
-              marginBottom: '12px'
+            {/* Document metadata — table only (no separate “review information” block) */}
+            <table style={{
+              width: '100%',
+              borderCollapse: 'collapse',
+              marginBottom: '16px',
+              fontSize: '15px',
+              border: '1px solid #cbd5e1',
+              borderRadius: '10px',
+              overflow: 'hidden',
+              backgroundColor: '#fff'
             }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                marginBottom: '6px'
-              }}>
-                <code style={{
-                  backgroundColor: '#e9ecef',
-                  padding: '2px 5px',
-                  borderRadius: '3px',
-                  fontSize: '9px',
-                  fontWeight: '600',
-                  color: '#495057',
-                  marginRight: '6px'
-                }}>
-                  {selectedDocument.documentId}
-                </code>
-                <h3 style={{
-                  margin: 0,
-                  fontSize: '14px',
-                  fontWeight: '600',
-                  color: '#2c3e50'
-                }}>
-                  {selectedDocument.name}
-                </h3>
-              </div>
-              {selectedDocument.description && (
-                <p style={{
-                  margin: '0 0 6px 0',
-                  color: '#6c757d',
-                  fontSize: '11px'
-                }}>
-                  {selectedDocument.description}
-                </p>
-              )}
-              <div style={{
-                display: 'flex',
-                gap: '8px',
-                flexWrap: 'wrap',
-                alignItems: 'center'
-              }}>
-                <span style={{
-                  backgroundColor: getStatusColor(selectedDocument.status),
-                  color: 'white',
-                  padding: '2px 8px',
-                  borderRadius: '8px',
-                  fontSize: '10px',
-                  fontWeight: '600',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '2px'
-                }}>
-                  {getStatusIcon(selectedDocument.status)} {selectedDocument.status || 'Submitted'}
-                </span>
-                <span style={{
-                  color: '#6c757d',
-                  fontSize: '10px'
-                }}>
-                  Submitted by: {selectedDocument.submittedBy || 'Unknown'}
-                </span>
-                <span style={{
-                  color: '#6c757d',
-                  fontSize: '10px'
-                }}>
-                  Date: {selectedDocument.dateUploaded ? new Date(selectedDocument.dateUploaded).toLocaleDateString() : 'N/A'}
-                </span>
-              </div>
-            </div>
+              <tbody>
+                <tr>
+                  <td style={{ padding: '14px 18px', backgroundColor: '#f1f5f9', fontWeight: '600', width: '28%', borderBottom: '1px solid #e2e8f0', color: '#1e293b', verticalAlign: 'middle', fontSize: '15px' }}>Document ID</td>
+                  <td style={{ padding: '14px 18px', borderBottom: '1px solid #e2e8f0', fontSize: '15px' }}>
+                    <code style={{
+                      backgroundColor: '#e9ecef',
+                      padding: '5px 10px',
+                      borderRadius: '6px',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      color: '#495057'
+                    }}>
+                      {selectedDocument.documentId}
+                    </code>
+                  </td>
+                </tr>
+                <tr>
+                  <td style={{ padding: '14px 18px', backgroundColor: '#f1f5f9', fontWeight: '600', borderBottom: '1px solid #e2e8f0', color: '#1e293b', verticalAlign: 'top', fontSize: '15px' }}>File name</td>
+                  <td style={{ padding: '14px 18px', borderBottom: '1px solid #e2e8f0', fontWeight: '600', color: '#1e293b', fontSize: '15px', lineHeight: '1.4' }}>
+                    {selectedDocument.name}
+                  </td>
+                </tr>
+                {selectedDocument.description && (
+                  <tr>
+                    <td style={{ padding: '14px 18px', backgroundColor: '#f1f5f9', fontWeight: '600', borderBottom: '1px solid #e2e8f0', color: '#1e293b', verticalAlign: 'top', fontSize: '15px' }}>Description</td>
+                    <td style={{ padding: '14px 18px', borderBottom: '1px solid #e2e8f0', color: '#475569', fontSize: '14px', lineHeight: '1.55' }}>
+                      {selectedDocument.description}
+                    </td>
+                  </tr>
+                )}
+                <tr>
+                  <td style={{ padding: '14px 18px', backgroundColor: '#f1f5f9', fontWeight: '600', borderBottom: '1px solid #e2e8f0', color: '#1e293b', verticalAlign: 'middle', fontSize: '15px' }}>Status</td>
+                  <td style={{ padding: '14px 18px', borderBottom: '1px solid #e2e8f0' }}>
+                    <span style={{
+                      backgroundColor: getStatusColor(selectedDocument.status),
+                      color: 'white',
+                      padding: '6px 14px',
+                      borderRadius: '8px',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}>
+                      {getStatusIcon(selectedDocument.status)} {selectedDocument.status || 'Submitted'}
+                    </span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style={{ padding: '14px 18px', backgroundColor: '#f1f5f9', fontWeight: '600', borderBottom: '1px solid #e2e8f0', color: '#1e293b', fontSize: '15px' }}>Submitted by</td>
+                  <td style={{ padding: '14px 18px', borderBottom: '1px solid #e2e8f0', color: '#334155', fontSize: '15px' }}>
+                    {selectedDocument.submittedBy || 'Unknown'}
+                  </td>
+                </tr>
+                <tr>
+                  <td style={{ padding: '14px 18px', backgroundColor: '#f1f5f9', fontWeight: '600', color: '#1e293b', fontSize: '15px' }}>Upload date</td>
+                  <td style={{ padding: '14px 18px', color: '#334155', fontSize: '15px' }}>
+                    {selectedDocument.dateUploaded ? new Date(selectedDocument.dateUploaded).toLocaleDateString() : 'N/A'}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
 
-            {/* Review Form */}
-            <div style={{ display: 'grid', gap: '10px' }}>
-              {/* Hide manual form fields when at final step (Quick Actions shown instead) */}
-              {(() => {
-                const nextOffice = getNextOffice();
-                // Update reviewForm.nextOffice with the calculated next office if it's different
-                // This ensures the form shows the correct next office based on workflow, not outdated document.nextOffice
-                if (nextOffice && nextOffice !== reviewForm.nextOffice && selectedDocument) {
-                  const docType = selectedDocument.type?.toUpperCase() || '';
-                  const docCategory = selectedDocument.category?.toUpperCase() || '';
-                  const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory.includes('REQUESTED SUBJECT');
-                  const isTravelOrder = docType.includes('TRAVEL ORDER') || docCategory.includes('TRAVEL ORDER');
-                  const isFacultyLoading = docType.includes('FACULTY LOADING') || docCategory.includes('FACULTY LOADING');
-                  
-                  // Only auto-update for documents with specific workflows to avoid overriding manual selections
-                  if (isRequestedSubject || isTravelOrder || isFacultyLoading) {
-                    setReviewForm(prev => ({
-                      ...prev,
-                      nextOffice: nextOffice
-                    }));
-                  }
+            {/* Actions & comments — table (fields hidden at final workflow step) */}
+            {(() => {
+              const nextOffice = getNextOffice();
+              if (nextOffice && nextOffice !== reviewForm.nextOffice && selectedDocument) {
+                const docType = selectedDocument.type?.toUpperCase() || '';
+                const docCategory = selectedDocument.category?.toUpperCase() || '';
+                const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || docCategory.includes('REQUESTED SUBJECT');
+                const isTravelOrder = docType.includes('TRAVEL ORDER') || docCategory.includes('TRAVEL ORDER');
+                const isFacultyLoading = docType.includes('FACULTY LOADING') || docCategory.includes('FACULTY LOADING');
+                if (isRequestedSubject || isTravelOrder || isFacultyLoading) {
+                  setReviewForm(prev => ({
+                    ...prev,
+                    nextOffice: nextOffice
+                  }));
                 }
-                // Only show these fields if NOT at final step
-                return nextOffice !== null;
-              })() && (
-                <>
-              {/* Status Update */}
-              <div>
-                <label style={{
-                  display: 'block',
-                  marginBottom: '4px',
-                  fontSize: '11px',
-                  fontWeight: '600',
-                  color: '#2c3e50'
-                }}>
-                  Update Status *
-                </label>
-                <select
-                  value={reviewForm.status}
-                  onChange={(e) => handleReviewInputChange('status', e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '7px 8px',
-                    border: '2px solid #e1e8ed',
-                    borderRadius: '5px',
-                    fontSize: '12px',
-                    backgroundColor: 'white',
-                    outline: 'none',
-                    transition: 'border-color 0.3s ease',
-                    boxSizing: 'border-box'
-                  }}
-                  onFocus={(e) => e.target.style.borderColor = '#3498db'}
-                  onBlur={(e) => e.target.style.borderColor = '#e1e8ed'}
-                >
-                  <option value="Submitted">Submitted</option>
-                  <option value="Under Review">Under Review</option>
-                  <option value="Processing">Processing</option>
-                  <option value="Approved">Approved</option>
-                  <option value="Rejected">Rejected</option>
-                </select>
-              </div>
+              }
 
-              {/* Reviewer */}
-              <div>
-                <label style={{
-                  display: 'block',
-                  marginBottom: '4px',
-                  fontSize: '11px',
-                  fontWeight: '600',
-                  color: '#2c3e50'
+              return (
+                <table style={{
+                  width: '100%',
+                  borderCollapse: 'collapse',
+                  marginBottom: '16px',
+                  fontSize: '15px',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '10px',
+                  overflow: 'hidden',
+                  backgroundColor: '#fff'
                 }}>
-                  Reviewer *
-                </label>
-                <input
-                  type="text"
-                  value={reviewForm.reviewer}
-                  onChange={(e) => handleReviewInputChange('reviewer', e.target.value)}
-                  placeholder="Enter reviewer name"
-                  style={{
-                    width: '100%',
-                    padding: '7px 8px',
-                    border: '2px solid #e1e8ed',
-                    borderRadius: '5px',
-                    fontSize: '12px',
-                    outline: 'none',
-                    transition: 'border-color 0.3s ease',
-                    boxSizing: 'border-box'
-                  }}
-                  onFocus={(e) => e.target.style.borderColor = '#3498db'}
-                  onBlur={(e) => e.target.style.borderColor = '#e1e8ed'}
-                />
-              </div>
-
-              {/* Forward to Next Office */}
-              <div>
-                <label style={{
-                  display: 'block',
-                  marginBottom: '4px',
-                  fontSize: '11px',
-                  fontWeight: '600',
-                  color: '#2c3e50'
-                }}>
-                  Forward to Next Office {(() => {
-                    const isFacultyLoading = selectedDocument && selectedDocument.type && selectedDocument.type.toUpperCase().includes('FACULTY LOADING');
-                    return isFacultyLoading ? '(Auto-routed)' : '(Optional)';
-                  })()}
-                </label>
-                {(() => {
-                  const isFacultyLoading = selectedDocument && selectedDocument.type && selectedDocument.type.toUpperCase().includes('FACULTY LOADING');
-                  
-                  if (isFacultyLoading) {
-                    // Show read-only field for Faculty Loading with workflow info
-                    return (
-                      <>
-                        <input
-                          type="text"
-                          value={reviewForm.nextOffice}
-                          readOnly
+                  <tbody>
+                    {nextOffice !== null && (
+                      <tr>
+                        <td style={{ padding: '14px 18px', backgroundColor: '#f1f5f9', fontWeight: '600', borderBottom: '1px solid #e2e8f0', color: '#1e293b', verticalAlign: 'middle', fontSize: '15px', width: '28%' }}>
+                          Reviewer *
+                        </td>
+                        <td style={{ padding: '14px 18px', borderBottom: '1px solid #e2e8f0' }}>
+                          <input
+                            type="text"
+                            value={reviewForm.reviewer}
+                            onChange={(e) => handleReviewInputChange('reviewer', e.target.value)}
+                            placeholder="Enter reviewer name"
+                            style={{
+                              width: '100%',
+                              padding: '11px 14px',
+                              border: '2px solid #cbd5e1',
+                              borderRadius: '8px',
+                              fontSize: '15px',
+                              outline: 'none',
+                              transition: 'border-color 0.3s ease',
+                              boxSizing: 'border-box',
+                              minHeight: '46px'
+                            }}
+                            onFocus={(e) => { e.target.style.borderColor = '#3498db'; }}
+                            onBlur={(e) => { e.target.style.borderColor = '#cbd5e1'; }}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                    <tr>
+                      <td style={{
+                        padding: '14px 18px',
+                        backgroundColor: '#f1f5f9',
+                        fontWeight: '600',
+                        borderBottom: 'none',
+                        color: '#1e293b',
+                        verticalAlign: 'top',
+                        fontSize: '15px'
+                      }}>
+                        Comments
+                      </td>
+                      <td style={{ padding: '14px 18px', borderBottom: 'none', verticalAlign: 'top' }}>
+                        <textarea
+                          value={reviewForm.comments}
+                          onChange={(e) => handleReviewInputChange('comments', e.target.value)}
+                          placeholder="Enter comments or feedback..."
+                          rows="4"
                           style={{
                             width: '100%',
-                            padding: '7px 8px',
-                            border: '2px solid #e1e8ed',
-                            borderRadius: '5px',
-                            fontSize: '12px',
-                            backgroundColor: '#f8f9fa',
+                            padding: '12px 14px',
+                            border: '2px solid #cbd5e1',
+                            borderRadius: '8px',
+                            fontSize: '15px',
+                            lineHeight: '1.45',
+                            resize: 'vertical',
+                            overflowX: 'hidden',
+                            wordWrap: 'break-word',
                             outline: 'none',
+                            transition: 'border-color 0.3s ease',
                             boxSizing: 'border-box',
-                            cursor: 'not-allowed',
-                            color: '#495057',
-                            fontWeight: '600'
+                            minHeight: '100px'
                           }}
+                          onFocus={(e) => { e.target.style.borderColor = '#3498db'; }}
+                          onBlur={(e) => { e.target.style.borderColor = '#cbd5e1'; }}
                         />
-                        <p style={{
-                          margin: '8px 0 0 0',
-                          fontSize: '11px',
-                          color: '#16a085',
-                          fontStyle: 'italic',
-                          lineHeight: '1.4'
-                        }}>
-                          📋 Faculty Loading follows a fixed workflow:<br/>
-                          HR → Records Office → Executive Assistant → Office of the President → Records Office → HR → Back to Sender
-                        </p>
-                      </>
-                    );
-                  }
-                  
-                  // Show normal dropdown for other document types
-                  return (
-                    <>
-                      <select
-                        value={reviewForm.nextOffice}
-                        onChange={(e) => handleReviewInputChange('nextOffice', e.target.value)}
-                        style={{
-                          width: '100%',
-                          padding: '7px 8px',
-                          border: '2px solid #e1e8ed',
-                          borderRadius: '5px',
-                          fontSize: '12px',
-                          backgroundColor: 'white',
-                          outline: 'none',
-                          boxSizing: 'border-box',
-                          transition: 'border-color 0.3s ease'
-                        }}
-                        onFocus={(e) => e.target.style.borderColor = '#3498db'}
-                        onBlur={(e) => e.target.style.borderColor = '#e1e8ed'}
-                      >
-                        <option value="">-- Don't Forward --</option>
-                        {offices.map(office => (
-                          <option key={office._id} value={office.name}>
-                            {office.name}
-                          </option>
-                        ))}
-                      </select>
-                      {reviewForm.nextOffice && (
-                        <p style={{
-                          margin: '8px 0 0 0',
-                          fontSize: '12px',
-                          color: '#27ae60',
-                          fontStyle: 'italic'
-                        }}>
-                          ✓ Document will be forwarded to {reviewForm.nextOffice}
-                        </p>
-                      )}
-                    </>
-                  );
-                })()}
-              </div>
-              </>
-              )}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              );
+            })()}
 
-              {/* Comments - Always visible */}
-              <div>
-                <label style={{
-                  display: 'block',
-                  marginBottom: '4px',
-                  fontSize: '11px',
-                  fontWeight: '600',
-                  color: '#2c3e50'
-                }}>
-                  Review Comments
-                </label>
-                <textarea
-                  value={reviewForm.comments}
-                  onChange={(e) => handleReviewInputChange('comments', e.target.value)}
-                  placeholder="Enter review comments or feedback..."
-                  rows="2"
-                  style={{
-                    width: '100%',
-                    padding: '7px 8px',
-                    border: '2px solid #e1e8ed',
-                    borderRadius: '5px',
-                    fontSize: '12px',
-                    resize: 'vertical',
-                    overflowX: 'hidden',
-                    wordWrap: 'break-word',
-                    outline: 'none',
-                    transition: 'border-color 0.3s ease',
-                    boxSizing: 'border-box'
-                  }}
-                  onFocus={(e) => e.target.style.borderColor = '#3498db'}
-                  onBlur={(e) => e.target.style.borderColor = '#e1e8ed'}
-                />
-              </div>
-            </div>
-
-            {/* Routing History / Audit Log */}
+            {/* Routing History — table */}
             {selectedDocument?.routingHistory && selectedDocument.routingHistory.length > 0 && (
               <div style={{
-                marginTop: '15px',
-                padding: '12px',
-                backgroundColor: '#f8f9fa',
-                borderRadius: '8px',
-                border: '1px solid #e9ecef'
+                marginTop: '18px',
+                border: '1px solid #cbd5e1',
+                borderRadius: '10px',
+                overflow: 'hidden',
+                backgroundColor: '#fff'
               }}>
-                <h3 style={{
-                  margin: '0 0 10px 0',
-                  fontSize: '13px',
-                  fontWeight: '600',
-                  color: '#2c3e50',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px'
-                }}>
-                  Routing History
-                </h3>
                 <div style={{
-                  maxHeight: '200px',
-                  overflowY: 'auto'
+                  padding: '12px 16px',
+                  fontSize: '15px',
+                  fontWeight: '600',
+                  color: '#1e293b',
+                  backgroundColor: '#f1f5f9',
+                  borderBottom: '1px solid #cbd5e1'
                 }}>
-                  {selectedDocument.routingHistory.map((entry, index) => (
-                    <div key={index} style={{
-                      padding: '8px 10px',
-                      marginBottom: '6px',
-                      backgroundColor: 'white',
-                      borderRadius: '6px',
-                      borderLeft: '3px solid #3498db',
-                      fontSize: '11px'
-                    }}>
-                      <div style={{ 
-                        fontWeight: '600', 
-                        color: '#2c3e50',
-                        marginBottom: '3px'
-                      }}>
-                        {entry.action ? entry.action.charAt(0).toUpperCase() + entry.action.slice(1).replace(/_/g, ' ') : 'Updated'}
-                        {entry.office && (
-                          <span style={{ color: '#7f8c8d', fontWeight: 'normal' }}>
-                            {' '}at {entry.office}
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ color: '#7f8c8d', fontSize: '10px' }}>
-                        {(() => {
-                          const handler = entry.handler || entry.performedBy || 'Unknown';
-                          const timestamp = entry.timestamp || entry.date;
-                          const dateStr = timestamp 
-                            ? new Date(timestamp).toLocaleString('en-US', {
-                                year: 'numeric',
-                                month: '2-digit',
-                                day: '2-digit',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                                hour12: true
-                              })
-                            : 'N/A';
-                          return `By: ${handler} • ${dateStr}`;
-                        })()}
-                      </div>
-                      {entry.comments && (
-                        <div style={{ 
-                          marginTop: '4px', 
-                          color: '#495057',
-                          fontStyle: 'italic'
-                        }}>
-                          "{entry.comments}"
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                  Routing history
+                </div>
+                <div style={{
+                  maxHeight: '360px',
+                  overflowY: 'auto',
+                  overflowX: 'auto'
+                }}>
+                  <table style={{
+                    width: '100%',
+                    borderCollapse: 'collapse',
+                    fontSize: '14px'
+                  }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#f8fafc' }}>
+                        <th style={{ padding: '11px 14px', textAlign: 'left', borderBottom: '1px solid #e2e8f0', color: '#1e293b', fontWeight: '600', fontSize: '14px', width: '40px' }}>#</th>
+                        <th style={{ padding: '11px 14px', textAlign: 'left', borderBottom: '1px solid #e2e8f0', color: '#1e293b', fontWeight: '600', fontSize: '14px', minWidth: '96px' }}>Action</th>
+                        <th style={{ padding: '11px 14px', textAlign: 'left', borderBottom: '1px solid #e2e8f0', color: '#1e293b', fontWeight: '600', fontSize: '14px', minWidth: '110px' }}>Office</th>
+                        <th style={{ padding: '11px 14px', textAlign: 'left', borderBottom: '1px solid #e2e8f0', color: '#1e293b', fontWeight: '600', fontSize: '14px', minWidth: '88px' }}>By</th>
+                        <th style={{ padding: '11px 14px', textAlign: 'left', borderBottom: '1px solid #e2e8f0', color: '#1e293b', fontWeight: '600', fontSize: '14px', minWidth: '140px' }}>Date / time</th>
+                        <th style={{ padding: '11px 14px', textAlign: 'left', borderBottom: '1px solid #e2e8f0', color: '#1e293b', fontWeight: '600', fontSize: '14px', minWidth: '140px' }}>Comments</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedDocument.routingHistory.map((entry, index) => {
+                        const handler = entry.handler || entry.performedBy || 'Unknown';
+                        const timestamp = entry.timestamp || entry.date;
+                        const dateStr = timestamp
+                          ? new Date(timestamp).toLocaleString('en-US', {
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              hour12: true
+                            })
+                          : 'N/A';
+                        const actionLabel = entry.action
+                          ? entry.action.charAt(0).toUpperCase() + entry.action.slice(1).replace(/_/g, ' ')
+                          : 'Updated';
+                        return (
+                          <tr key={index} style={{ backgroundColor: index % 2 === 0 ? '#ffffff' : '#fafbfc' }}>
+                            <td style={{ padding: '11px 14px', borderBottom: '1px solid #eef2f7', color: '#64748b', verticalAlign: 'top', fontSize: '14px' }}>{index + 1}</td>
+                            <td style={{ padding: '11px 14px', borderBottom: '1px solid #eef2f7', color: '#1e293b', fontWeight: '600', verticalAlign: 'top', fontSize: '14px' }}>{actionLabel}</td>
+                            <td style={{ padding: '11px 14px', borderBottom: '1px solid #eef2f7', color: '#334155', verticalAlign: 'top', fontSize: '14px' }}>{entry.office || '—'}</td>
+                            <td style={{ padding: '11px 14px', borderBottom: '1px solid #eef2f7', color: '#334155', verticalAlign: 'top', fontSize: '14px' }}>{handler}</td>
+                            <td style={{ padding: '11px 14px', borderBottom: '1px solid #eef2f7', color: '#475569', verticalAlign: 'top', fontSize: '14px', lineHeight: '1.35' }}>{dateStr}</td>
+                            <td style={{ padding: '11px 14px', borderBottom: '1px solid #eef2f7', color: '#1e293b', fontStyle: entry.comments ? 'italic' : 'normal', verticalAlign: 'top', wordBreak: 'break-word', fontSize: '14px', lineHeight: '1.4' }}>
+                              {entry.comments ? `"${entry.comments}"` : '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
 
             {/* Quick Actions - Show if document is at current user's office (even if already approved) */}
             {(() => {
-              // Hide all actions if document is in final state
+              // If this office already returned the document, hide actions
+              // until the submitter resubmits.
+              if (hasPendingReturnFromMyOffice(selectedDocument, employee?.position)) {
+                return false;
+              }
+
+              // Hide actions only for truly final states.
+              // "Returned" can still be in-process when routed to another office (e.g., HR),
+              // so do not block quick actions solely by Returned status.
               const isFinalState = selectedDocument?.status === 'Approved' || 
-                                   selectedDocument?.status === 'Rejected' || 
-                                   selectedDocument?.status === 'Returned';
+                                   selectedDocument?.status === 'Rejected';
               
               if (isFinalState) {
-                return false; // Don't show any actions for completed/rejected/returned documents
+                return false; // Don't show actions for completed/rejected documents
               }
               
               // Show approval buttons if document is at user's office, regardless of approval status
@@ -9759,7 +10445,8 @@ function Edashboard({ onLogout }) {
               
               const isAtRequestedSubjectPosition = isRequestedSubjectPosition && docRoutedToPosition;
               
-              // Also show for final approvers (VP, Academic VP, OP, Encoder) if document is at their position
+              // Also show for final approvers (VP, Academic VP, OP, Encoder, VPAA) if document is at their position
+              const empIsVPAA = empPosition && (empPosition.includes('VPAA') || empPosition.includes('Vice President for Academic Affairs'));
               const isFinalApprover = positionMatchesOffice(employee?.position, 'Academic Vice President') ||
                                       positionMatchesOffice(employee?.position, 'Academic VP') ||
                                       positionMatchesOffice(employee?.position, 'Vice President') ||
@@ -9767,17 +10454,26 @@ function Edashboard({ onLogout }) {
                                       positionMatchesOffice(employee?.position, 'Office of the President') ||
                                       positionMatchesOffice(employee?.position, 'President') ||
                                       positionMatchesOffice(employee?.position, 'OP') ||
-                                      positionMatchesOffice(employee?.position, 'Encoder');
+                                      positionMatchesOffice(employee?.position, 'Encoder') ||
+                                      empIsVPAA;
               
-              const isAtFinalApproverOffice = isFinalApprover && 
-                (selectedDocument?.currentOffice === employee?.position || 
-                 selectedDocument?.nextOffice === employee?.position ||
-                 selectedDocument?.currentOffice === 'VP' ||
-                 selectedDocument?.currentOffice === 'Vice President' ||
-                 selectedDocument?.nextOffice === 'VP' ||
-                 selectedDocument?.nextOffice === 'Vice President');
+              const docRoutedToVPAA = (docCurrentOffice && (docCurrentOffice.includes('VPAA') || docCurrentOffice.includes('Vice President for Academic Affairs'))) ||
+                                      (docNextOffice && (docNextOffice.includes('VPAA') || docNextOffice.includes('Vice President for Academic Affairs')));
+
+              // isAtFinalApproverOffice: only true when the document is actually AT the employee's own office.
+              // Using positionMatchesOffice prevents VP from seeing buttons when document is at OP, etc.
+              const isAtFinalApproverOffice = isFinalApprover && (
+                positionMatchesOffice(employee?.position, selectedDocument?.currentOffice) ||
+                positionMatchesOffice(employee?.position, selectedDocument?.nextOffice) ||
+                (empIsVPAA && docRoutedToVPAA)
+              );
               
-              const shouldShowButtons = employee && (isAtUserOffice || isAtFinalApproverOffice || directMatch || isAtRequestedSubjectPosition);
+              const shouldShowButtons = employee && (
+                isAtUserOffice ||
+                isAtFinalApproverOffice ||
+                directMatch ||
+                isAtRequestedSubjectPosition
+              );
               console.log('🔍 Final decision:', {
                 shouldShowButtons,
                 hasEmployee: !!employee,
@@ -9793,42 +10489,51 @@ function Edashboard({ onLogout }) {
               return shouldShowButtons;
             })() && (
               <div style={{
-                marginTop: '12px',
-                paddingTop: '12px',
+                marginTop: '16px',
+                paddingTop: '16px',
                 borderTop: '2px solid #ecf0f1'
               }}>
                 <h3 style={{
-                  margin: '0 0 8px 0',
-                  fontSize: '12px',
+                  margin: '0 0 12px 0',
+                  fontSize: '16px',
                   fontWeight: '600',
-                  color: '#2c3e50',
-                  textAlign: 'center'
+                  color: '#1e293b',
+                  textAlign: 'center',
+                  letterSpacing: '-0.01em'
                 }}>
                   🎯 Quick Actions
                 </h3>
                 <div style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                  gap: '10px'
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+                  gap: '14px'
                 }}>
-                  {getNextOffice() && (
+                  {(getNextOffice() || isAcademicVpReviewingFacultyLoadingFinal()) && (
                     <>
                       <button
-                        onClick={handleApproveAndForward}
+                        onClick={() => {
+                          if (isAcademicVpReviewingFacultyLoadingFinal()) {
+                            void handleFinalApprove();
+                            return;
+                          }
+                          handleApproveAndForward();
+                        }}
                         style={{
-                          padding: '8px 12px',
+                          padding: '14px 20px',
                           backgroundColor: '#27ae60',
                           color: 'white',
                           border: 'none',
-                          borderRadius: '5px',
-                          fontSize: '11px',
+                          borderRadius: '8px',
+                          fontSize: '15px',
                           fontWeight: '600',
                           cursor: 'pointer',
                           transition: 'all 0.3s ease',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          gap: '6px'
+                          gap: '8px',
+                          minHeight: '48px',
+                          lineHeight: '1.3'
                         }}
                         onMouseEnter={(e) => {
                           e.target.style.backgroundColor = '#229954';
@@ -9842,24 +10547,53 @@ function Edashboard({ onLogout }) {
                         }}
                       >
                         <span style={{ fontSize: '16px' }}>✓</span>
-                        Accept & Forward to {getNextOffice()}
+                        {(() => {
+                          if (isAcademicVpReviewingFacultyLoadingFinal()) {
+                            return 'Approve & Complete';
+                          }
+                          const no = getNextOffice();
+                          if (no === 'COMPLETED') return 'Accept & Complete (Return to Sender)';
+                          const d = selectedDocument;
+                          const isTO =
+                            d?.type?.toUpperCase().includes('TRAVEL ORDER') ||
+                            d?.category === 'Travel Order';
+                          const isFL =
+                            d?.type?.toUpperCase().includes('FACULTY LOADING') ||
+                            (d?.category && String(d.category).toUpperCase().includes('FACULTY LOADING'));
+                          if (isPresidentReviewingThisDocument() && no && no !== 'COMPLETED') {
+                            return `Approve & Forward to ${no}`;
+                          }
+                          if (isTO && !isPresidentRoleForTravelOrder(employee?.position)) {
+                            return `Forward to ${no}`;
+                          }
+                          if (isFL && no && no !== 'COMPLETED') {
+                            return `Forward to ${no}`;
+                          }
+                          if (isRequestedSubjectForwardOnlyReviewer() && no && no !== 'COMPLETED') {
+                            return `Forward to ${no}`;
+                          }
+                          return `Accept & Forward to ${no}`;
+                        })()}
                       </button>
+                      {!isRequestedSubjectForwardOnlyReviewer() && (
                       <button
                         onClick={handleForwardToNext}
                         style={{
-                          padding: '8px 12px',
+                          padding: '14px 20px',
                           backgroundColor: '#3498db',
                           color: 'white',
                           border: 'none',
-                          borderRadius: '5px',
-                          fontSize: '11px',
+                          borderRadius: '8px',
+                          fontSize: '15px',
                           fontWeight: '600',
                           cursor: 'pointer',
                           transition: 'all 0.3s ease',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          gap: '8px'
+                          gap: '10px',
+                          minHeight: '48px',
+                          lineHeight: '1.3'
                         }}
                         onMouseEnter={(e) => {
                           e.target.style.backgroundColor = '#2980b9';
@@ -9873,102 +10607,72 @@ function Edashboard({ onLogout }) {
                         }}
                       >
                         <span style={{ fontSize: '16px' }}>→</span>
-                        Hold File
+                        {isPresidentReviewingThisDocument() || isAcademicVpReviewingFacultyLoadingFinal()
+                          ? 'On Hold'
+                          : 'Hold File'}
                       </button>
+                      )}
                     </>
                   )}
                   {(() => {
-                    // Check if this is a Travel Order at final stage (HR - 2nd visit)
                     const docType = selectedDocument?.type?.toUpperCase() || '';
                     const docCategory = selectedDocument?.category || '';
                     const isTravelOrder = docType.includes('TRAVEL ORDER') || docCategory === 'Travel Order';
-                    const isHR = positionMatchesOffice(employee?.position, 'HR') || 
-                                positionMatchesOffice(employee?.position, 'Human Resources');
-                    
-                    // For Travel Order HR: Only show Final Approve at Stage 7 (second visit), not Stage 2
-                    if (isTravelOrder && isHR && !getNextOffice()) {
-                      const routingHistory = Array.isArray(selectedDocument?.routingHistory) 
-                        ? selectedDocument.routingHistory 
-                        : [];
-                      
-                      // Check if all previous stages (0-5) have been completed
-                      // If all are completed, we're at Stage 7 (final stage)
-                      const stages = ['Immediate Supervisor', 'HR', 'Records Office', 'Executive Assistant', 'President', 'Records Office', 'HR'];
-                      
-                      // Count approvals for each stage
-                      const stageVisits = {};
-                      routingHistory.forEach(entry => {
-                        const action = entry.action?.toLowerCase() || '';
-                        const isApproval = action.includes('approved') || action.includes('forwarded');
-                        if (isApproval && entry.office && entry.office !== 'Submitted') {
-                          let normalizedOffice = entry.office;
-                          const officeLower = entry.office.toLowerCase();
-                          if (officeLower.includes('hr') || officeLower.includes('human resources')) {
-                            normalizedOffice = 'HR';
-                          } else if (officeLower === 'im' || officeLower.includes('immediate supervisor')) {
-                            normalizedOffice = 'Immediate Supervisor';
-                          } else if (officeLower.includes('records')) {
-                            normalizedOffice = 'Records Office';
-                          } else if (officeLower.includes('executive assistant')) {
-                            normalizedOffice = 'Executive Assistant';
-                          } else if (officeLower.includes('president') || officeLower.includes('op')) {
-                            normalizedOffice = 'President';
-                          }
-                          stageVisits[normalizedOffice] = (stageVisits[normalizedOffice] || 0) + 1;
-                        }
-                      });
-                      
-                      // Check if all stages 0-5 are completed
-                      let allPreviousStagesCompleted = true;
-                      for (let i = 0; i <= 5; i++) {
-                        const stage = stages[i];
-                        const requiredCount = stages.slice(0, i + 1).filter(s => s === stage).length;
-                        const actualCount = stageVisits[stage] || 0;
-                        if (actualCount < requiredCount) {
-                          allPreviousStagesCompleted = false;
-                          break;
-                        }
-                      }
-                      
-                      // Only show Final Approve if all previous stages (0-5) are completed
-                      // This means we're at Stage 7 (HR final visit)
-                      if (!allPreviousStagesCompleted) {
-                        return false; // Don't show Final Approve - not at final stage yet
-                      }
+                    // Travel Order: no Final Approve — President uses Reject/Return; HR ends via Accept & Complete
+                    if (isTravelOrder) {
+                      return false;
                     }
-                    
-                    // Show Final Approve button for final approvers when workflow is complete
-                    // OR for Travel Order HR at their second visit
-                    const shouldShowFinalApprove = !getNextOffice() && (
-                    positionMatchesOffice(employee?.position, 'Academic Vice President') ||
-                    positionMatchesOffice(employee?.position, 'Academic VP') ||
-                    positionMatchesOffice(employee?.position, 'Vice President') ||
-                    positionMatchesOffice(employee?.position, 'VP') ||
-                    positionMatchesOffice(employee?.position, 'Office of the President') ||
-                    positionMatchesOffice(employee?.position, 'President') ||
-                    positionMatchesOffice(employee?.position, 'OP') ||
-                      (isHR && (!isTravelOrder || !getNextOffice())) ||
-                    positionMatchesOffice(employee?.position, 'Encoder')
-                    );
-                    
+                    if (isAcademicVpReviewingFacultyLoadingFinal()) {
+                      return false;
+                    }
+                    const isRequestedSubject =
+                      docType.includes('REQUESTED SUBJECT') ||
+                      String(docCategory || '').toUpperCase().includes('REQUESTED SUBJECT');
+                    if (isRequestedSubject) {
+                      return (
+                        !getNextOffice() &&
+                        positionMatchesOffice(employee?.position, 'Encoder')
+                      );
+                    }
+                    const isHR = positionMatchesOffice(employee?.position, 'HR') ||
+                      positionMatchesOffice(employee?.position, 'Human Resources');
+                    const isVPAA =
+                      employee?.position &&
+                      (employee.position.includes('VPAA') ||
+                        employee.position.includes('Vice President for Academic Affairs'));
+                    const shouldShowFinalApprove =
+                      !getNextOffice() &&
+                      (positionMatchesOffice(employee?.position, 'Academic Vice President') ||
+                        positionMatchesOffice(employee?.position, 'Academic VP') ||
+                        positionMatchesOffice(employee?.position, 'Vice President') ||
+                        positionMatchesOffice(employee?.position, 'VP') ||
+                        positionMatchesOffice(employee?.position, 'Office of the President') ||
+                        positionMatchesOffice(employee?.position, 'President') ||
+                        positionMatchesOffice(employee?.position, 'OP') ||
+                        isHR ||
+                        positionMatchesOffice(employee?.position, 'Encoder') ||
+                        isVPAA);
+
                     return shouldShowFinalApprove;
                   })() && (
                     <button
                       onClick={handleFinalApprove}
                       style={{
-                        padding: '14px 20px',
+                        padding: '16px 24px',
                         backgroundColor: '#27ae60',
                         color: 'white',
                         border: 'none',
                         borderRadius: '8px',
-                        fontSize: '13px',
+                        fontSize: '15px',
                         fontWeight: '600',
                         cursor: 'pointer',
                         transition: 'all 0.3s ease',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        gap: '8px'
+                        gap: '10px',
+                        minHeight: '52px',
+                        lineHeight: '1.3'
                       }}
                       onMouseEnter={(e) => {
                         e.target.style.backgroundColor = '#229954';
@@ -9982,38 +10686,75 @@ function Edashboard({ onLogout }) {
                       }}
                     >
                       <span style={{ fontSize: '16px' }}>✓</span>
-                      Final Approve
+                      {isRsEncoderReviewingRequestedSubject() ? 'Encode & Complete' : 'Final Approve'}
                     </button>
                   )}
-                  {/* Show Reject button for final approver */}
-                  {(!getNextOffice() && (
-                    positionMatchesOffice(employee?.position, 'Academic Vice President') ||
-                    positionMatchesOffice(employee?.position, 'Academic VP') ||
-                    positionMatchesOffice(employee?.position, 'Vice President') ||
-                    positionMatchesOffice(employee?.position, 'VP') ||
-                    positionMatchesOffice(employee?.position, 'Office of the President') ||
-                    positionMatchesOffice(employee?.position, 'President') ||
-                    positionMatchesOffice(employee?.position, 'OP') ||
-                    positionMatchesOffice(employee?.position, 'HR') ||
-                    positionMatchesOffice(employee?.position, 'Human Resources') ||
-                    positionMatchesOffice(employee?.position, 'Encoder')
-                  )) && (
+                  {/* Travel Order: only President may Reject; other types: final approvers when no next office */}
+                  {(() => {
+                    const docType = selectedDocument?.type?.toUpperCase() || '';
+                    const docCat = selectedDocument?.category || '';
+                    const isTravelOrder =
+                      docType.includes('TRAVEL ORDER') ||
+                      docCat === 'Travel Order' ||
+                      docCat?.toUpperCase().includes('TRAVEL ORDER');
+                    if (isTravelOrder) {
+                      return canTravelOrderPresidentReject();
+                    }
+                    const isRequestedSubject =
+                      docType.includes('REQUESTED SUBJECT') ||
+                      String(docCat || '').toUpperCase().includes('REQUESTED SUBJECT');
+                    if (isRequestedSubject) {
+                      if (isRequestedSubjectForwardOnlyReviewer()) return false;
+                      if (isRsVpaaReviewingRequestedSubject()) return true;
+                      return (
+                        !getNextOffice() &&
+                        (positionMatchesOffice(employee?.position, 'Academic Vice President') ||
+                          positionMatchesOffice(employee?.position, 'Academic VP') ||
+                          positionMatchesOffice(employee?.position, 'Vice President') ||
+                          positionMatchesOffice(employee?.position, 'VP') ||
+                          positionMatchesOffice(employee?.position, 'Office of the President') ||
+                          positionMatchesOffice(employee?.position, 'President') ||
+                          positionMatchesOffice(employee?.position, 'OP') ||
+                          positionMatchesOffice(employee?.position, 'HR') ||
+                          positionMatchesOffice(employee?.position, 'Human Resources') ||
+                          positionMatchesOffice(employee?.position, 'Encoder'))
+                      );
+                    }
+                    return (
+                      !getNextOffice() &&
+                      (positionMatchesOffice(employee?.position, 'Academic Vice President') ||
+                        positionMatchesOffice(employee?.position, 'Academic VP') ||
+                        positionMatchesOffice(employee?.position, 'Vice President') ||
+                        positionMatchesOffice(employee?.position, 'VP') ||
+                        positionMatchesOffice(employee?.position, 'Office of the President') ||
+                        positionMatchesOffice(employee?.position, 'President') ||
+                        positionMatchesOffice(employee?.position, 'OP') ||
+                        positionMatchesOffice(employee?.position, 'HR') ||
+                        positionMatchesOffice(employee?.position, 'Human Resources') ||
+                        positionMatchesOffice(employee?.position, 'Encoder') ||
+                        (employee?.position &&
+                          (employee.position.includes('VPAA') ||
+                            employee.position.includes('Vice President for Academic Affairs'))))
+                    );
+                  })() && (
                     <button
                       onClick={handleReject}
                       style={{
-                        padding: '14px 20px',
+                        padding: '16px 24px',
                         backgroundColor: '#e67e22',
                         color: 'white',
                         border: 'none',
                         borderRadius: '8px',
-                        fontSize: '13px',
+                        fontSize: '15px',
                         fontWeight: '600',
                         cursor: 'pointer',
                         transition: 'all 0.3s ease',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        gap: '8px'
+                        gap: '10px',
+                        minHeight: '52px',
+                        lineHeight: '1.3'
                       }}
                       onMouseEnter={(e) => {
                         e.target.style.backgroundColor = '#d35400';
@@ -10027,26 +10768,43 @@ function Edashboard({ onLogout }) {
                       }}
                     >
                       <span style={{ fontSize: '16px' }}>✗</span>
-                      Reject
+                      {(() => {
+                        const no = getNextOffice();
+                        const isTO =
+                          selectedDocument?.type?.toUpperCase().includes('TRAVEL ORDER') ||
+                          selectedDocument?.category === 'Travel Order';
+                        if (
+                          isPresidentReviewingThisDocument() &&
+                          isTO &&
+                          no &&
+                          no !== 'COMPLETED'
+                        ) {
+                          return `Reject & Forward to ${no}`;
+                        }
+                        return 'Reject';
+                      })()}
                     </button>
                   )}
-                  {/* Show Return button for all positions */}
+                  {/* Show Return except Requested Subject forward-only reviewers */}
+                  {!isRequestedSubjectForwardOnlyReviewer() && (
                   <button
                     onClick={handleReturn}
                       style={{
-                        padding: '14px 20px',
+                        padding: '16px 24px',
                         backgroundColor: '#e74c3c',
                         color: 'white',
                         border: 'none',
                         borderRadius: '8px',
-                        fontSize: '13px',
+                        fontSize: '15px',
                         fontWeight: '600',
                         cursor: 'pointer',
                         transition: 'all 0.3s ease',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        gap: '8px'
+                        gap: '10px',
+                        minHeight: '52px',
+                        lineHeight: '1.3'
                       }}
                       onMouseEnter={(e) => {
                         e.target.style.backgroundColor = '#c0392b';
@@ -10060,26 +10818,55 @@ function Edashboard({ onLogout }) {
                       }}
                     >
                       <span style={{ fontSize: '16px' }}>↩</span>
-                      Return
+                      {isPresidentReviewingThisDocument() || isAcademicVpReviewingFacultyLoadingFinal()
+                        ? 'Return to sender for edits'
+                        : 'Return'}
                     </button>
+                  )}
                 </div>
                 <p style={{
-                  margin: '12px 0 0 0',
-                  fontSize: '12px',
-                  color: '#7f8c8d',
+                  margin: '14px 0 0 0',
+                  fontSize: '14px',
+                  color: '#64748b',
                   textAlign: 'center',
-                  fontStyle: 'italic'
+                  fontStyle: 'italic',
+                  lineHeight: '1.5',
+                  padding: '0 8px'
                 }}>
-                  Click a quick action above for instant processing
+                  {isPresidentReviewingThisDocument()
+                    ? 'Approve & Forward: approve and send to the next office · On Hold: keep the file at President · Reject & Forward: reject and send to the next office · Return: send back to the submitter for changes'
+                    : isAcademicVpReviewingFacultyLoadingFinal()
+                      ? 'Approve & Complete: finalize Faculty Loading · On Hold: keep the file at Academic VP · Reject · Return: send back to the submitter for changes'
+                      : isRsVpaaReviewingRequestedSubject()
+                        ? 'Accept & Forward: send to the next office · Hold File: pause at VPAA · Reject · Return: send back to the submitter for changes'
+                        : isRsEncoderReviewingRequestedSubject()
+                          ? 'Encode & Complete: record encoding and close the Requested Subject workflow'
+                          : isRequestedSubjectForwardOnlyReviewer()
+                            ? 'Forward: send the document to the next office in the route (no other quick actions at this step)'
+                            : (() => {
+                                const dt = selectedDocument?.type?.toUpperCase() || '';
+                                const dc = selectedDocument?.category?.toUpperCase() || '';
+                                const isFL = dt.includes('FACULTY LOADING') || dc.includes('FACULTY LOADING');
+                                if (isFL && getNextOffice()) {
+                                  return 'Forward: send the document to the next office in the route (same idea as Travel Order) · Hold File: pause at your office · Return: send back for edits';
+                                }
+                                return 'Click a quick action above for instant processing';
+                              })()}
                 </p>
               </div>
             )}
 
             {/* Advanced Options - Show if document is at current user's office */}
             {(() => {
+              // Keep advanced actions hidden while waiting for resubmission
+              // after this same office already returned the document.
+              if (hasPendingReturnFromMyOffice(selectedDocument, employee?.position)) {
+                return false;
+              }
+
               // Hide Advanced Options if at final step (Quick Actions are shown instead)
               const nextOffice = getNextOffice();
-              if (!nextOffice) {
+              if (!nextOffice || nextOffice === 'COMPLETED') {
                 return false; // At final step, only show Quick Actions above
               }
               
@@ -10107,12 +10894,12 @@ function Edashboard({ onLogout }) {
               }}>
                 <details style={{ cursor: 'pointer' }}>
                   <summary style={{
-                    fontSize: '13px',
+                    fontSize: '15px',
                     fontWeight: '600',
-                    color: '#7f8c8d',
-                    padding: '10px',
-                    backgroundColor: '#f8f9fa',
-                    borderRadius: '6px',
+                    color: '#475569',
+                    padding: '12px 14px',
+                    backgroundColor: '#f1f5f9',
+                    borderRadius: '8px',
                     textAlign: 'center',
                     userSelect: 'none'
                   }}>
@@ -10122,21 +10909,23 @@ function Edashboard({ onLogout }) {
                   marginTop: '15px',
                   display: 'flex',
                   justifyContent: 'center',
-                  gap: '10px',
+                  gap: '12px',
                   flexWrap: 'wrap'
                 }}>
                   <button
                     onClick={handleUpdateDocumentStatus}
                     style={{
-                      padding: '10px 20px',
+                      padding: '12px 22px',
                       backgroundColor: '#95a5a6',
                       color: 'white',
                       border: 'none',
-                      borderRadius: '6px',
-                      fontSize: '12px',
+                      borderRadius: '8px',
+                      fontSize: '14px',
                       fontWeight: '600',
                       cursor: 'pointer',
-                      transition: 'background-color 0.3s ease'
+                      transition: 'all 0.25s ease',
+                      minHeight: '44px',
+                      lineHeight: '1.3'
                     }}
                     onMouseEnter={(e) => {
                       e.target.style.backgroundColor = '#7f8c8d';
@@ -10150,15 +10939,17 @@ function Edashboard({ onLogout }) {
                   <button
                     onClick={handleCloseReviewModal}
                     style={{
-                      padding: '10px 20px',
+                      padding: '12px 22px',
                       backgroundColor: '#95a5a6',
                       color: 'white',
                       border: 'none',
-                      borderRadius: '6px',
-                      fontSize: '12px',
+                      borderRadius: '8px',
+                      fontSize: '14px',
                       fontWeight: '600',
                       cursor: 'pointer',
-                      transition: 'background-color 0.3s ease'
+                      transition: 'all 0.25s ease',
+                      minHeight: '44px',
+                      lineHeight: '1.3'
                     }}
                     onMouseEnter={(e) => {
                       e.target.style.backgroundColor = '#7f8c8d';
@@ -10194,8 +10985,8 @@ function Edashboard({ onLogout }) {
             backgroundColor: 'white',
             borderRadius: '15px',
             padding: '20px',
-            maxWidth: '900px',
-            width: '90%',
+            maxWidth: '1200px',
+            width: 'min(98vw, 1200px)',
             maxHeight: '90vh',
             overflow: 'auto',
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
@@ -10537,8 +11328,8 @@ function Edashboard({ onLogout }) {
               backgroundColor: 'white',
               borderRadius: '15px',
               padding: '25px',
-              maxWidth: '700px',
-              width: '90%',
+              maxWidth: '1040px',
+              width: 'min(96vw, 1040px)',
               maxHeight: '90vh',
               overflow: 'auto',
               boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
@@ -10799,28 +11590,28 @@ function Edashboard({ onLogout }) {
                   const docType = approvalTimeDocument.type?.toUpperCase() || '';
                   const category = approvalTimeDocument.category || '';
                   
-                  // For Endorsement Form
+                  // For Endorsement Form: PH → Dean → VP → Records → Executive Assistant → President → Records
                   if (
-                    docType.includes('ENDORSEMENT FORM') ||
-                    category === 'Endorsement Form'
+                    docType.includes('ENDORSEMENT') ||
+                    (category && String(category).toUpperCase().includes('ENDORSEMENT'))
                   ) {
-                    return ['Program Head', 'Dean', 'Vice President', 'Office of the President'];
+                    return ['Program Head', 'Dean', 'Vice President', 'Records Office', 'Executive Assistant', 'President', 'Records Office'];
                   }
 
-                  // For Requested Subject - routes to VP
+                  // For Requested Subject - 6-stage workflow (sender is Academic Adviser)
                   if (
                     docType.includes('REQUESTED SUBJECT') || 
                     category === 'Requested Subject'
                   ) {
-                    return ['Program Head', 'Dean', 'Vice President'];
+                    return ['Program Head', 'Dean', 'Director of Instruction', 'VPAA', 'Dean', 'Encoder'];
                   }
 
-                  // For Faculty Loading - routes to Academic VP
+                  // For Faculty Loading: PH → Loading Coordinator → PH → Dean → Academic VP (5 stages)
                   if (
-                    docType.includes('FACULTY LOADING') || 
+                    docType.includes('FACULTY LOADING') ||
                     category === 'Faculty Loading'
                   ) {
-                    return ['Program Head', 'Dean', 'Academic Vice President'];
+                    return ['Program Head', 'Loading Coordinator', 'Program Head', 'Dean', FACULTY_LOADING_FINAL_STAGE_LABEL];
                   }
                   
                   // For Travel Order - HR route workflow
@@ -10828,7 +11619,7 @@ function Edashboard({ onLogout }) {
                     docType.includes('TRAVEL ORDER') ||
                     category === 'Travel Order'
                   ) {
-                    return ['HR', 'Records Office', 'Executive Assistant', 'President', 'Records Office', 'HR'];
+                    return ['Immediate Supervisor', 'HR', 'Records Office', 'Executive Assistant', 'President', 'Records Office', 'HR'];
                   }
                   
                   // Default workflow
@@ -10875,10 +11666,26 @@ function Edashboard({ onLogout }) {
                   if (stageLower.includes('vice president') && !stageLower.includes('academic')) {
                     return officeLower.includes('vp') || officeLower.includes('vice president');
                   }
+
+                  // Faculty Loading final stage / VPAA display label
+                  if (
+                    stageLower.includes('vice president for academic affairs') ||
+                    (stageLower.includes('vpaa') && stageLower.includes('vice president'))
+                  ) {
+                    return (
+                      officeLower.includes('vpaa') ||
+                      officeLower.includes('vice president for academic affairs') ||
+                      officeLower.includes('academic vice president') ||
+                      (officeLower.includes('academic') && officeLower.includes('vp')) ||
+                      officeLower.includes('avp')
+                    );
+                  }
                   
                   // Handle Academic Vice President
                   if (stageLower.includes('academic vice president')) {
                     return officeLower.includes('avp') || officeLower.includes('academic vice president') || 
+                           officeLower.includes('vice president for academic affairs') ||
+                           officeLower.includes('vpaa') ||
                            (officeLower.includes('academic') && officeLower.includes('vp'));
                   }
                   
@@ -11337,8 +12144,8 @@ function Edashboard({ onLogout }) {
             backgroundColor: 'white',
             borderRadius: '15px',
             padding: '25px',
-            maxWidth: '600px',
-            width: '90%',
+            maxWidth: '900px',
+            width: 'min(96vw, 900px)',
             maxHeight: '90vh',
             overflow: 'auto',
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
@@ -11424,7 +12231,7 @@ function Edashboard({ onLogout }) {
                 if (viewFilesDocument.filePath) {
                   try {
                     const parsed = JSON.parse(viewFilesDocument.filePath);
-                    files = Array.isArray(parsed) ? parsed : [viewFilesDocument.filePath];
+                    files = Array.isArray(parsed) ? parsed : [parsed];
                   } catch {
                     files = [viewFilesDocument.filePath];
                   }
@@ -11451,7 +12258,12 @@ function Edashboard({ onLogout }) {
                 }
 
                 return files.map((filePath, index) => {
-                  const fileName = filePath.split('/').pop();
+                  const normalizedPath = String(filePath || '')
+                    .replace(/^"+|"+$/g, '')
+                    .replace(/\\/g, '/')
+                    .trim();
+                  const safePath = normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`;
+                  const fileName = safePath.split('/').pop();
                   const fileExtension = fileName.split('.').pop().toLowerCase();
                   
                   // Determine file icon based on extension
@@ -11518,7 +12330,7 @@ function Edashboard({ onLogout }) {
                         </div>
                       </div>
                       <a
-                        href={`${API_URL}${filePath}`}
+                        href={`${API_URL}${encodeURI(safePath)}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         download

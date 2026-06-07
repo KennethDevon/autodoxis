@@ -1,0 +1,135 @@
+@startuml AutoDoxis Use Case Diagram
+
+title AutoDoxis - Document Routing System\nUse Case Diagram
+
+left to right direction
+skinparam actorStyle awesome
+skinparam packageStyle rectangle
+
+actor "Admin" as admin
+actor "Employee/Staff" as employee
+
+rectangle "AutoDoxis System" {
+
+  ' === Authentication ===
+  package "Authentication" {
+    usecase "Register Account" as UC_REG
+    usecase "Login" as UC_LOGIN
+    usecase "Verify Email (OTP)" as UC_VERIFY
+    usecase "Logout" as UC_LOGOUT
+  }
+
+  ' === Document Management ===
+  package "Document Management" {
+    usecase "Submit Document" as UC_SUBMIT
+    usecase "Edit Document" as UC_EDIT
+    usecase "Delete Document" as UC_DELETE
+    usecase "View Document" as UC_VIEW
+    usecase "Upload Attachment" as UC_ATTACH
+    usecase "Track Document Route" as UC_TRACK
+    usecase "Search Documents\n(Advanced)" as UC_SEARCH
+    usecase "Download Document" as UC_DOWNLOAD
+  }
+
+  ' === Document Routing/Workflow ===
+  package "Document Routing" {
+    usecase "Approve & Forward\nDocument" as UC_APPROVE
+    usecase "Reject Document" as UC_REJECT
+    usecase "Return Document\nfor Editing" as UC_RETURN
+    usecase "Put Document\nOn Hold" as UC_HOLD
+    usecase "Forward to\nNext Office" as UC_FORWARD
+    usecase "Receive Document" as UC_RECEIVE
+  }
+
+  ' === QR/Barcode ===
+  package "QR & Barcode" {
+    usecase "Generate QR Code" as UC_QR
+    usecase "Generate Barcode" as UC_BARCODE
+    usecase "Scan Document" as UC_SCAN
+    usecase "View Scan History" as UC_SCANHIST
+  }
+
+  ' === Notifications ===
+  package "Notifications" {
+    usecase "Receive Notifications" as UC_NOTIF
+    usecase "Mark Notification\nas Read" as UC_NOTIFREAD
+  }
+
+  ' === Reports & Analytics ===
+  package "Reports & Analytics" {
+    usecase "View Dashboard\nStatistics" as UC_STATS
+    usecase "View Department\nDelays" as UC_DELAYS
+    usecase "Generate PDF Report" as UC_REPORT
+    usecase "View Daily Activity\nReport" as UC_DAILY
+    usecase "View Analytics\n& Graphs" as UC_ANALYTICS
+    usecase "Custom Filtered\nReport" as UC_CUSTOM
+  }
+
+  ' === Admin Management ===
+  package "Admin Management" {
+    usecase "Manage Employees\n(CRUD)" as UC_EMP
+    usecase "Manage Offices\n(CRUD)" as UC_OFFICE
+    usecase "Manage Programs\n(CRUD)" as UC_PROG
+    usecase "Manage Positions\n(CRUD)" as UC_POS
+    usecase "Manage Users\n(CRUD)" as UC_USER
+    usecase "Manage Document\nTypes (CRUD)" as UC_DOCTYPE
+    usecase "Assign Employee\nto Office" as UC_ASSIGN
+  }
+}
+
+' === Admin Connections ===
+admin --> UC_LOGIN
+admin --> UC_LOGOUT
+admin --> UC_EMP
+admin --> UC_OFFICE
+admin --> UC_PROG
+admin --> UC_POS
+admin --> UC_USER
+admin --> UC_DOCTYPE
+admin --> UC_ASSIGN
+admin --> UC_STATS
+admin --> UC_DELAYS
+admin --> UC_REPORT
+admin --> UC_DAILY
+admin --> UC_ANALYTICS
+admin --> UC_CUSTOM
+admin --> UC_VIEW
+admin --> UC_DELETE
+admin --> UC_SEARCH
+
+' === Employee/Staff Connections ===
+employee --> UC_REG
+employee --> UC_LOGIN
+employee --> UC_VERIFY
+employee --> UC_LOGOUT
+employee --> UC_SUBMIT
+employee --> UC_EDIT
+employee --> UC_VIEW
+employee --> UC_ATTACH
+employee --> UC_TRACK
+employee --> UC_SEARCH
+employee --> UC_DOWNLOAD
+employee --> UC_APPROVE
+employee --> UC_REJECT
+employee --> UC_RETURN
+employee --> UC_HOLD
+employee --> UC_FORWARD
+employee --> UC_RECEIVE
+employee --> UC_QR
+employee --> UC_BARCODE
+employee --> UC_SCAN
+employee --> UC_SCANHIST
+employee --> UC_NOTIF
+employee --> UC_NOTIFREAD
+employee --> UC_STATS
+
+' === Relationships ===
+UC_SUBMIT ..> UC_ATTACH : <<include>>
+UC_SUBMIT ..> UC_QR : <<include>>
+UC_SUBMIT ..> UC_BARCODE : <<include>>
+UC_APPROVE ..> UC_NOTIF : <<include>>
+UC_REJECT ..> UC_NOTIF : <<include>>
+UC_FORWARD ..> UC_NOTIF : <<include>>
+UC_REG ..> UC_VERIFY : <<include>>
+
+@enduml

@@ -58,6 +58,10 @@ router.post('/register', async (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    const normalizeLoginText = (value) => String(value || '')
+      .toLowerCase()
+      .normalize('NFKC')
+      .replace(/[^a-z0-9]/g, '');
     
     // Validate input
     if (!email || !password) {
@@ -143,29 +147,31 @@ router.post('/login', async (req, res) => {
             });
           }
           
-          // Send verification email in background (non-blocking)
-          // This allows login to respond immediately
-          sendVerificationEmail(user.email, verificationCode)
-            .then(result => {
-              if (result.success) {
-                console.log('✅ Verification email sent successfully to', user.email);
-              } else {
-                console.error('❌ Failed to send verification email:', result.error);
-                // In development, log the code if email fails
-                if (process.env.NODE_ENV !== 'production') {
-                  console.log(`⚠️ Email failed. Verification code: ${verificationCode}`);
-                }
-              }
-            })
-            .catch(err => {
-              console.error('❌ Error sending verification email:', err);
-              // In development, log the code if email fails
-              if (process.env.NODE_ENV !== 'production') {
-                console.log(`⚠️ Email error. Verification code: ${verificationCode}`);
-              }
+          // Send verification email and confirm delivery result before responding
+          const emailResult = await sendVerificationEmail(user.email, verificationCode);
+          if (!emailResult.success) {
+            console.error('❌ Failed to send verification email:', emailResult.error);
+            
+            // In development, include code fallback to avoid login dead-end
+            if (process.env.NODE_ENV !== 'production') {
+              console.log(`⚠️ Email failed. Verification code: ${verificationCode}`);
+              return res.status(500).json({
+                message: `Verification email failed to send: ${emailResult.error}. Check backend email config. Using development fallback code.`,
+                requiresVerification: true,
+                userId: user.id.toString(),
+                email: user.email,
+                verificationCode: verificationCode
+              });
+            }
+
+            return res.status(500).json({
+              message: `Failed to send verification email: ${emailResult.error}. Please check email service configuration.`,
+              requiresVerification: true,
+              error: 'EMAIL_SEND_FAILED'
             });
-          
-          // Return immediately - email is sent in background
+          }
+
+          console.log('✅ Verification email sent successfully to', user.email);
           return res.json({ 
             message: 'Verification code sent to your email. Please check your inbox (and spam folder).',
             requiresVerification: true,
@@ -193,8 +199,10 @@ router.post('/login', async (req, res) => {
     const userWithEmployeeId = await User.findOne({ where: { employeeId: password } });
     if (userWithEmployeeId) {
       // Verify the name matches
-      if (userWithEmployeeId.username.toLowerCase() === email.toLowerCase() || 
-          userWithEmployeeId.email.toLowerCase() === email.toLowerCase()) {
+      const loginKey = normalizeLoginText(email);
+      const usernameKey = normalizeLoginText(userWithEmployeeId.username);
+      const userEmailKey = normalizeLoginText(userWithEmployeeId.email);
+      if (usernameKey === loginKey || userEmailKey === loginKey) {
         return res.json({ 
           message: 'Logged in successfully',
           user: formatResponse({
@@ -209,15 +217,20 @@ router.post('/login', async (req, res) => {
       }
     }
     
-    // Fallback: try employee login with name/employeeId (for backward compatibility)
-    const employee = await Employee.findOne({ 
-      where: {
-        name: email, // Using email field as name for employee login
-        employeeId: password // Using password field as employeeId for employee login
-      }
-    });
+    // Fallback: try employee login with flexible name matching + employeeId
+    const employee = await Employee.findOne({ where: { employeeId: password } });
 
     if (employee) {
+      const loginKey = normalizeLoginText(email);
+      const employeeNameKey = normalizeLoginText(employee.name);
+      if (loginKey !== employeeNameKey) {
+        console.log('Employee login name mismatch:', { input: email, employeeName: employee.name });
+        return res.status(400).json({
+          message: 'Invalid Credentials',
+          details: 'Name does not match employee record.'
+        });
+      }
+
       // Check if user account exists for this employee
       const employeeUser = await User.findOne({ where: { employeeId: employee.employeeId } });
       

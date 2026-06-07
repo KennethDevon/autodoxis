@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Employee from './Employee';
 import Office from './Office';
 import Program from './Program';
@@ -17,6 +17,9 @@ function Aboard({ onLogout }) {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('All');
+  const [documentListSearch, setDocumentListSearch] = useState('');
+  const [documentListStatusFilter, setDocumentListStatusFilter] = useState('All');
+  const [documentListTypeFilter, setDocumentListTypeFilter] = useState('All');
   const [modal, setModal] = useState({ isOpen: false, title: '', message: '', type: 'info' });
   const [showDeleteUserModal, setShowDeleteUserModal] = useState(false);
   const [userToDelete, setUserToDelete] = useState(null);
@@ -167,6 +170,53 @@ function Aboard({ onLogout }) {
       showNotification('error', 'System Error', 'Failed to refresh documents. Please try again.');
     }
   };
+
+  const documentTypeOptionsForList = useMemo(() => {
+    const s = new Set();
+    (documents || []).forEach((d) => {
+      if (d?.type) s.add(String(d.type).trim());
+    });
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
+  }, [documents]);
+
+  const documentStatusOptionsForList = useMemo(() => {
+    const preset = ['Submitted', 'Under Review', 'Processing', 'Approved', 'Rejected', 'On Hold', 'Returned', 'Completed'];
+    const set = new Set(preset);
+    (documents || []).forEach((d) => {
+      if (d?.status) set.add(String(d.status).trim());
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [documents]);
+
+  const filteredDocumentsList = useMemo(() => {
+    let list = Array.isArray(documents) ? [...documents] : [];
+    const q = documentListSearch.trim().toLowerCase();
+    if (q) {
+      list = list.filter((doc) => {
+        const id = String(doc.documentId || doc.id || '').toLowerCase();
+        const name = String(doc.name || '').toLowerCase();
+        const sub = String(doc.submittedBy || '').toLowerCase();
+        const typ = String(doc.type || doc.category || '').toLowerCase();
+        const next = String(doc.nextOffice || '').toLowerCase();
+        const cur = String(doc.currentOffice || '').toLowerCase();
+        return (
+          id.includes(q) ||
+          name.includes(q) ||
+          sub.includes(q) ||
+          typ.includes(q) ||
+          next.includes(q) ||
+          cur.includes(q)
+        );
+      });
+    }
+    if (documentListStatusFilter !== 'All') {
+      list = list.filter((doc) => (doc.status || 'Submitted').trim() === documentListStatusFilter);
+    }
+    if (documentListTypeFilter !== 'All') {
+      list = list.filter((doc) => String(doc.type || '').trim() === documentListTypeFilter);
+    }
+    return list;
+  }, [documents, documentListSearch, documentListStatusFilter, documentListTypeFilter]);
 
   // Helper function to show modal
   const showModal = (title, message, type = 'info') => {
@@ -598,6 +648,65 @@ function Aboard({ onLogout }) {
     setShowLogoutModal(false);
   };
 
+  const getProcessFlowStagesForDocumentType = (typeName = '') => {
+    const normalizedType = String(typeName || '').trim().toUpperCase();
+    const isEndorsementType = normalizedType.includes('ENDORSEMENT');
+
+    const processFlows = {
+      'TRAVEL ORDER': [
+        'Immediate Supervisor',
+        'HR',
+        'Records Office',
+        'Executive Assistant',
+        'President',
+        'Records Office',
+        'HR'
+      ],
+      'ENDORSEMENT FORM': [
+        'Program Head',
+        'Dean',
+        'Vice President',
+        'Records Office',
+        'Executive Assistant',
+        'President',
+        'Records Office'
+      ],
+      'ENDORSEMENT LETTER': [
+        'Program Head',
+        'Dean',
+        'Vice President',
+        'Records Office',
+        'Executive Assistant',
+        'President',
+        'Records Office'
+      ],
+      'REQUESTED SUBJECT': [
+        'Program Head',
+        'Dean',
+        'Director of Instruction',
+        'VPAA',
+        'Dean',
+        'Encoder'
+      ],
+      'FACULTY LOADING': [
+        'Program Head',
+        'Loading Coordinator',
+        'Program Head',
+        'Dean',
+        'Academic Vice President'
+      ]
+    };
+
+    const defaultFlow = ['Program Head', 'Dean', 'Academic Vice President'];
+    if (isEndorsementType) return processFlows['ENDORSEMENT LETTER'];
+    return processFlows[normalizedType] || defaultFlow;
+  };
+
+  const getProcessFlowForDocumentType = (typeName = '') => {
+    const selectedFlow = getProcessFlowStagesForDocumentType(typeName);
+    return `Sender -> ${selectedFlow.join(' -> ')}`;
+  };
+
   const renderScreen = () => {
     switch (currentScreen) {
       case 'Employee':
@@ -1014,88 +1123,189 @@ function Aboard({ onLogout }) {
       case 'DocumentList':
         return (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2>Document Lists</h2>
-                <button
-                  onClick={() => fetchDocuments()}
-                  style={{
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+              <h2 style={{ margin: 0, fontSize: '22px', fontWeight: '700', color: '#2c3e50' }}>Document Lists</h2>
+              <button
+                onClick={() => fetchDocuments()}
+                style={{
                   padding: '10px 20px',
                   backgroundColor: '#007bff',
-                    color: 'white',
-                    border: 'none',
+                  color: 'white',
+                  border: 'none',
                   borderRadius: '4px',
                   cursor: 'pointer'
+                }}
+              >
+                Refresh
+              </button>
+            </div>
+
+            {/* Search & filters */}
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '12px',
+                alignItems: 'center',
+                marginBottom: '16px',
+                padding: '14px 16px',
+                backgroundColor: '#f8f9fa',
+                borderRadius: '8px',
+                border: '1px solid #e9ecef'
+              }}
+            >
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: '1 1 220px', minWidth: '180px' }}>
+                <span style={{ fontSize: '12px', fontWeight: '600', color: '#495057' }}>Search</span>
+                <input
+                  type="search"
+                  value={documentListSearch}
+                  onChange={(e) => setDocumentListSearch(e.target.value)}
+                  placeholder="ID, name, submitter, type, office…"
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #ced4da',
+                    fontSize: '14px',
+                    width: '100%',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: '0 1 160px' }}>
+                <span style={{ fontSize: '12px', fontWeight: '600', color: '#495057' }}>Status</span>
+                <select
+                  value={documentListStatusFilter}
+                  onChange={(e) => setDocumentListStatusFilter(e.target.value)}
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #ced4da',
+                    fontSize: '14px',
+                    width: '100%',
+                    backgroundColor: 'white',
+                    cursor: 'pointer'
                   }}
                 >
-                Refresh
-                </button>
-              </div>
+                  <option value="All">All statuses</option>
+                  {documentStatusOptionsForList.map((st) => (
+                    <option key={st} value={st}>{st}</option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: '0 1 200px' }}>
+                <span style={{ fontSize: '12px', fontWeight: '600', color: '#495057' }}>Document type</span>
+                <select
+                  value={documentListTypeFilter}
+                  onChange={(e) => setDocumentListTypeFilter(e.target.value)}
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #ced4da',
+                    fontSize: '14px',
+                    width: '100%',
+                    backgroundColor: 'white',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <option value="All">All types</option>
+                  {documentTypeOptionsForList.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setDocumentListSearch('');
+                  setDocumentListStatusFilter('All');
+                  setDocumentListTypeFilter('All');
+                }}
+                style={{
+                  alignSelf: 'flex-end',
+                  padding: '8px 14px',
+                  backgroundColor: '#e9ecef',
+                  color: '#495057',
+                  border: '1px solid #ced4da',
+                  borderRadius: '6px',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  cursor: 'pointer'
+                }}
+              >
+                Clear filters
+              </button>
+            </div>
+
+            <p style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#6c757d' }}>
+              Showing <strong>{filteredDocumentsList.length}</strong> of <strong>{documents.length}</strong> documents
+            </p>
 
             {/* Document List Table */}
-            <div style={{ marginTop: '20px', backgroundColor: 'white', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
+            <div style={{ marginTop: '8px', backgroundColor: 'white', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
               <div style={{ overflowX: 'auto' }}>
               {loading ? (
                   <div style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '14px' }}>
                   Loading documents...
                 </div>
               ) : documents.length > 0 ? (
+                  filteredDocumentsList.length > 0 ? (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr style={{ backgroundColor: '#f8f9fa' }}>
-                        <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                        <th style={{ border: '1px solid #e0e0e0', padding: '14px', textAlign: 'left', fontSize: '15px', fontWeight: '600', color: '#2c3e50' }}>
                           Document ID
                         </th>
-                        <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                        <th style={{ border: '1px solid #e0e0e0', padding: '14px', textAlign: 'left', fontSize: '15px', fontWeight: '600', color: '#2c3e50' }}>
                           Name
                         </th>
-                        <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                        <th style={{ border: '1px solid #e0e0e0', padding: '14px', textAlign: 'left', fontSize: '15px', fontWeight: '600', color: '#2c3e50' }}>
                           Submitted By
                         </th>
-                        <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                        <th style={{ border: '1px solid #e0e0e0', padding: '14px', textAlign: 'left', fontSize: '15px', fontWeight: '600', color: '#2c3e50' }}>
                           Type
                         </th>
-                        <th style={{ border: '1px solid #e0e0e0', padding: '12px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#2c3e50' }}>
+                        <th style={{ border: '1px solid #e0e0e0', padding: '14px', textAlign: 'left', fontSize: '15px', fontWeight: '600', color: '#2c3e50' }}>
                           Status
                         </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {documents.map((doc) => (
-                        <tr key={doc._id} style={{ backgroundColor: 'white' }}>
-                          <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', color: '#2c3e50' }}>
+                      {filteredDocumentsList.map((doc) => (
+                        <tr key={doc._id || doc.documentId || doc.id} style={{ backgroundColor: 'white' }}>
+                          <td style={{ border: '1px solid #e0e0e0', padding: '14px', fontSize: '14px', color: '#2c3e50' }}>
                             <code style={{
                               backgroundColor: '#f8f9fa',
                               padding: '2px 5px',
                               borderRadius: '3px',
-                              fontSize: '11px',
+                              fontSize: '12px',
                               fontWeight: '600',
                               color: '#6c757d'
                             }}>
                               {doc.documentId}
                             </code>
                           </td>
-                          <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', fontWeight: '500', color: '#2c3e50' }}>{doc.name}</td>
-                          <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', color: '#2c3e50' }}>
+                          <td style={{ border: '1px solid #e0e0e0', padding: '14px', fontSize: '14px', fontWeight: '500', color: '#2c3e50' }}>{doc.name}</td>
+                          <td style={{ border: '1px solid #e0e0e0', padding: '14px', fontSize: '14px', color: '#2c3e50' }}>
                             {doc.submittedBy || 'N/A'}
                           </td>
-                          <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px', color: '#2c3e50' }}>
+                          <td style={{ border: '1px solid #e0e0e0', padding: '14px', fontSize: '14px', color: '#2c3e50' }}>
                             <span style={{
                               backgroundColor: '#e8f5e8',
                               color: '#388e3c',
                               padding: '3px 8px',
                               borderRadius: '10px',
-                              fontSize: '11px',
+                              fontSize: '12px',
                               fontWeight: '600',
                               textTransform: 'uppercase'
                             }}>
                               {doc.type || 'N/A'}
                             </span>
                           </td>
-                          <td style={{ border: '1px solid #e0e0e0', padding: '12px', fontSize: '13px' }}>
+                          <td style={{ border: '1px solid #e0e0e0', padding: '14px', fontSize: '14px' }}>
                             <span style={{
                               padding: '4px 10px',
                               borderRadius: '12px',
-                              fontSize: '11px',
+                              fontSize: '12px',
                               fontWeight: '600',
                               backgroundColor: 
                                 doc.status === 'Approved' ? '#d4edda' :
@@ -1119,6 +1329,16 @@ function Aboard({ onLogout }) {
                       ))}
                     </tbody>
                   </table>
+                  ) : (
+                    <div style={{
+                      padding: '40px',
+                      textAlign: 'center',
+                      color: '#999',
+                      fontSize: '14px'
+                    }}>
+                      No documents match your search or filters
+                    </div>
+                  )
               ) : (
                 <div style={{ 
                   padding: '40px', 
@@ -2101,10 +2321,14 @@ function Aboard({ onLogout }) {
       </div>
       <div style={{ 
         flexGrow: 1, 
-        padding: '30px', 
+        width: 'calc(100% - 250px)',
+        boxSizing: 'border-box',
+        padding: '28px 32px', 
         backgroundColor: '#fff',
         marginLeft: '250px',
-        minHeight: '100vh'
+        minHeight: '100vh',
+        fontSize: '16px',
+        lineHeight: 1.5
       }}>
         {renderScreen()}
       </div>
@@ -2533,9 +2757,9 @@ function Aboard({ onLogout }) {
             backgroundColor: 'white',
             padding: '30px',
             borderRadius: '12px',
-            width: '600px',
-            maxWidth: '90%',
-            maxHeight: '90vh',
+            width: 'min(96vw, 1320px)',
+            maxWidth: '100%',
+            maxHeight: '92vh',
             overflowY: 'auto'
           }}>
             <div style={{ 
@@ -2615,6 +2839,85 @@ function Aboard({ onLogout }) {
                   </div>
                 </div>
               )}
+
+              {/* Process Flow */}
+              <div>
+                <label style={{ 
+                  display: 'block',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  color: '#6c757d',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  marginBottom: '8px'
+                }}>
+                  Process Flow
+                </label>
+                <div style={{
+                  padding: '14px 12px',
+                  backgroundColor: '#f8f9fa',
+                  borderRadius: '6px',
+                  border: '1px solid #e9ecef'
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                  justifyContent: 'space-between',
+                    overflowX: 'auto',
+                  gap: '2px',
+                    paddingBottom: '6px'
+                  }}>
+                    {['Sender', ...getProcessFlowStagesForDocumentType(viewingDocumentType.name)].map((stage, index, allStages) => (
+                      <React.Fragment key={`flow-${stage}-${index}`}>
+                        <div style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                        minWidth: '96px'
+                        }}>
+                          <div style={{
+                          width: '32px',
+                          height: '32px',
+                            borderRadius: '50%',
+                            backgroundColor: '#27ae60',
+                            border: '2px solid #27ae60',
+                            color: 'white',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          fontSize: '13px',
+                            fontWeight: '700',
+                          marginBottom: '6px'
+                          }}>
+                            ✓
+                          </div>
+                          <div style={{
+                          fontSize: '12px',
+                          lineHeight: '1.2',
+                            textAlign: 'center',
+                            fontWeight: '700',
+                            color: '#1f8a4b',
+                            textTransform: 'uppercase',
+                          maxWidth: '110px',
+                            wordBreak: 'break-word'
+                          }}>
+                            {stage}
+                          </div>
+                        </div>
+                        {index < allStages.length - 1 && (
+                          <div style={{
+                            flex: 1,
+                            minWidth: '18px',
+                            height: '2px',
+                            backgroundColor: '#27ae60',
+                            marginBottom: '32px'
+                          }} />
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </div>
+              </div>
 
               {/* Date and Time Uploaded */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>

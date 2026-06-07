@@ -9,6 +9,13 @@ const sequelize = require('../config/database');
 const { Op } = require('sequelize');
 const { formatResponse } = require('../utils/responseFormatter');
 
+const normalizeNullableInt = (value) => {
+  if (value === undefined) return undefined;
+  if (value === null || value === '' || value === 'null' || value === 'undefined') return null;
+  const parsed = parseInt(value, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
 // Get all employees
 router.get('/', async (req, res) => {
   try {
@@ -51,8 +58,8 @@ router.post('/', async (req, res) => {
       position: req.body.position,
       department: req.body.department,
       role: req.body.role || '',
-      officeId: req.body.officeId || null,
-      programId: req.body.programId || null
+      officeId: normalizeNullableInt(req.body.officeId),
+      programId: normalizeNullableInt(req.body.programId)
     });
     
     // Automatically create a user account for the employee
@@ -130,8 +137,8 @@ router.patch('/:id', async (req, res) => {
     if (req.body.position != null) updateData.position = req.body.position;
     if (req.body.department != null) updateData.department = req.body.department;
     if (req.body.role != null) updateData.role = req.body.role;
-    if (req.body.officeId !== undefined) updateData.officeId = req.body.officeId;
-    if (req.body.programId !== undefined) updateData.programId = req.body.programId;
+    if (req.body.officeId !== undefined) updateData.officeId = normalizeNullableInt(req.body.officeId);
+    if (req.body.programId !== undefined) updateData.programId = normalizeNullableInt(req.body.programId);
     
     await employee.update(updateData);
     const updatedEmployee = await Employee.findByPk(employeeId, {

@@ -1,0 +1,151 @@
+Project AutoDoxis {
+  database_type: "MySQL"
+  Note: "Generated from backend/config/schema.sql"
+}
+
+Table users {
+  id int [pk, increment]
+  username varchar(255) [not null, unique]
+  email varchar(255) [not null, unique]
+  password varchar(255) [not null]
+  employeeId varchar(255)
+  role varchar(50)
+  date timestamp
+  createdAt timestamp
+  updatedAt timestamp
+}
+
+Table offices {
+  id int [pk, increment]
+  officeId varchar(255) [not null, unique]
+  name varchar(255) [not null]
+  department varchar(255) [not null]
+  location varchar(255)
+  createdAt timestamp
+  updatedAt timestamp
+}
+
+Table employees {
+  id int [pk, increment]
+  employeeId varchar(255) [not null, unique]
+  name varchar(255) [not null]
+  position varchar(255) [not null]
+  department varchar(255) [not null]
+  role varchar(50)
+  officeId int
+  createdAt timestamp
+  updatedAt timestamp
+}
+
+Table office_employees {
+  id int [pk, increment]
+  officeId int [not null]
+  employeeId int [not null]
+  createdAt timestamp
+
+  indexes {
+    (officeId, employeeId) [unique]
+  }
+}
+
+Table document_types {
+  id int [pk, increment]
+  name varchar(255) [not null, unique]
+  description text
+  isActive boolean
+  dateCreated timestamp
+  dateUploaded varchar(255)
+  timeUploaded varchar(255)
+  uploadedBy varchar(255)
+  createdAt timestamp
+  updatedAt timestamp
+}
+
+Table documents {
+  id int [pk, increment]
+  documentId varchar(255) [not null, unique]
+  name varchar(255) [not null]
+  type varchar(255) [not null]
+  dateUploaded timestamp
+  status varchar(32) [note: "ENUM: Submitted, Under Review, Approved, Rejected, Processing, On Hold, Returned"]
+  submittedBy varchar(255)
+  description text
+  reviewer varchar(255)
+  reviewDate timestamp
+  comments text
+  filePath varchar(500)
+  nextOffice varchar(255)
+  qrCode text
+  barcode text
+  priority varchar(16) [note: "ENUM: Low, Normal, High, Urgent"]
+  currentOffice varchar(255)
+  expectedProcessingTime int
+  currentStageStartTime timestamp
+  isDelayed boolean
+  delayedHours int
+  routingHistory json
+  scanHistory json
+  tags json
+  department varchar(255)
+  category varchar(255)
+  currentHandlerId int
+  forwardedBy varchar(255)
+  forwardedDate timestamp
+  travelOrderDepartureDate timestamp
+  travelOrderDepartureTime varchar(50)
+  travelOrderReturnDate timestamp
+  travelOrderReturnTime varchar(50)
+  createdAt timestamp
+  updatedAt timestamp
+}
+
+Table document_employees {
+  id int [pk, increment]
+  documentId int [not null]
+  employeeId int [not null]
+  createdAt timestamp
+
+  indexes {
+    (documentId, employeeId) [unique]
+  }
+}
+
+Table notifications {
+  id int [pk, increment]
+  userId varchar(255) [not null]
+  employeeId int
+  type varchar(64) [not null, note: "ENUM: document_uploaded, document_updated, document_assigned, document_forwarded, document_approved, document_rejected, file_updated"]
+  title varchar(255) [not null]
+  message text [not null]
+  documentId int
+  documentName varchar(255)
+  read boolean
+  metadata json
+  createdAt timestamp
+  updatedAt timestamp
+}
+
+Table verification_codes {
+  id int [pk, increment]
+  email varchar(255) [not null]
+  code varchar(10) [not null]
+  userId int [not null]
+  expiresAt timestamp [not null]
+  used boolean
+  createdAt timestamp
+}
+
+Ref: employees.officeId > offices.id
+
+Ref: office_employees.officeId > offices.id
+Ref: office_employees.employeeId > employees.id
+
+Ref: documents.currentHandlerId > employees.id
+
+Ref: document_employees.documentId > documents.id
+Ref: document_employees.employeeId > employees.id
+
+Ref: notifications.employeeId > employees.id
+Ref: notifications.documentId > documents.id
+
+Ref: verification_codes.userId > users.id

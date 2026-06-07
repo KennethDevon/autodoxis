@@ -241,6 +241,17 @@ router.patch('/:id', upload.array('attachments', 3), async (req, res) => {
     if (document == null) {
       return res.status(404).json({ message: 'Cannot find document' });
     }
+
+    const normalizeSubmitter = (s) => String(s || '').trim().toLowerCase();
+    if (document.status === 'Returned') {
+      const incoming = normalizeSubmitter(req.body.submittedBy);
+      const stored = normalizeSubmitter(document.submittedBy);
+      if (!incoming || !stored || incoming !== stored) {
+        return res.status(403).json({
+          message: 'Only the original submitter can edit or resubmit a returned document.'
+        });
+      }
+    }
     
     // Handle file upload if new file is provided
     if (req.file) {

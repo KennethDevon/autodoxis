@@ -8,7 +8,7 @@ This document outlines all the routing workflows for different document types in
 
 **Workflow Route:**
 ```
-Sender → Immediate Supervisor → HR → Records Office → Executive Assistant → President → Records Office → HR → Back to Sender
+Sender → Immediate Supervisor → HR → Records Office → Executive Assistant → President → Records Office → HR
 ```
 
 **Stages:**
@@ -51,19 +51,22 @@ Sender → Program Head → Dean → Academic Vice President → Back to Sender
 
 **Workflow Route:**
 ```
-Sender → Program Head → Dean → Vice President → Office of the President → Back to Sender
+Sender → Program Head → Dean → Vice President → Records Office → Executive Assistant → President → Records Office
 ```
 
 **Stages:**
 1. **Program Head** (Department Review)
 2. **Dean** (College/Faculty Review)
-3. **Vice President** (VP Review)
-4. **Office of the President** (Final Presidential Approval)
+3. **Vice President** (Vice Presidential Review)
+4. **Records Office** (First Visit - Record Keeping)
+5. **Executive Assistant** (Executive Review)
+6. **President** (Presidential Approval)
+7. **Records Office** (Second Visit - Final Record Keeping)
 
 **Special Notes:**
-- Updated workflow (previously started with Secretary)
-- Goes through standard academic hierarchy
-- Final approval by Office of the President
+- Uses Vice President routing after Dean review
+- Has duplicate stage: Records Office appears twice
+- Final record processing is handled by Records Office on the second visit
 
 ---
 
@@ -71,20 +74,19 @@ Sender → Program Head → Dean → Vice President → Office of the President 
 
 **Workflow Route:**
 ```
-Sender → Academic Adviser → Program Head → Dean → Director of Instruction → VPAA → Dean → Encoder → Back to Sender
+Sender (Academic Adviser) → Program Head → Dean → Director of Instruction → VPAA → Dean → Encoder
 ```
 
 **Stages:**
-1. **Academic Adviser** (Initial Academic Review)
-2. **Program Head** (Program Review)
-3. **Dean** (First Visit - Dean Review)
-4. **Director of Instruction** (Instruction Review)
-5. **VPAA** (Vice President for Academic Affairs)
-6. **Dean** (Second Visit - Final Dean Review)
-7. **Encoder** (Final Processing & Encoding)
+1. **Program Head** (Program Review)
+2. **Dean** (First Visit - Dean Review)
+3. **Director of Instruction** (Instruction Review)
+4. **VPAA** (Vice President for Academic Affairs)
+5. **Dean** (Second Visit - Final Dean Review)
+6. **Encoder** (Final Processing & Encoding)
 
 **Special Notes:**
-- 7-stage workflow (longest workflow)
+- 6-stage workflow
 - Has duplicate stage: Dean appears twice (after Program Head and after VPAA)
 - University-wide document
 - Final processing by Encoder
@@ -117,8 +119,8 @@ Sender → Program Head → Dean → Academic Vice President → Back to Sender
 |--------------|--------|----------------|--------------|-----------------|
 | **Travel Order** | 7 | Immediate Supervisor | HR (2nd visit) | HR workflow, duplicate stages, travel dates |
 | **Faculty Loading** | 3 | Program Head | Academic VP | University-wide |
-| **Endorsement Form** | 4 | Program Head | Office of the President | Presidential approval |
-| **Requested Subject** | 7 | Academic Adviser | Encoder | Longest workflow, duplicate Dean stage, university-wide |
+| **Endorsement Form** | 7 | Program Head | Records Office (2nd visit) | Sender → PH → Dean → VP → Records → Executive Assistant → President → Records |
+| **Requested Subject** | 6 | Program Head | Encoder | Dean appears twice, university-wide |
 | **Default/Other** | 3 | Program Head | Academic VP | Standard workflow |
 
 ---

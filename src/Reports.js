@@ -15,6 +15,9 @@ function Reports() {
   const [loading, setLoading] = useState(true);
   const [expandedOffices, setExpandedOffices] = useState(new Set());
   const [expandedDepartments, setExpandedDepartments] = useState(new Set());
+  const [expandedDelayDepartment, setExpandedDelayDepartment] = useState('');
+  const [departmentDelaySearch, setDepartmentDelaySearch] = useState('');
+  const [departmentDetailSearch, setDepartmentDetailSearch] = useState({});
   const [expandedDocTypes, setExpandedDocTypes] = useState(new Set());
   const [expandedRecentDocs, setExpandedRecentDocs] = useState(new Set());
   const [showReportModal, setShowReportModal] = useState(false);
@@ -47,6 +50,52 @@ function Reports() {
       newExpanded.add(deptName);
     }
     setExpandedDepartments(newExpanded);
+  };
+
+  const toggleDelayDepartment = (deptName) => {
+    setExpandedDelayDepartment((prev) => (prev === deptName ? '' : deptName));
+  };
+
+  const updateDepartmentDetailSearch = (deptName, value) => {
+    setDepartmentDetailSearch((prev) => ({
+      ...prev,
+      [deptName]: value
+    }));
+  };
+
+  const getEmployeesForDepartment = (departmentId) => {
+    if (departmentId === 'all') return employees;
+
+    const selectedDepartment = offices.find(o => String(o._id) === String(departmentId));
+    if (!selectedDepartment) return [];
+
+    const normalize = (value) => (value || '').toString().trim().toLowerCase();
+    const selectedDepartmentName = normalize(selectedDepartment.name);
+
+    return employees.filter((emp) => {
+      const employeeOfficeId = emp.office?._id;
+      const employeeOfficeName = normalize(emp.office?.name);
+      const employeeDepartment = normalize(emp.department);
+
+      return String(employeeOfficeId) === String(selectedDepartment._id) ||
+        employeeOfficeName === selectedDepartmentName ||
+        employeeDepartment === selectedDepartmentName;
+    });
+  };
+
+  const handleDepartmentFilterChange = (value) => {
+    setSelectedOffice(value);
+
+    if (selectedEmployee === 'all') return;
+
+    const validEmployees = getEmployeesForDepartment(value);
+    const isEmployeeInDepartment = validEmployees.some(
+      (emp) => String(emp._id) === String(selectedEmployee)
+    );
+
+    if (!isEmployeeInDepartment) {
+      setSelectedEmployee('all');
+    }
   };
 
   const toggleDocType = (typeName) => {
@@ -326,12 +375,7 @@ function Reports() {
       console.log('🔍 Found Office:', office);
       
       if (office) {
-        const officeEmployees = employees.filter(emp => {
-          // Match by office._id or by office name/department
-          return emp.office?._id === office._id || 
-                 emp.office?.name === office.name ||
-                 emp.department === office.name;
-        });
+        const officeEmployees = getEmployeesForDepartment(selectedOffice);
         
         console.log('👥 Employees in this office:', officeEmployees.map(e => ({
           name: e.name,
@@ -652,12 +696,13 @@ function Reports() {
   const employeesByOffices = getEmployeesByOffices();
   const documentsByType = getDocumentsByType();
   const recentDocuments = getRecentDocuments();
+  const availableEmployeesForSelectedDepartment = getEmployeesForDepartment(selectedOffice);
 
   return (
-    <div>
+    <div style={{ fontSize: '16px', lineHeight: 1.5, maxWidth: '100%' }}>
       {/* Header with Report Button */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h1 style={{ margin: 0 }}>Dashboard</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+        <h1 style={{ margin: 0, fontSize: 'clamp(26px, 2.5vw, 34px)', fontWeight: '700', color: '#2c3e50' }}>Dashboard</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <NotificationSystem />
           <button
@@ -668,7 +713,7 @@ function Reports() {
               color: 'white',
               border: 'none',
               borderRadius: '6px',
-            fontSize: '14px',
+            fontSize: '15px',
             fontWeight: '600',
             cursor: 'pointer',
             transition: 'background-color 0.3s ease',
@@ -698,7 +743,7 @@ function Reports() {
             color: activeTab === 'overview' ? 'white' : '#2c3e50',
             border: 'none',
             borderBottom: activeTab === 'overview' ? '3px solid #2980b9' : '3px solid transparent',
-            fontSize: '14px',
+            fontSize: '15px',
             fontWeight: '600',
             cursor: 'pointer',
             transition: 'all 0.3s ease',
@@ -716,7 +761,7 @@ function Reports() {
             color: activeTab === 'daily' ? 'white' : '#2c3e50',
             border: 'none',
             borderBottom: activeTab === 'daily' ? '3px solid #2980b9' : '3px solid transparent',
-            fontSize: '14px',
+            fontSize: '15px',
             fontWeight: '600',
             cursor: 'pointer',
             transition: 'all 0.3s ease',
@@ -734,7 +779,7 @@ function Reports() {
             color: activeTab === 'delays' ? 'white' : '#2c3e50',
             border: 'none',
             borderBottom: activeTab === 'delays' ? '3px solid #2980b9' : '3px solid transparent',
-            fontSize: '14px',
+            fontSize: '15px',
             fontWeight: '600',
             cursor: 'pointer',
             transition: 'all 0.3s ease',
@@ -752,7 +797,7 @@ function Reports() {
             color: activeTab === 'custom' ? 'white' : '#2c3e50',
             border: 'none',
             borderBottom: activeTab === 'custom' ? '3px solid #2980b9' : '3px solid transparent',
-            fontSize: '14px',
+            fontSize: '15px',
             fontWeight: '600',
             cursor: 'pointer',
             transition: 'all 0.3s ease',
@@ -770,7 +815,7 @@ function Reports() {
             color: activeTab === 'analytics' ? 'white' : '#2c3e50',
             border: 'none',
             borderBottom: activeTab === 'analytics' ? '3px solid #2980b9' : '3px solid transparent',
-            fontSize: '14px',
+            fontSize: '15px',
             fontWeight: '600',
             cursor: 'pointer',
             transition: 'all 0.3s ease',
@@ -821,30 +866,30 @@ function Reports() {
             </h3>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', marginBottom: '20px' }}>
-              {/* Office Filter */}
+              {/* Department Filter */}
               <div>
                 <label style={{ 
                   display: 'block', 
                   marginBottom: '8px', 
-                  fontSize: '14px', 
+                  fontSize: '15px', 
                   fontWeight: '600',
                   color: '#2c3e50'
                 }}>
-                  Office
+                  Department
                 </label>
                 <select
                   value={selectedOffice}
-                  onChange={(e) => setSelectedOffice(e.target.value)}
+                  onChange={(e) => handleDepartmentFilterChange(e.target.value)}
                   style={{
                     width: '100%',
                     padding: '10px',
                     borderRadius: '6px',
                     border: '1px solid #ddd',
-                    fontSize: '14px',
+                    fontSize: '15px',
                     backgroundColor: 'white'
                   }}
                 >
-                  <option value="all">All Offices</option>
+                  <option value="all">All Departments</option>
                   {offices.map(office => (
                     <option key={office._id} value={office._id}>{office.name}</option>
                   ))}
@@ -856,7 +901,7 @@ function Reports() {
                 <label style={{ 
                   display: 'block', 
                   marginBottom: '8px', 
-                  fontSize: '14px', 
+                  fontSize: '15px', 
                   fontWeight: '600',
                   color: '#2c3e50'
                 }}>
@@ -870,12 +915,12 @@ function Reports() {
                     padding: '10px',
                     borderRadius: '6px',
                     border: '1px solid #ddd',
-                    fontSize: '14px',
+                    fontSize: '15px',
                     backgroundColor: 'white'
                   }}
                 >
                   <option value="all">All Employees</option>
-                  {employees.map(emp => (
+                  {availableEmployeesForSelectedDepartment.map(emp => (
                     <option key={emp._id} value={emp._id}>{emp.name} ({emp.employeeId})</option>
                   ))}
                 </select>
@@ -886,7 +931,7 @@ function Reports() {
                 <label style={{ 
                   display: 'block', 
                   marginBottom: '8px', 
-                  fontSize: '14px', 
+                  fontSize: '15px', 
                   fontWeight: '600',
                   color: '#2c3e50'
                 }}>
@@ -901,7 +946,7 @@ function Reports() {
                     padding: '10px',
                     borderRadius: '6px',
                     border: '1px solid #ddd',
-                    fontSize: '14px',
+                    fontSize: '15px',
                     backgroundColor: 'white'
                   }}
                 />
@@ -912,7 +957,7 @@ function Reports() {
                 <label style={{ 
                   display: 'block', 
                   marginBottom: '8px', 
-                  fontSize: '14px', 
+                  fontSize: '15px', 
                   fontWeight: '600',
                   color: '#2c3e50'
                 }}>
@@ -927,7 +972,7 @@ function Reports() {
                     padding: '10px',
                     borderRadius: '6px',
                     border: '1px solid #ddd',
-                    fontSize: '14px',
+                    fontSize: '15px',
                     backgroundColor: 'white'
                   }}
                 />
@@ -939,7 +984,7 @@ function Reports() {
               <label style={{ 
                 display: 'block', 
                 marginBottom: '8px', 
-                fontSize: '14px', 
+                fontSize: '15px', 
                 fontWeight: '600',
                 color: '#2c3e50'
               }}>
@@ -984,7 +1029,7 @@ function Reports() {
               <label style={{ 
                 display: 'block', 
                 marginBottom: '8px', 
-                fontSize: '14px', 
+                fontSize: '15px', 
                 fontWeight: '600',
                 color: '#2c3e50'
               }}>
@@ -1034,7 +1079,7 @@ function Reports() {
                   color: 'white',
                   border: 'none',
                   borderRadius: '6px',
-                  fontSize: '14px',
+                  fontSize: '15px',
                   fontWeight: '600',
                   cursor: 'pointer',
                   transition: 'background-color 0.3s ease'
@@ -1052,7 +1097,7 @@ function Reports() {
                   color: 'white',
                   border: 'none',
                   borderRadius: '6px',
-                  fontSize: '14px',
+                  fontSize: '15px',
                   fontWeight: '600',
                   cursor: 'pointer',
                   transition: 'background-color 0.3s ease'
@@ -1095,7 +1140,7 @@ function Reports() {
                     color: 'white',
                     border: 'none',
                     borderRadius: '6px',
-                    fontSize: '14px',
+                    fontSize: '15px',
                     fontWeight: '600',
                     cursor: 'pointer',
                     transition: 'background-color 0.3s ease'
@@ -1215,26 +1260,78 @@ function Reports() {
       ) : activeTab === 'delays' ? (
         <div>
           {(() => {
+            const normalizeText = (value) => (value || '').toString().trim().toLowerCase();
+            const normalizeDisplay = (value) => (value || '').toString().trim();
+
+            const officeDirectory = (Array.isArray(offices) ? offices : [])
+              .map((office) => ({
+                name: normalizeDisplay(office?.name),
+                department: normalizeDisplay(office?.department)
+              }))
+              .filter((office) => office.name);
+
+            const resolveOfficeName = (value) => {
+              const normalizedValue = normalizeText(value);
+              if (!normalizedValue) return null;
+
+              const exactOffice = officeDirectory.find(
+                (office) => normalizeText(office.name) === normalizedValue
+              );
+              if (exactOffice) return exactOffice.name;
+
+              const departmentMatch = officeDirectory.find(
+                (office) => normalizeText(office.department) === normalizedValue
+              );
+              if (departmentMatch) return departmentMatch.name;
+
+              return null;
+            };
+
             // Helper function to get submitter's department
             const getSubmitterDepartment = (submittedBy) => {
-              if (!submittedBy) return null;
-              const submitter = employees.find(emp => 
-                emp.name?.toLowerCase() === submittedBy.toLowerCase() ||
-                emp.name?.toLowerCase().includes(submittedBy.toLowerCase()) ||
-                submittedBy.toLowerCase().includes(emp.name?.toLowerCase())
+              const normalizedSubmittedBy = normalizeText(submittedBy);
+              if (!normalizedSubmittedBy) return null;
+
+              const exactSubmitter = employees.find((emp) =>
+                normalizeText(emp.name) === normalizedSubmittedBy ||
+                normalizeText(emp.employeeId) === normalizedSubmittedBy
               );
-              return submitter ? (submitter.office?.name || submitter.department) : null;
+
+              const fuzzySubmitter = exactSubmitter || employees.find((emp) => {
+                const employeeName = normalizeText(emp.name);
+                return employeeName && (
+                  normalizedSubmittedBy.includes(employeeName) ||
+                  employeeName.includes(normalizedSubmittedBy)
+                );
+              });
+
+              if (!fuzzySubmitter) return null;
+
+              const directOffice = resolveOfficeName(fuzzySubmitter.office?.name);
+              if (directOffice) return directOffice;
+
+              const mappedDepartment = resolveOfficeName(fuzzySubmitter.department);
+              if (mappedDepartment) return mappedDepartment;
+
+              return null;
             };
+
+            // Build department cards from official offices only (matches Office Management count)
+            const knownDepartments = new Set(officeDirectory.map((office) => office.name));
 
             // Group documents by department
             const documentsByDepartment = {};
+
+            knownDepartments.forEach((deptName) => {
+              documentsByDepartment[deptName] = [];
+            });
+
             if (Array.isArray(documents)) {
-              documents.forEach(doc => {
-                const dept = getSubmitterDepartment(doc.submittedBy) || 'Unknown';
-                if (!documentsByDepartment[dept]) {
-                  documentsByDepartment[dept] = [];
+              documents.forEach((doc) => {
+                const dept = getSubmitterDepartment(doc.submittedBy);
+                if (dept && documentsByDepartment[dept]) {
+                  documentsByDepartment[dept].push(doc);
                 }
-                documentsByDepartment[dept].push(doc);
               });
             }
 
@@ -1391,6 +1488,9 @@ function Reports() {
                 })
               };
             }).sort((a, b) => b.delayed - a.delayed || b.totalDelayHours - a.totalDelayHours);
+            const filteredDepartmentStats = departmentStats.filter((deptStat) =>
+              deptStat.department.toLowerCase().includes(departmentDelaySearch.toLowerCase().trim())
+            );
 
             return (
               <div>
@@ -1403,63 +1503,332 @@ function Reports() {
                   Department Delays Analysis
                 </h2>
 
-                {departmentStats.map((deptStat) => (
-                  <div key={deptStat.department} style={{
-                    backgroundColor: 'white',
-                    borderRadius: '8px',
-                    padding: '20px',
-                    marginBottom: '20px',
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                  }}>
-                    {/* Department Header */}
+                {departmentStats.length > 0 && (
+                  <>
                     <div style={{
+                      marginBottom: '16px',
+                      padding: '14px 16px',
+                      borderRadius: '12px',
+                      border: '1px solid #dbe4f0',
+                      background: 'linear-gradient(135deg, #f7faff 0%, #eef4ff 100%)',
                       display: 'flex',
                       justifyContent: 'space-between',
                       alignItems: 'center',
-                      marginBottom: '15px',
-                      paddingBottom: '15px',
-                      borderBottom: '2px solid #e0e0e0'
+                      gap: '14px',
+                      flexWrap: 'wrap'
                     }}>
-                      <div>
-                        <h3 style={{
-                          margin: '0 0 5px 0',
-                          fontSize: '18px',
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '13px', color: '#334155', fontWeight: '600' }}>Departments</span>
+                        <span style={{
+                          fontSize: '12px',
+                          fontWeight: '700',
+                          color: '#1d4ed8',
+                          backgroundColor: '#dbeafe',
+                          borderRadius: '999px',
+                          padding: '3px 10px'
+                        }}>
+                          {filteredDepartmentStats.length} shown
+                        </span>
+                        <span style={{
+                          fontSize: '12px',
                           fontWeight: '600',
-                          color: '#2c3e50'
+                          color: '#64748b',
+                          backgroundColor: '#f1f5f9',
+                          borderRadius: '999px',
+                          padding: '3px 10px'
                         }}>
-                          {deptStat.department}
-                        </h3>
-                        <div style={{
-                          display: 'flex',
-                          gap: '20px',
-                          fontSize: '13px',
-                          color: '#6c757d',
-                          flexWrap: 'wrap'
-                        }}>
-                          <span><strong>Total:</strong> {deptStat.total}</span>
-                          <span style={{ color: deptStat.completed > 0 ? '#28a745' : '#6c757d' }}>
-                            <strong>Completed:</strong> {deptStat.completed}
-                          </span>
-                          <span style={{ color: deptStat.rejected > 0 ? '#dc3545' : '#6c757d' }}>
-                            <strong>Rejected:</strong> {deptStat.rejected}
-                          </span>
-                          <span style={{ color: deptStat.delayed > 0 ? '#d32f2f' : '#388e3c' }}>
-                            <strong>Delayed:</strong> {deptStat.delayed}
-                          </span>
-                          {deptStat.delayed > 0 && (
-                            <>
-                              <span><strong>Total Delay:</strong> {formatHours(deptStat.totalDelayHours)}</span>
-                              <span><strong>Avg Delay:</strong> {formatHours(deptStat.averageDelay)}</span>
-                            </>
-                          )}
-                        </div>
+                          {departmentStats.length} total
+                        </span>
                       </div>
+                      <input
+                        type="text"
+                        placeholder="Search department..."
+                        value={departmentDelaySearch}
+                        onChange={(e) => setDepartmentDelaySearch(e.target.value)}
+                        style={{
+                          minWidth: '240px',
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          border: '1px solid #cbd5e1',
+                          fontSize: '14px',
+                          outline: 'none',
+                          backgroundColor: 'white',
+                          color: '#1e293b'
+                        }}
+                      />
                     </div>
 
-                    {/* Documents Table */}
-                    {deptStat.documents.length > 0 ? (
-                      <div style={{ overflowX: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    {/* Square Department Cards */}
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
+                      gap: '14px',
+                      marginBottom: '20px'
+                    }}>
+                      {filteredDepartmentStats.map((deptStat) => {
+                        const isExpanded = expandedDelayDepartment === deptStat.department;
+
+                        return (
+                          <React.Fragment key={deptStat.department}>
+                            <div
+                              onClick={() => toggleDelayDepartment(deptStat.department)}
+                              style={{
+                                aspectRatio: '1 / 1',
+                                minHeight: '150px',
+                                borderRadius: '14px',
+                                border: isExpanded ? '2px solid #2563eb' : '1px solid #dbe4f0',
+                                background: isExpanded
+                                  ? 'linear-gradient(155deg, #eaf2ff 0%, #ffffff 70%)'
+                                  : 'linear-gradient(155deg, #ffffff 0%, #f7faff 100%)',
+                                boxShadow: isExpanded
+                                  ? '0 12px 24px rgba(37,99,235,0.18)'
+                                  : '0 4px 12px rgba(15,23,42,0.08)',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                textAlign: 'center',
+                                padding: '14px',
+                                position: 'relative',
+                                overflow: 'hidden',
+                                transform: isExpanded ? 'translateY(-2px)' : 'translateY(0)',
+                                transition: 'transform 260ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 260ms cubic-bezier(0.22, 1, 0.36, 1), background 260ms ease, border-color 260ms ease'
+                              }}
+                              onMouseEnter={(e) => {
+                                if (!isExpanded) {
+                                  e.currentTarget.style.background = 'linear-gradient(155deg, #ffffff 0%, #edf4ff 100%)';
+                                  e.currentTarget.style.transform = 'translateY(-4px)';
+                                  e.currentTarget.style.boxShadow = '0 12px 24px rgba(30,64,175,0.14)';
+                                  e.currentTarget.style.borderColor = '#bfdbfe';
+                                }
+                              }}
+                              onMouseLeave={(e) => {
+                                if (!isExpanded) {
+                                  e.currentTarget.style.background = 'linear-gradient(155deg, #ffffff 0%, #f7faff 100%)';
+                                  e.currentTarget.style.transform = 'translateY(0)';
+                                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(15,23,42,0.08)';
+                                  e.currentTarget.style.borderColor = '#dbe4f0';
+                                }
+                              }}
+                            >
+                              <div style={{
+                                position: 'absolute',
+                                top: '0',
+                                left: '0',
+                                right: '0',
+                                height: '4px',
+                                background: isExpanded
+                                  ? 'linear-gradient(90deg, #2563eb 0%, #60a5fa 100%)'
+                                  : 'linear-gradient(90deg, #dbeafe 0%, #e2e8f0 100%)'
+                              }} />
+                              <div style={{
+                                fontSize: '11px',
+                                fontWeight: '700',
+                                letterSpacing: '0.4px',
+                                textTransform: 'uppercase',
+                                color: '#1d4ed8',
+                                backgroundColor: '#e0ebff',
+                                borderRadius: '999px',
+                                padding: '4px 10px',
+                                marginBottom: '10px'
+                              }}>
+                                Department
+                              </div>
+                              <div style={{
+                                fontSize: '16px',
+                                fontWeight: '700',
+                                color: '#2c3e50',
+                                marginBottom: '10px',
+                                lineHeight: '1.25',
+                                letterSpacing: '0.2px'
+                              }}>
+                                {deptStat.department}
+                              </div>
+                              <div style={{
+                                fontSize: '12px',
+                                fontWeight: '600',
+                                color: deptStat.delayed > 0 ? '#d32f2f' : '#388e3c'
+                              }}>
+                                {deptStat.delayed} delayed / {deptStat.total} total
+                              </div>
+                            </div>
+
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+
+                    {filteredDepartmentStats.length === 0 && (
+                      <div style={{
+                        padding: '20px',
+                        marginBottom: '16px',
+                        textAlign: 'center',
+                        border: '1px dashed #cbd5e1',
+                        borderRadius: '10px',
+                        color: '#64748b',
+                        fontSize: '14px',
+                        backgroundColor: '#f8fafc'
+                      }}>
+                        No department matched your search.
+                      </div>
+                    )}
+
+                    {/* Expanded Department Details */}
+                    {filteredDepartmentStats
+                      .filter((deptStat) => expandedDelayDepartment === deptStat.department)
+                      .map((deptStat) => {
+                        const detailSearchValue = departmentDetailSearch[deptStat.department] || '';
+                        const normalizedDetailSearch = detailSearchValue.toLowerCase().trim();
+                        const normalizedDepartmentName = normalizeText(deptStat.department);
+                        const departmentEmployees = employees
+                          .filter((emp) => {
+                            const employeeOfficeName = normalizeText(emp.office?.name);
+                            const employeeDepartmentName = normalizeText(emp.department);
+                            return employeeOfficeName === normalizedDepartmentName ||
+                              employeeDepartmentName === normalizedDepartmentName;
+                          })
+                          .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                        const visibleDocuments = deptStat.documents.filter((doc) => {
+                          if (!normalizedDetailSearch) return true;
+                          const searchableText = [
+                            doc.documentId,
+                            doc.name,
+                            doc.type,
+                            doc.status,
+                            doc.submittedBy
+                          ]
+                            .filter(Boolean)
+                            .join(' ')
+                            .toLowerCase();
+                          return searchableText.includes(normalizedDetailSearch);
+                        });
+
+                        return (
+                        <div key={`${deptStat.department}-details`} style={{
+                          backgroundColor: 'white',
+                          borderRadius: '10px',
+                          marginBottom: '16px',
+                          boxShadow: '0 2px 6px rgba(0,0,0,0.1)',
+                          border: '1px solid #e7ecf3',
+                          overflow: 'hidden'
+                        }}>
+                          <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            gap: '16px',
+                            padding: '14px 18px',
+                            borderBottom: '2px solid #e0e0e0',
+                            backgroundColor: '#f6faff'
+                          }}>
+                            <h3 style={{
+                              margin: 0,
+                              fontSize: '18px',
+                              fontWeight: '600',
+                              color: '#2c3e50'
+                            }}>
+                              {deptStat.department} Details
+                            </h3>
+                            <span style={{
+                              fontSize: '12px',
+                              color: '#6c757d',
+                              fontWeight: '600'
+                            }}>
+                              Total: {deptStat.total} | Delayed: {deptStat.delayed} | Completed: {deptStat.completed} | Rejected: {deptStat.rejected}
+                            </span>
+                          </div>
+
+                          <div style={{
+                            padding: '12px 16px',
+                            borderBottom: '1px solid #e2e8f0',
+                            backgroundColor: '#f8fbff',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            gap: '12px',
+                            flexWrap: 'wrap'
+                          }}>
+                            <input
+                              type="text"
+                              placeholder={`Search ${deptStat.department} details...`}
+                              value={detailSearchValue}
+                              onChange={(e) => updateDepartmentDetailSearch(deptStat.department, e.target.value)}
+                              style={{
+                                minWidth: '260px',
+                                padding: '8px 10px',
+                                borderRadius: '8px',
+                                border: '1px solid #cbd5e1',
+                                fontSize: '13px',
+                                outline: 'none',
+                                backgroundColor: 'white',
+                                color: '#1e293b'
+                              }}
+                            />
+                            <span style={{
+                              fontSize: '12px',
+                              fontWeight: '600',
+                              color: '#475569'
+                            }}>
+                              Showing {visibleDocuments.length} of {deptStat.documents.length}
+                            </span>
+                          </div>
+
+                          <div style={{
+                            padding: '14px 16px',
+                            borderBottom: '1px solid #e2e8f0',
+                            backgroundColor: '#ffffff'
+                          }}>
+                            <div style={{
+                              fontSize: '13px',
+                              fontWeight: '700',
+                              color: '#334155',
+                              marginBottom: '10px'
+                            }}>
+                              Employees in {deptStat.department} ({departmentEmployees.length})
+                            </div>
+                            {departmentEmployees.length > 0 ? (
+                              <div style={{
+                                display: 'flex',
+                                flexWrap: 'wrap',
+                                gap: '8px'
+                              }}>
+                                {departmentEmployees.map((employee) => (
+                                  <span
+                                    key={employee._id || `${employee.employeeId}-${employee.name}`}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      padding: '6px 10px',
+                                      borderRadius: '999px',
+                                      border: '1px solid #dbeafe',
+                                      backgroundColor: '#eff6ff',
+                                      color: '#1e3a8a',
+                                      fontSize: '12px',
+                                      fontWeight: '600'
+                                    }}
+                                  >
+                                    <span>{employee.name || 'Unnamed'}</span>
+                                    <span style={{ color: '#475569', fontWeight: '500' }}>
+                                      ({employee.employeeId || 'No ID'})
+                                    </span>
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <div style={{
+                                fontSize: '13px',
+                                color: '#64748b'
+                              }}>
+                                No employees assigned to this department.
+                              </div>
+                            )}
+                          </div>
+
+                          {visibleDocuments.length > 0 ? (
+                            <div style={{ overflowX: 'auto' }}>
+                              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                           <thead>
                             <tr style={{ backgroundColor: '#f8f9fa' }}>
                               <th style={{ border: '1px solid #ddd', padding: '10px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#2c3e50' }}>
@@ -1489,7 +1858,7 @@ function Reports() {
                             </tr>
                           </thead>
                           <tbody>
-                            {deptStat.documents.map((doc) => (
+                            {visibleDocuments.map((doc) => (
                               <tr key={doc._id} style={{ 
                                 backgroundColor: doc.delayInfo.isExceeded ? '#fff5f5' : 'white',
                                 borderLeft: doc.delayInfo.isExceeded ? '4px solid #dc3545' : 'none'
@@ -1571,20 +1940,22 @@ function Reports() {
                               </tr>
                             ))}
                           </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <div style={{
-                        padding: '20px',
-                        textAlign: 'center',
-                        color: '#999',
-                        fontSize: '14px'
-                      }}>
-                        No documents in this department.
-                      </div>
-                    )}
-                  </div>
-                ))}
+                              </table>
+                            </div>
+                          ) : (
+                            <div style={{
+                              padding: '20px',
+                              textAlign: 'center',
+                              color: '#999',
+                              fontSize: '14px'
+                            }}>
+                              No documents matched this details search.
+                            </div>
+                          )}
+                        </div>
+                      )})}
+                  </>
+                )}
 
                 {departmentStats.length === 0 && (
                   <div style={{
@@ -2192,7 +2563,7 @@ function Reports() {
                   border: 'none',
                   borderRadius: '6px',
                   cursor: 'pointer',
-                  fontSize: '14px',
+                  fontSize: '15px',
                   fontWeight: '600'
                 }}
               >

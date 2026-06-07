@@ -1,0 +1,124 @@
+AUTODOXIS - DATA DICTIONARY (TABLE FORMAT)
+Database: autodoxis
+Legend: PK = Primary Key (Yes), FK = Foreign Key (Yes or reference table)
+
+TABLE NAME          ATTRIBUTE NAME              CONTENT                                     TYPE        FORMAT                                              PK      FK
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+users               id                          Unique ID of the user                       int         1, 2, 3...                                          Yes
+users               username                    Login username of the user                  String      juan.delacruz                                       No
+users               email                       Email address of the user                   String      xxx@email.com                                       No
+users               password                    Hashed password of the user                 String      ******** (hashed)                                   No
+users               employeeId                  Linked employee ID of the user              String      EMP001                                              No
+users               role                        Role of the user in the system              String      Admin | Staff | User                                No
+users               date                        Legacy account date                         Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+users               createdAt                   Date the record was created                 Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+users               updatedAt                   Date the record was last updated            Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+
+offices             id                          Unique ID of the office                     int         1, 2, 3...                                          Yes
+offices             officeId                    External office code                        String      FACET | OP | OVPAA                                  No
+offices             name                        Name of the office                          String      Faculty of Computing, Engineering, and Technology No
+offices             department                  Department of the office                    String      FACET | HR | Records                                No
+offices             location                    Location of the office                      String      Main Campus                                         No
+offices             createdAt                   Date the record was created                 Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+offices             updatedAt                   Date the record was last updated            Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+
+employees           id                          Unique ID of the employee                   int         1, 2, 3...                                          Yes
+employees           employeeId                  External employee ID                        String      EMP001                                              No
+employees           name                        Full name of the employee                   String      Juan Dela Cruz                                      No
+employees           position                    Position title of the employee              String      Program Head | Dean | HR                            No
+employees           department                  Department of the employee                  String      FACET | FTED                                        No
+employees           role                        Role assigned to the employee               String      Admin | Staff | User                                No
+employees           officeId                    Office assigned to the employee             int         1, 2, 3...                                          No      Yes (offices.id)
+employees           createdAt                   Date the record was created                 Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+employees           updatedAt                   Date the record was last updated            Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+
+office_employees    id                          Unique ID of the office-employee link       int         1, 2, 3...                                          Yes
+office_employees    officeId                    Office in the assignment                    int         1, 2, 3...                                          No      Yes (offices.id)
+office_employees    employeeId                  Employee in the assignment                  int         1, 2, 3...                                          No      Yes (employees.id)
+office_employees    createdAt                   Date the record was created                 Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+
+document_types      id                          Unique ID of the document type              int         1, 2, 3...                                          Yes
+document_types      name                        Name of the document type                   String      TRAVEL ORDER | ENDORSEMENT LETTER                   No
+document_types      description                 Description of the document type            Text        Endorsement letter for faculty request              No
+document_types      isActive                    Whether the type is active                  Boolean     TRUE | FALSE                                        No
+document_types      dateCreated                 Date the type was created                   Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+document_types      dateUploaded                Legacy upload date text                     String      2026-03-27                                          No
+document_types      timeUploaded                Legacy upload time text                     String      14:30                                               No
+document_types      uploadedBy                  Name of uploader                            String      Admin Name                                          No
+document_types      createdAt                   Date the record was created                 Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+document_types      updatedAt                   Date the record was last updated            Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+
+documents           id                          Unique ID of the document                   int         1, 2, 3...                                          Yes
+documents           documentId                  External document ID                        String      DOC123456                                           No
+documents           name                        Title/name of the document                  String      Endorsement Request                                 No
+documents           type                        Document type label                         String      ENDORSEMENT LETTER | TRAVEL ORDER                   No
+documents           dateUploaded                Date the document was uploaded              Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+documents           status                      Current workflow status                     Enum        Submitted | Under Review | Approved | Rejected | Processing | On Hold | Returned   No
+documents           submittedBy                 Name of submitter                           String      Juan Dela Cruz                                      No
+documents           description                 Description/details of document             Text        Request for endorsement                             No
+documents           reviewer                    Current or last reviewer                    String      Dean Name                                           No
+documents           reviewDate                  Date of review                              Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+documents           comments                    Review comments                             Text        Approved for forwarding                             No
+documents           filePath                    Stored file path                            String      /uploads/doc123.pdf                                 No
+documents           nextOffice                  Next routing destination                    String      Dean | HR | Records Office                          No
+documents           qrCode                      QR code data                                Text        QR content string                                   No
+documents           barcode                     Barcode data                                Text        Barcode content string                              No
+documents           priority                    Priority level                              Enum        Low | Normal | High | Urgent                        No
+documents           currentOffice               Current office holding the document         String      Program Head | Dean                                 No
+documents           expectedProcessingTime      Expected processing time in hours           int         24                                                  No
+documents           currentStageStartTime       Start time of current stage                 Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+documents           isDelayed                   Whether document is delayed                 Boolean     TRUE | FALSE                                        No
+documents           delayedHours                Delay duration in hours                     int         0, 1, 2...                                          No
+documents           routingHistory              Routing event history                       JSON        [{office, action, timestamp}]                       No
+documents           scanHistory                 Scan/trace history                          JSON        [{scanTime, location}]                              No
+documents           tags                        Tags for the document                       JSON        ["urgent","faculty"]                                No
+documents           department                  Department label                            String      FACET                                               No
+documents           category                    Category label                              String      Endorsement                                         No
+documents           currentHandlerId            Employee currently handling the document    int         1, 2, 3...                                          No      Yes (employees.id)
+documents           forwardedBy                 Name of forwarder                           String      HR Staff Name                                       No
+documents           forwardedDate               Date forwarded                              Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+documents           travelOrderDepartureDate    Travel order departure date                 Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+documents           travelOrderDepartureTime    Travel order departure time                 String      08:00 AM                                            No
+documents           travelOrderReturnDate       Travel order return date                    Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+documents           travelOrderReturnTime       Travel order return time                    String      05:00 PM                                            No
+documents           createdAt                   Date the record was created                 Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+documents           updatedAt                   Date the record was last updated            Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+
+document_employees  id                          Unique ID of document-employee link         int         1, 2, 3...                                          Yes
+document_employees  documentId                  Document in the assignment                  int         1, 2, 3...                                          No      Yes (documents.id)
+document_employees  employeeId                  Employee in the assignment                  int         1, 2, 3...                                          No      Yes (employees.id)
+document_employees  createdAt                   Date the record was created                 Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+
+notifications       id                          Unique ID of the notification               int         1, 2, 3...                                          Yes
+notifications       userId                      User ID receiving notification              String      user123                                             No
+notifications       employeeId                  Related employee ID                         int         1, 2, 3...                                          No      Yes (employees.id)
+notifications       type                        Notification event type                     Enum        document_uploaded | document_updated | document_assigned | document_forwarded | document_approved | document_rejected | file_updated   No
+notifications       title                       Notification title                          String      Document Approved                                   No
+notifications       message                     Notification message body                   Text        Your document was approved by Dean                  No
+notifications       documentId                  Related document ID                         int         1, 2, 3...                                          No      Yes (documents.id)
+notifications       documentName                Related document name                       String      Endorsement Request                                 No
+notifications       read                        Read/unread status                          Boolean     TRUE | FALSE                                        No
+notifications       metadata                    Extra notification data                     JSON        {action, office}                                    No
+notifications       createdAt                   Date the record was created                 Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+notifications       updatedAt                   Date the record was last updated            Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+
+verification_codes  id                          Unique ID of verification code              int         1, 2, 3...                                          Yes
+verification_codes  email                       Email for verification                      String      xxx@email.com                                       No
+verification_codes  code                        OTP verification code                       String      123456                                              No
+verification_codes  userId                      Related user ID                             int         1, 2, 3...                                          No      Yes (users.id)
+verification_codes  expiresAt                   Code expiration date/time                   Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+verification_codes  used                        Whether code was already used               Boolean     TRUE | FALSE                                        No
+verification_codes  createdAt                   Date the record was created                 Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+
+positions           id                          Unique ID of the position                   int         1, 2, 3...                                          Yes
+positions           name                        Name of the position                        String      Program Head | Dean | President                     No
+positions           createdAt                   Date the record was created                 Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+positions           updatedAt                   Date the record was last updated            Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+
+programs            id                          Unique ID of the program                    int         1, 2, 3...                                          Yes
+programs            programId                   External program code                       String      BSIT | BSCS                                         No
+programs            name                        Name of the program                         String      Bachelor of Science in Information Technology     No
+programs            description                 Description of the program                  String      IT undergraduate program                            No
+programs            officeId                    Office/faculty linked to program            int         1, 2, 3...                                          No      Yes (offices.id)
+programs            createdAt                   Date the record was created                 Timestamp   YYYY-MM-DD HH:MM:SS                                 No
+programs            updatedAt                   Date the record was last updated            Timestamp   YYYY-MM-DD HH:MM:SS                                 No

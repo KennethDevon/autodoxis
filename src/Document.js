@@ -6,6 +6,8 @@ import DocumentTrackingTimeline from './components/DocumentTrackingTimeline';
 import { showNotification } from './components/NotificationSystem';
 import API_URL from './config';
 
+const FACULTY_LOADING_FINAL_STAGE_LABEL = 'Vice President for Academic Affairs (VPAA)';
+
 function Document() {
   const [showModal, setShowModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -410,6 +412,15 @@ function Document() {
     }));
   };
 
+  /** Same logic as employee dashboard: avoid routing rows inheriting stale document.comments from the textarea pre-fill. */
+  const buildRoutingComment = (autoSummary, formComments, documentCommentsSnapshot) => {
+    const note = (formComments || '').trim();
+    const prev = (documentCommentsSnapshot || '').trim();
+    if (!note) return autoSummary;
+    if (note === prev) return autoSummary;
+    return `${autoSummary} — ${note}`;
+  };
+
   const handleApproveFromReview = async () => {
     if (!reviewDocument) return;
 
@@ -445,7 +456,11 @@ function Document() {
               office: reviewDocument.currentOffice || 'Admin',
               action: 'approved',
               handler: reviewForm.reviewer || approverName,
-              comments: reviewForm.comments || `Final approval by Admin (${approverName})`
+              comments: buildRoutingComment(
+                `Final approval by Admin (${approverName})`,
+                reviewForm.comments,
+                reviewDocument.comments || ''
+              )
             }),
           });
         } catch (historyError) {
@@ -1724,28 +1739,28 @@ function Document() {
                 const docType = reviewDocument.type?.toUpperCase() || '';
                 const category = reviewDocument.category || '';
                 
-                // For Endorsement Form
+                // For Endorsement Form: PH → Dean → VP → Records → Executive Assistant → President → Records
                 if (
-                  docType.includes('ENDORSEMENT FORM') ||
-                  category === 'Endorsement Form'
+                  docType.includes('ENDORSEMENT') ||
+                  (category && String(category).toUpperCase().includes('ENDORSEMENT'))
                 ) {
-                  return ['Program Head', 'Dean', 'Vice President', 'Office of the President'];
+                  return ['Program Head', 'Dean', 'Vice President', 'Records Office', 'Executive Assistant', 'President', 'Records Office'];
                 }
 
-                // For Requested Subject - 7-stage workflow
+                // For Requested Subject - 6-stage workflow (sender is Academic Adviser)
                 if (
                   docType.includes('REQUESTED SUBJECT') || 
                   category === 'Requested Subject'
                 ) {
-                  return ['Academic Adviser', 'Program Head', 'Dean', 'Director of Instruction', 'VPAA', 'Dean', 'Encoder'];
+                  return ['Program Head', 'Dean', 'Director of Instruction', 'VPAA', 'Dean', 'Encoder'];
                 }
 
-                // For Faculty Loading - routes to Academic VP
+                // For Faculty Loading: PH → Loading Coordinator → PH → Dean → Academic VP (5 stages)
                 if (
                   docType.includes('FACULTY LOADING') || 
                   category === 'Faculty Loading'
                 ) {
-                  return ['Program Head', 'Dean', 'Academic Vice President'];
+                  return ['Program Head', 'Loading Coordinator', 'Program Head', 'Dean', FACULTY_LOADING_FINAL_STAGE_LABEL];
                 }
                 
                 // For Travel Order - HR route workflow
@@ -1766,11 +1781,26 @@ function Document() {
                 
                 const stages = getWorkflowStages();
                 
-                // Special handling for Travel Order and Requested Subject (have duplicate stages)
+                // Special handling for workflows with duplicate stages
                 const docType = doc.type?.toUpperCase() || '';
                 const category = doc.category || '';
                 const isTravelOrder = docType.includes('TRAVEL ORDER') || category === 'Travel Order';
                 const isRequestedSubject = docType.includes('REQUESTED SUBJECT') || category === 'Requested Subject';
+                const isFacultyLoading = docType.includes('FACULTY LOADING') || category === 'Faculty Loading';
+                const isEndorsement = docType.includes('ENDORSEMENT') || (category && String(category).toUpperCase().includes('ENDORSEMENT'));
+
+                const matchesVpaaFinalStage = (entryOffice, stageLabel) => {
+                  if (!entryOffice || !stageLabel) return false;
+                  const o = entryOffice.toLowerCase();
+                  const s = stageLabel.toLowerCase();
+                  if (o === s || o.includes(s) || s.includes(o)) return true;
+                  const isVpaaFamily = (x) =>
+                    x.includes('vice president for academic affairs') ||
+                    x.includes('academic vice president') ||
+                    x.includes('vpaa') ||
+                    (x.includes('academic') && x.includes('vice president'));
+                  return isVpaaFamily(o) && isVpaaFamily(s);
+                };
                 
                 if (isTravelOrder) {
                   // For Travel Order, workflow is complete only if ALL 7 stages have been completed IN ORDER
@@ -1833,6 +1863,65 @@ function Document() {
                     doc.nextOffice === ''
                   );
                 }
+
+                if (isEndorsement) {
+                  const routingHistory = Array.isArray(doc.routingHistory) ? doc.routingHistory : [];
+                  const stageVisits = {};
+
+                  routingHistory.forEach(entry => {
+                    const isApprovalAction = entry.action && (
+                      entry.action.toLowerCase().includes('approved') ||
+                      entry.action.toLowerCase().includes('forwarded')
+                    );
+
+                    if (isApprovalAction && entry.office && entry.office !== 'Submitted') {
+                      let normalizedOffice = entry.office;
+                      const officeLower = entry.office.toLowerCase();
+
+                      if (officeLower.includes('program head') || officeLower === 'ph') {
+                        normalizedOffice = 'Program Head';
+                      } else if (officeLower.includes('dean')) {
+                        normalizedOffice = 'Dean';
+                      } else if (
+                        officeLower.includes('vice president') ||
+                        officeLower === 'vp' ||
+                        officeLower.includes('vpaa') ||
+                        officeLower.includes('academic vice president') ||
+                        officeLower.includes('vice president for academic affairs')
+                      ) {
+                        normalizedOffice = 'Vice President';
+                      } else if (officeLower.includes('records')) {
+                        normalizedOffice = 'Records Office';
+                      } else if (officeLower.includes('executive assistant') || officeLower.includes('executive asst')) {
+                        normalizedOffice = 'Executive Assistant';
+                      } else if (officeLower.includes('president') || officeLower.includes('op')) {
+                        normalizedOffice = 'President';
+                      }
+
+                      stageVisits[normalizedOffice] = (stageVisits[normalizedOffice] || 0) + 1;
+                    }
+                  });
+
+                  let completedStages = 0;
+                  for (let i = 0; i < stages.length; i++) {
+                    const stage = stages[i];
+                    const requiredCount = stages.slice(0, i + 1).filter(s => s === stage).length;
+                    const actualCount = stageVisits[stage] || 0;
+
+                    if (actualCount >= requiredCount) {
+                      completedStages++;
+                    } else {
+                      break;
+                    }
+                  }
+
+                  return completedStages === stages.length && (
+                    doc.status === 'Completed' ||
+                    doc.status === 'Approved' ||
+                    !doc.nextOffice ||
+                    doc.nextOffice === ''
+                  );
+                }
                 
                 if (isRequestedSubject) {
                   // For Requested Subject, workflow is complete only if ALL 7 stages have been completed IN ORDER
@@ -1870,7 +1959,7 @@ function Document() {
                   });
                   
                   // Check if each stage has been visited the required number of times
-                  // stages = ['Academic Adviser', 'Program Head', 'Dean', 'Director of Instruction', 'VPAA', 'Dean', 'Encoder']
+                  // stages = ['Program Head', 'Dean', 'Director of Instruction', 'VPAA', 'Dean', 'Encoder']
                   // We need to check each occurrence in order
                   let completedStages = 0;
                   
@@ -1888,13 +1977,54 @@ function Document() {
                     }
                   }
                   
-                  // Workflow is complete only if ALL 7 stages have been completed
+                  // Workflow is complete only if ALL 6 stages have been completed
                   // AND document status is Approved/Completed OR nextOffice is empty
                   return completedStages === stages.length && (
                          doc.status === 'Completed' || 
                          doc.status === 'Approved' || 
                          !doc.nextOffice || 
                          doc.nextOffice === ''
+                  );
+                }
+
+                if (isFacultyLoading) {
+                  // Faculty Loading has duplicate Program Head stages (PH × 2)
+                  const routingHistory = Array.isArray(doc.routingHistory) ? doc.routingHistory : [];
+                  const stageVisits = {};
+                  routingHistory.forEach(entry => {
+                    const isApprovalAction = entry.action && (
+                      entry.action.toLowerCase().includes('approved') ||
+                      entry.action.toLowerCase().includes('forwarded')
+                    );
+                    if (isApprovalAction && entry.office && entry.office !== 'Submitted') {
+                      let normalizedOffice = entry.office;
+                      const officeLower = entry.office.toLowerCase();
+                      if (officeLower.includes('program head') || officeLower === 'ph') normalizedOffice = 'Program Head';
+                      else if (officeLower.includes('loading coordinator')) normalizedOffice = 'Loading Coordinator';
+                      else if (officeLower.includes('dean')) normalizedOffice = 'Dean';
+                      else if (
+                        officeLower.includes('academic vice president') ||
+                        officeLower.includes('vice president for academic affairs') ||
+                        officeLower.includes('vpaa') ||
+                        (officeLower.includes('academic') && officeLower.includes('vp'))
+                      ) normalizedOffice = FACULTY_LOADING_FINAL_STAGE_LABEL;
+                      stageVisits[normalizedOffice] = (stageVisits[normalizedOffice] || 0) + 1;
+                    }
+                  });
+                  let completedStages = 0;
+                  for (let i = 0; i < stages.length; i++) {
+                    const stage = stages[i];
+                    const requiredCount = stages.slice(0, i + 1).filter(s => s === stage).length;
+                    const actualCount = stageVisits[stage] || 0;
+                    if (actualCount >= requiredCount) {
+                      completedStages++;
+                    } else {
+                      break;
+                    }
+                  }
+                  return completedStages === stages.length && (
+                    doc.status === 'Completed' || doc.status === 'Approved' ||
+                    !doc.nextOffice || doc.nextOffice === ''
                   );
                 }
                 
@@ -1907,7 +2037,9 @@ function Document() {
                   (entry.office === finalStage || 
                    entry.toOffice === finalStage ||
                    entry.office?.includes(finalStage) ||
-                   entry.toOffice?.includes(finalStage))
+                   entry.toOffice?.includes(finalStage) ||
+                   matchesVpaaFinalStage(entry.office, finalStage) ||
+                   matchesVpaaFinalStage(entry.toOffice, finalStage))
                 );
                 
                 return finalApproval !== undefined || doc.status === 'Approved' || doc.status === 'Completed';
@@ -1949,10 +2081,72 @@ function Document() {
                 if (stageLower.includes('executive assistant')) {
                   return officeLower.includes('executive assistant');
                 }
-                
-                // Handle President
-                if (stageLower.includes('president')) {
-                  return officeLower.includes('president') || officeLower.includes('op');
+
+                // Handle VPAA (must come before generic 'president' check)
+                if (stageLower === 'vpaa' || stageLower.includes('vpaa')) {
+                  return officeLower.includes('vpaa') ||
+                         officeLower.includes('vice president for academic affairs') ||
+                         officeLower.includes('academic vice president') ||
+                         (officeLower.includes('vice president') && officeLower.includes('academic')) ||
+                         (officeLower.includes('vp') && officeLower.includes('academic'));
+                }
+
+                // Handle Academic Vice President
+                if (stageLower.includes('academic vice president')) {
+                  return officeLower.includes('academic vice president') ||
+                         officeLower.includes('vpaa') ||
+                         officeLower.includes('vice president for academic affairs') ||
+                         (officeLower.includes('academic') && officeLower.includes('vp')) ||
+                         (officeLower.includes('vice president') && officeLower.includes('academic'));
+                }
+
+                // Handle Office of the President (must come before generic 'president')
+                if (stageLower.includes('office of the president') || stageLower === 'op') {
+                  return officeLower.includes('office of the president') ||
+                         officeLower === 'op' ||
+                         (officeLower.includes('president') && !officeLower.includes('vice'));
+                }
+
+                // Handle Vice President (generic, not academic)
+                if (stageLower === 'vice president' || stageLower === 'vp') {
+                  return (officeLower.includes('vice president') || officeLower === 'vp') &&
+                         !officeLower.includes('academic') && !officeLower.includes('vpaa');
+                }
+
+                // Handle President (Travel Order workflow)
+                if (stageLower === 'president') {
+                  return (officeLower.includes('president') && !officeLower.includes('vice')) ||
+                         officeLower.includes('op');
+                }
+
+                // Handle Loading Coordinator
+                if (stageLower.includes('loading coordinator')) {
+                  return officeLower.includes('loading coordinator');
+                }
+
+                // Handle Program Head
+                if (stageLower.includes('program head') || stageLower === 'ph') {
+                  return officeLower.includes('program head') || officeLower === 'ph';
+                }
+
+                // Handle Dean
+                if (stageLower === 'dean') {
+                  return officeLower.includes('dean');
+                }
+
+                // Handle Academic Adviser
+                if (stageLower.includes('academic adviser') || stageLower.includes('academic advisor')) {
+                  return officeLower.includes('academic adviser') || officeLower.includes('academic advisor');
+                }
+
+                // Handle Director of Instruction
+                if (stageLower.includes('director') && stageLower.includes('instruction')) {
+                  return officeLower.includes('director') && (officeLower.includes('instruction') || officeLower.includes('instructional'));
+                }
+
+                // Handle Encoder
+                if (stageLower === 'encoder') {
+                  return officeLower.includes('encoder');
                 }
                 
                 return false;
@@ -2065,73 +2259,109 @@ function Document() {
                 return null;
               };
 
-              // Find current stage index (improved logic for workflows with duplicate stages)
+              // Find current stage index (handles duplicate stages for all workflow types)
               let currentStageIndex = -1;
-              
-              // Special handling for Travel Order (has duplicate stages: Records Office × 2, HR × 2)
+
               const docType = reviewDocument.type?.toUpperCase() || '';
-              const isTravelOrder = docType.includes('TRAVEL ORDER');
-              
-              if (isTravelOrder && reviewDocument.routingHistory && reviewDocument.routingHistory.length > 0) {
-                // Count COMPLETED visits to each stage in routing history
-                // A stage is completed only when it has approved/forwarded the document
+              const hasDuplicateStages =
+                docType.includes('TRAVEL ORDER') ||
+                docType.includes('REQUESTED SUBJECT') ||
+                docType.includes('FACULTY LOADING') ||
+                (reviewDocument.category === 'Travel Order') ||
+                (reviewDocument.category === 'Requested Subject') ||
+                (reviewDocument.category === 'Faculty Loading');
+              const isFacultyLoadingProgress =
+                docType.includes('FACULTY LOADING') || reviewDocument.category === 'Faculty Loading';
+
+              const formatFacultyLoadingPinOffice = (office) => {
+                if (!office || !isFacultyLoadingProgress) return office;
+                const l = String(office).toLowerCase();
+                if (
+                  l.includes('academic vice president') ||
+                  l.includes('vice president for academic affairs') ||
+                  l.includes('vpaa') ||
+                  (l.includes('academic') && l.includes('vice president'))
+                ) {
+                  return FACULTY_LOADING_FINAL_STAGE_LABEL;
+                }
+                return office;
+              };
+
+              // Normalize an office name to match the stage names used in workflows
+              const normalizeForVisit = (name) => {
+                if (!name) return '';
+                const n = name.toLowerCase();
+                if (n.includes('hr') || n.includes('human resources')) return 'HR';
+                if (n === 'im' || n.includes('immediate supervisor')) return 'Immediate Supervisor';
+                if (n.includes('records')) return 'Records Office';
+                if (n.includes('executive assistant')) return 'Executive Assistant';
+                if (n.includes('president') && !n.includes('vice') && !n.includes('office of the president')) return 'President';
+                if (n.includes('office of the president') || n === 'op') return 'Office of the President';
+                if (
+                  n.includes('vpaa') || n.includes('vice president for academic affairs') ||
+                  n.includes('academic vice president') ||
+                  (n.includes('academic') && (n.includes('vp') || n.includes('vice president')))
+                ) return 'Academic Vice President';
+                if ((n.includes('vice president') || n === 'vp') && !n.includes('academic') && !n.includes('vpaa')) return 'Vice President';
+                if (n.includes('loading coordinator')) return 'Loading Coordinator';
+                if (n.includes('program head') || n === 'ph') return 'Program Head';
+                if (n.includes('dean')) return 'Dean';
+                if (n.includes('academic adviser') || n.includes('academic advisor')) return 'Academic Adviser';
+                if (n.includes('director') && n.includes('instruction')) return 'Director of Instruction';
+                if (n.includes('encoder')) return 'Encoder';
+                if (n.includes('vpaa') || (n.includes('academic') && n.includes('vp'))) return 'VPAA';
+                return name;
+              };
+
+              if (hasDuplicateStages && reviewDocument.routingHistory && reviewDocument.routingHistory.length > 0) {
+                // Count completed approvals per stage to disambiguate duplicate stages
                 const stageVisits = {};
-                
                 reviewDocument.routingHistory.forEach(entry => {
-                  // Only count if this entry represents an approval/forward action FROM this office
                   const isApprovalAction = entry.action && (
-                    entry.action.toLowerCase().includes('approved') || 
+                    entry.action.toLowerCase().includes('approved') ||
                     entry.action.toLowerCase().includes('forwarded')
                   );
-                  
                   if (isApprovalAction) {
-                    // Use the 'office' field (where the action was performed)
                     const entryOffice = entry.office || '';
                     if (entryOffice && entryOffice !== 'Submitted') {
-                      // Normalize office names
-                      let normalizedOffice = entryOffice;
-                      if (entryOffice.toLowerCase().includes('hr') || entryOffice.toLowerCase().includes('human resources')) {
-                        normalizedOffice = 'HR';
-                      } else if (entryOffice.toLowerCase().includes('records')) {
-                        normalizedOffice = 'Records Office';
-                      } else if (entryOffice.toLowerCase().includes('executive assistant')) {
-                        normalizedOffice = 'Executive Assistant';
-                      } else if (entryOffice.toLowerCase().includes('president') || entryOffice.toLowerCase().includes('op')) {
-                        normalizedOffice = 'President';
-                      }
-                      
-                      stageVisits[normalizedOffice] = (stageVisits[normalizedOffice] || 0) + 1;
+                      const normalized = normalizeForVisit(entryOffice);
+                      if (normalized) stageVisits[normalized] = (stageVisits[normalized] || 0) + 1;
                     }
                   }
                 });
-                
-                // Find the current stage index by matching visits with workflow order
-                let visitCounts = {};
+
+                // Use currentOffice as ground truth, stageVisits to pick the right occurrence
+                const normalizedCurrentOffice = normalizeForVisit(currentOffice);
+                const matchingIndices = [];
                 for (let i = 0; i < stages.length; i++) {
-                  const stage = stages[i];
-                  visitCounts[stage] = (visitCounts[stage] || 0) + 1;
-                  
-                  // Check if this is where we are (visit count matches)
-                  const actualVisits = stageVisits[stage] || 0;
-                  const expectedVisitsUpToHere = visitCounts[stage];
-                  
-                  // If we haven't completed this occurrence yet, this is our current stage
-                  if (actualVisits < expectedVisitsUpToHere) {
-                    currentStageIndex = i;
-                    break;
+                  if (normalizeForVisit(stages[i]) === normalizedCurrentOffice) {
+                    matchingIndices.push(i);
                   }
                 }
-                
-                // If all stages visited, we're at the end
-                if (currentStageIndex === -1) {
-                  currentStageIndex = stages.length - 1;
+                if (matchingIndices.length === 1) {
+                  currentStageIndex = matchingIndices[0];
+                } else if (matchingIndices.length > 1) {
+                  const completedVisits = stageVisits[normalizedCurrentOffice] || 0;
+                  currentStageIndex = matchingIndices[Math.min(completedVisits, matchingIndices.length - 1)];
+                } else {
+                  // Fallback: scan by visit counts
+                  let visitCounts = {};
+                  for (let i = 0; i < stages.length; i++) {
+                    const stage = normalizeForVisit(stages[i]);
+                    visitCounts[stage] = (visitCounts[stage] || 0) + 1;
+                    const actualVisits = stageVisits[stage] || 0;
+                    if (actualVisits < visitCounts[stage]) {
+                      currentStageIndex = i;
+                      break;
+                    }
+                  }
+                  if (currentStageIndex === -1) currentStageIndex = stages.length - 1;
                 }
               } else {
-                // Standard workflow logic (no duplicate stages)
-                currentStageIndex = stages.indexOf(currentOffice);
+                // Standard workflow logic (no duplicate stages) — use matchOfficeToStage for robust matching
+                currentStageIndex = stages.findIndex(stage => matchOfficeToStage(currentOffice, stage));
                 if (currentStageIndex === -1) {
-                  // Try to match partial strings
-                  currentStageIndex = stages.findIndex(stage => 
+                  currentStageIndex = stages.findIndex(stage =>
                     currentOffice.includes(stage) || stage.includes(currentOffice)
                   );
                 }
@@ -2298,7 +2528,7 @@ function Document() {
                       fontWeight: '700',
                       marginLeft: '3px'
                     }}>
-                      {currentOffice}
+                      {formatFacultyLoadingPinOffice(currentOffice)}
                     </span>
                   </div>
                 </div>
